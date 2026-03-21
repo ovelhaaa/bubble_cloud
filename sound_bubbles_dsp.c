@@ -1,6 +1,7 @@
 #include "sound_bubbles_dsp.h"
 #include <math.h>
 #include <stdlib.h>
+#include <time.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f
@@ -42,6 +43,7 @@ static float LookupWindow(float phase, WindowType_t type);
 
 void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memory, const EngineConfig_t* initial_config) {
     InitWindowLUTs();
+    srand((unsigned int)time(NULL));
 
     engine->delay_buffer = delay_buffer_memory;
     engine->config = *initial_config;
@@ -414,6 +416,7 @@ static void InitWindowLUTs(void) {
 
 // Note: rand() is only a placeholder-quality RNG for the baseline implementation.
 // In a final embedded platform, this should be replaced with a fast PRNG (e.g. xorshift32).
+// Ensure srand() is called once at initialization to seed the generator.
 static float RandomFloat(void) {
     return (float)rand() / (float)RAND_MAX;
 }
