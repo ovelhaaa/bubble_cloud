@@ -146,7 +146,7 @@ If the validation tests expose bugs, follow this prioritized diagnostic checklis
 1.  **NaN/Inf in Output:** Check the 1-pole filter coefficients. Ensure `expf` inputs are sane. Check for division by zero in `LinearInterpolate` or window phase calculations.
 2.  **Voices Not Spawning:** Check the envelope tracker constants. Ensure the input signal is actually crossing `noise_floor` and `tracking_thresh`. Verify `burst_immediate_count` is not zero.
 3.  **Harsh Clicks/Pops:** Investigate voice stealing. Ensure `VOICE_STATE_PREEMPT_FADING` actually executes a fast fade-out and doesn't immediately jump to IDLE. Verify `CheckGuardZoneDirectional` is functioning.
-4.  **Audio Stutter/Dropouts:** This indicates `ProcessBlock` is taking too long. Check the complexity of the RNG (`rand()`) in the hot loop. Check if `Scheduler_SpawnImmediateBurst` is trying to spawn too many voices synchronously.
+4.  **Audio Stutter/Dropouts:** This indicates `ProcessBlock` is taking too long. Check the complexity of the RNG (`rand()`) in the control-rate logic. Check if `Scheduler_SpawnImmediateBurst` is trying to spawn too many voices synchronously.
 5.  **State Machine Stuck:** Check `burst_timer_ticks` incrementation in the control-rate tick. Ensure hysteresis between `sustain_thresh` and `tracking_thresh` is wide enough to prevent rapid oscillation.
 
 ## 13. Final recommendation
