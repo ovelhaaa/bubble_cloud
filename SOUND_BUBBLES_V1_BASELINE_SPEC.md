@@ -18,6 +18,7 @@ Constants are explicitly separated into compile-time fixed configurations and va
 // Internal scheduler constraints
 #define SCHED_MAX_SPAWNS_PER_TICK  4    // Hard limit on bubble creation per 32-sample block
 #define SCHED_PREEMPT_FADE_SAMPLES 44   // Exactly 1ms at 44.1kHz
+#define SCHED_WRITE_GUARD_SAMPLES  64   // Safety margin to prevent reading past the write head
 ```
 
 ### Tunable Parameters (To be mapped to UI/Config)
@@ -68,8 +69,8 @@ typedef struct {
     float sustain_thresh;
     float transient_delta;
 
-    float duck_attack_coef;  // Pre-calculated from TUNE_DUCKING_ATTACK_TICKS
-    float duck_release_coef; // Pre-calculated from TUNE_DUCKING_RELEASE_TICKS
+    float duck_attack_coef;  // Pre-calculated: 1.0 - exp(-1.0 / TUNE_DUCKING_ATTACK_TICKS)
+    float duck_release_coef; // Pre-calculated: 1.0 - exp(-1.0 / TUNE_DUCKING_RELEASE_TICKS)
     float duck_burst_level;
 
     int   burst_duration_ticks;
@@ -124,7 +125,7 @@ typedef struct {
     float       target_density;      // Current spawns per second
 
     int         write_head;          // 0 to SYS_DELAY_BUFFER_SAMPLES - 1
-    int         sustain_read_anchor_samples; // Fixed sample distance behind W during burst, drifts in sustain
+    int         sustain_read_center_offset_samples; // Fixed sample distance behind W during burst, drifts in sustain
     int         burst_timer_ticks;   // Countdown timer for STATE_ATTACK_BURST
 } EngineGlobals;
 ```
@@ -145,11 +146,11 @@ Timers are strictly stored and evaluated in **ticks** (for control-rate logic) o
     *   Apply fixed 1-pole global filters to busses.
     *   Mix busses, apply `wet_ducking_state`, output `int16_t`.
 *   **Per-Block / Control-Tick (Every 32 samples):**
-    *   Calculate RMS (`env_level`) of the last 32 samples.
+    *   Calculate RMS (`env_level`) of the last 32 samples. *(Implementation Note: If profiling reveals block RMS is too expensive, this may be replaced with a cheaper 1-pole envelope follower, provided the algorithmic intent of transient detection is preserved).*
     *   Evaluate derivative vs `transient_delta`.
     *   Decrement `burst_timer_ticks` if > 0.
     *   Update State Machine (evaluating thresholds and timers).
-    *   Update `sustain_read_anchor_samples` (e.g., `+= 1` to slowly drift backward during Sustain).
+    *   Update `sustain_read_center_offset_samples` (e.g., `+= 1` to slowly drift backward during Sustain).
     *   Calculate `target_density`.
     *   Smooth `wet_ducking_state` toward its target using a 1-pole IIR equation.
     *   Run the Scheduler (`spawn_accumulator`).
@@ -174,7 +175,11 @@ The scheduler is tightly bounded to guarantee determinism.
     3. Transition to Burst state and set `burst_timer_ticks`.
 *   **Sustain/Decay Spawn Limit:**
     If not a transient tick, while `spawn_accumulator >= 1.0f`:
-    1. Spawn 1 bubble (Class determined by state probabilities).
+    1. Spawn 1 bubble. The class is strictly determined by the current state:
+       *   **Attack Burst (Ongoing):** 80% Micro / 20% Short
+       *   **Sustain Body:** 70% Body / 30% Short
+       *   **Sparse Decay:** 100% Body
+       *   **Silence:** No spawning (accumulator is cleared/ignored).
     2. Subtract `1.0f` from `spawn_accumulator`.
     3. Abort the while loop if `spawns_this_tick >= SCHED_MAX_SPAWNS_PER_TICK`.
 *   **Deterministic Voice Allocation/Preemption:**
@@ -199,7 +204,15 @@ Given the ESP32-S3's architectural constraints (Single-precision FPU, PSRAM cach
     *   Timers (`burst_timer_ticks`, `fade_samples_remaining`) must be `int`.
     *   Buffer offsets (`sustain_read_anchor_samples`, `write_head`) must be `int`.
 
-## 6. Final v1 Baseline
+## 6. Fixed Runtime Invariants
+
+To guarantee determinism and prevent audio artifacts, the following runtime invariants must be enforced within the DSP loop:
+
+1.  **Write-Head Guard Zone:** The distance between a bubble's `read_ptr` and the global `write_head` must always be evaluated per-sample. If the read pointer advances within `SCHED_WRITE_GUARD_SAMPLES` (e.g., 64 samples) behind the write head, the read pointer is **not** clamped. Instead, the bubble's `fade_samples_remaining` is immediately set to `SCHED_PREEMPT_FADE_SAMPLES` and its state is forced to `VOICE_PREEMPT_FADING`. This acts as a safety release valve to gracefully silence bubbles before they can read invalid memory or overtake the W pointer.
+2.  **Ducking Coefficient Pre-calculation:** The 1-pole IIR coefficients for ducking (`duck_attack_coef` and `duck_release_coef`) are never calculated inside the audio callback. They must be derived at init/config time using the standard formula `coef = 1.0f - exp(-1.0f / time_in_ticks)`.
+3.  **Strict State/Class Linkage:** Bubble classes are not randomly selected from a global pool. The probability distribution is rigidly hardcoded to the active engine state (Burst, Sustain, Decay) as defined in the Scheduler Model.
+
+## 7. Final v1 Baseline
 
 The mandatory v1 implementation target is defined strictly by what is included and what is explicitly excluded to ensure the ESP32-S3 maintains a stable audio callback.
 
