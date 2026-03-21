@@ -1,0 +1,106 @@
+name: DSP Harness
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "sound_bubbles_dsp.c"
+      - "sound_bubbles_dsp.h"
+      - "test_harness.c"
+      - ".github/workflows/dsp-harness.yml"
+
+jobs:
+  run-harness:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show files
+        run: |
+          pwd
+          ls -lah
+
+      - name: Build harness
+        run: |
+          gcc test_harness.c sound_bubbles_dsp.c -O2 -Wall -Wextra -std=c11 -lm -o test_harness
+
+      - name: Run harness
+        run: |
+          ./test_harness
+
+      - name: Show generated raw files
+        run: |
+          find . -maxdepth 1 -type f -name "*.raw" -ls
+
+      - name: Convert raw float32 stereo to wav
+        run: |
+          python3 << 'PY'
+          import glob
+          import os
+          import struct
+          import wave
+
+          SAMPLE_RATE = 44100
+          CHANNELS = 2
+
+          raw_files = sorted(glob.glob("*.raw"))
+          if not raw_files:
+              raise SystemExit("No .raw files found to convert.")
+
+          for raw_path in raw_files:
+              wav_path = os.path.splitext(raw_path)[0] + ".wav"
+
+              with open(raw_path, "rb") as f:
+                  raw = f.read()
+
+              if len(raw) % 4 != 0:
+                  raise ValueError(f"{raw_path}: raw float32 file size is not a multiple of 4 bytes")
+
+              floats = struct.iter_unpack("<f", raw)
+
+              pcm16 = bytearray()
+              for (v,) in floats:
+                  if v > 1.0:
+                      v = 1.0
+                  elif v < -1.0:
+                      v = -1.0
+
+                  s = int(v * 32767.0)
+                  if s > 32767:
+                      s = 32767
+                  elif s < -32768:
+                      s = -32768
+
+                  pcm16 += struct.pack("<h", s)
+
+              if (len(pcm16) // 2) % CHANNELS != 0:
+                  raise ValueError(f"{raw_path}: sample count is not divisible by channel count")
+
+              with wave.open(wav_path, "wb") as w:
+                  w.setnchannels(CHANNELS)
+                  w.setsampwidth(2)
+                  w.setframerate(SAMPLE_RATE)
+                  w.writeframes(pcm16)
+
+              print(f"Converted {raw_path} -> {wav_path}")
+          PY
+
+      - name: Show generated wav files
+        run: |
+          find . -maxdepth 1 -type f -name "*.wav" -ls
+
+      - name: Upload raw audio artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sound-bubbles-raw-audio
+          path: "*.raw"
+          if-no-files-found: error
+
+      - name: Upload wav audio artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sound-bubbles-wav-audio
+          path: "*.wav"
+          if-no-files-found: error
