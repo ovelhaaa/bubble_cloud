@@ -63,18 +63,30 @@ static void ErrorExit(const char* message) {
     exit(EXIT_FAILURE);
 }
 
-// Minimal manual JSON parser for flat numeric keys
-static float GetJsonFloat(const char* json_str, const char* key, float default_val) {
+// Minimal manual JSON parser for flat numeric keys, enhanced to avoid string contents
+static const char* FindJsonKey(const char* json_str, const char* key) {
     char search_key[256];
     snprintf(search_key, sizeof(search_key), "\"%s\"", key);
+    size_t key_len = strlen(search_key);
 
-    const char* pos = strstr(json_str, search_key);
+    const char* pos = json_str;
+    while ((pos = strstr(pos, search_key)) != NULL) {
+        // Look ahead to ensure the matched string is used as a JSON key (followed by ':')
+        const char* check_pos = pos + key_len;
+        while (*check_pos == ' ' || *check_pos == '\t' || *check_pos == '\r' || *check_pos == '\n') {
+            check_pos++;
+        }
+        if (*check_pos == ':') {
+            return check_pos + 1; // Return the position immediately after the colon
+        }
+        pos += key_len; // Continue searching
+    }
+    return NULL;
+}
+
+static float GetJsonFloat(const char* json_str, const char* key, float default_val) {
+    const char* pos = FindJsonKey(json_str, key);
     if (!pos) return default_val;
-
-    pos = strchr(pos, ':');
-    if (!pos) return default_val;
-
-    pos++; // Skip ':'
 
     float val = default_val;
     if (sscanf(pos, " %f", &val) == 1) {
@@ -84,16 +96,8 @@ static float GetJsonFloat(const char* json_str, const char* key, float default_v
 }
 
 static int32_t GetJsonInt(const char* json_str, const char* key, int32_t default_val) {
-    char search_key[256];
-    snprintf(search_key, sizeof(search_key), "\"%s\"", key);
-
-    const char* pos = strstr(json_str, search_key);
+    const char* pos = FindJsonKey(json_str, key);
     if (!pos) return default_val;
-
-    pos = strchr(pos, ':');
-    if (!pos) return default_val;
-
-    pos++; // Skip ':'
 
     int32_t val = default_val;
     if (sscanf(pos, " %d", &val) == 1) {
