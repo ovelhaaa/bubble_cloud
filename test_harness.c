@@ -10,14 +10,16 @@
 #define SAMPLE_RATE 44100
 #define BLOCK_SIZE 32
 #define TEST_DURATION_SEC 5
+#define DRAIN_DURATION_SEC 1
 #define NUM_SAMPLES (SAMPLE_RATE * TEST_DURATION_SEC)
+#define NUM_DRAIN_SAMPLES (SAMPLE_RATE * DRAIN_DURATION_SEC)
+#define SAFETY_BOUND 5.0f
 
 // Memory for the 2-second delay buffer
 static int16_t delay_buffer_memory[BUBBLES_BUFFER_SIZE_SAMPLES];
 static SoundBubblesEngine_t engine;
 
 // --- Test Vectors ---
-
 typedef enum {
     TEST_VECTOR_SILENCE,
     TEST_VECTOR_IMPULSE,
@@ -26,7 +28,7 @@ typedef enum {
     TEST_VECTOR_SUSTAINED_SINE
 } TestVectorType_t;
 
-void GenerateTestVector(TestVectorType_t type, float* buffer, int num_samples) {
+static void GenerateTestVector(TestVectorType_t type, float* buffer, int num_samples) {
     for (int i = 0; i < num_samples; i++) {
         buffer[i] = 0.0f; // Default silence
 
@@ -66,8 +68,7 @@ void GenerateTestVector(TestVectorType_t type, float* buffer, int num_samples) {
 }
 
 // --- Engine Configuration Baseline ---
-
-EngineConfig_t GetBaselineConfig() {
+static EngineConfig_t GetBaselineConfig() {
     EngineConfig_t cfg = {0};
 
     cfg.noise_floor = 0.001f;
@@ -86,24 +87,25 @@ EngineConfig_t GetBaselineConfig() {
     cfg.density_sustain = 15.0f;
     cfg.density_decay = 5.0f;
 
-    cfg.sustain_read_center_offset_samples = -22050; // -0.5s
+    // Positive distance behind write head
+    cfg.sustain_read_center_offset_samples = 22050; // 0.5s
 
-    // Class Configs
+    // Class Configs (Positive offsets)
     cfg.class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_min = 5.0f;
     cfg.class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_max = 15.0f;
-    cfg.class_configs[BUBBLE_CLASS_MICRO_ATTACK].offset_samples = -441; // -10ms
+    cfg.class_configs[BUBBLE_CLASS_MICRO_ATTACK].offset_samples = 441; // 10ms
     cfg.class_configs[BUBBLE_CLASS_MICRO_ATTACK].jitter_samples = 100;
     cfg.class_configs[BUBBLE_CLASS_MICRO_ATTACK].window_type = WINDOW_TYPE_HANN;
 
     cfg.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].duration_ms_min = 20.0f;
     cfg.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].duration_ms_max = 50.0f;
-    cfg.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].offset_samples = -4410; // -100ms
+    cfg.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].offset_samples = 4410; // 100ms
     cfg.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].jitter_samples = 500;
     cfg.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].window_type = WINDOW_TYPE_HANN;
 
     cfg.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_min = 80.0f;
     cfg.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_max = 200.0f;
-    cfg.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].offset_samples = -22050; // -500ms
+    cfg.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].offset_samples = 22050; // 500ms
     cfg.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].jitter_samples = 4410;
     cfg.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].window_type = WINDOW_TYPE_TUKEY_LIKE;
 
@@ -111,35 +113,49 @@ EngineConfig_t GetBaselineConfig() {
 }
 
 // --- Verification & Assertions ---
+static void ValidateEngineState(SoundBubblesEngine_t* e) {
+    assert(e->engine_state >= ENGINE_STATE_SILENCE && e->engine_state <= ENGINE_STATE_SPARSE_DECAY);
+    assert(e->smoothed_ducking_gain >= 0.0f && e->smoothed_ducking_gain <= 1.0f);
+}
 
-void ValidateOutput(const float* out_l, const float* out_r, int num_samples) {
+static void ValidateVoicesNotStuck(SoundBubblesEngine_t* e) {
+    for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
+        assert(e->voices[i].state == VOICE_STATE_INACTIVE);
+    }
+}
+
+static void ValidateAndTrackOutput(const float* out_l, const float* out_r, int num_samples, float* peak) {
     for (int i = 0; i < num_samples; i++) {
-        // Assert no NaN or Inf
         assert(!isnan(out_l[i]) && !isinf(out_l[i]));
         assert(!isnan(out_r[i]) && !isinf(out_r[i]));
-        // Optional bounds check, output might exceed [-1, 1] slightly before soft-clipping, but should be bounded.
-        assert(out_l[i] >= -10.0f && out_l[i] <= 10.0f);
+
+        assert(out_l[i] >= -SAFETY_BOUND && out_l[i] <= SAFETY_BOUND);
+        assert(out_r[i] >= -SAFETY_BOUND && out_r[i] <= SAFETY_BOUND);
+
+        float abs_l = fabsf(out_l[i]);
+        float abs_r = fabsf(out_r[i]);
+        if (abs_l > *peak) *peak = abs_l;
+        if (abs_r > *peak) *peak = abs_r;
     }
 }
 
-void ValidateEngineState(SoundBubblesEngine_t* engine) {
-    assert(engine->engine_state >= ENGINE_STATE_SILENCE && engine->engine_state <= ENGINE_STATE_SPARSE_DECAY);
-    assert(engine->smoothed_ducking_gain >= 0.0f && engine->smoothed_ducking_gain <= 1.0f);
-}
-
-void ValidateVoicesNotStuck(SoundBubblesEngine_t* engine) {
-    // Verifies that no voices are stuck playing indefinitely when they shouldn't be
-    for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
-        assert(engine->voices[i].state == VOICE_STATE_INACTIVE);
+static void WriteRawFile(const char* filename, const float* out_l, const float* out_r, int num_samples) {
+    FILE* f = fopen(filename, "wb");
+    if (f) {
+        for (int i = 0; i < num_samples; i++) {
+            fwrite(&out_l[i], sizeof(float), 1, f);
+            fwrite(&out_r[i], sizeof(float), 1, f);
+        }
+        fclose(f);
+    } else {
+        printf("Failed to write %s\n", filename);
     }
 }
 
-// --- Main Execution Runner ---
+// --- Main Execution Runners ---
 
-void RunTest(TestVectorType_t type, const char* out_filename) {
-    printf("Running test vector %d...\n", type);
-
-    // Deterministic seed
+static void RunTest(TestVectorType_t type, const char* out_filename) {
+    printf("Running fixed-block test vector %d...\n", type);
     srand(42);
 
     EngineConfig_t config = GetBaselineConfig();
@@ -147,62 +163,136 @@ void RunTest(TestVectorType_t type, const char* out_filename) {
     engine.master_dry_gain = 0.5f;
     engine.master_wet_gain = 0.5f;
 
-    float* in_buffer = (float*)malloc(NUM_SAMPLES * sizeof(float));
-    float* out_l_buffer = (float*)malloc(NUM_SAMPLES * sizeof(float));
-    float* out_r_buffer = (float*)malloc(NUM_SAMPLES * sizeof(float));
+    int total_samples = NUM_SAMPLES;
+    bool needs_drain = (type == TEST_VECTOR_SILENCE || type == TEST_VECTOR_IMPULSE || type == TEST_VECTOR_PLUCKED_TONE);
+    if (needs_drain) {
+        total_samples += NUM_DRAIN_SAMPLES;
+    }
+
+    float* in_buffer = (float*)malloc(total_samples * sizeof(float));
+    float* out_l_buffer = (float*)malloc(total_samples * sizeof(float));
+    float* out_r_buffer = (float*)malloc(total_samples * sizeof(float));
+
+    if (!in_buffer || !out_l_buffer || !out_r_buffer) {
+        printf("Error: Malloc failed for fixed-block test.\n");
+        free(in_buffer); free(out_l_buffer); free(out_r_buffer);
+        exit(1);
+    }
 
     GenerateTestVector(type, in_buffer, NUM_SAMPLES);
+    if (needs_drain) {
+        for (int i = NUM_SAMPLES; i < total_samples; i++) {
+            in_buffer[i] = 0.0f; // Drain period
+        }
+    }
 
-    // Process in blocks
-    int num_blocks = NUM_SAMPLES / BLOCK_SIZE;
+    float peak_val = 0.0f;
+    int num_blocks = total_samples / BLOCK_SIZE;
+
     for (int i = 0; i < num_blocks; i++) {
         int offset = i * BLOCK_SIZE;
         SoundBubbles_ProcessBlock(&engine, &in_buffer[offset], &out_l_buffer[offset], &out_r_buffer[offset], BLOCK_SIZE);
-
-        // Assert state validity every block
         ValidateEngineState(&engine);
     }
 
-    // Process remaining samples if any
-    int remaining = NUM_SAMPLES % BLOCK_SIZE;
+    int remaining = total_samples % BLOCK_SIZE;
     if (remaining > 0) {
         int offset = num_blocks * BLOCK_SIZE;
         SoundBubbles_ProcessBlock(&engine, &in_buffer[offset], &out_l_buffer[offset], &out_r_buffer[offset], remaining);
+        ValidateEngineState(&engine);
     }
 
-    ValidateOutput(out_l_buffer, out_r_buffer, NUM_SAMPLES);
+    ValidateAndTrackOutput(out_l_buffer, out_r_buffer, total_samples, &peak_val);
 
-    // Assert no voices stuck forever for tests that return to silence
-    if (type == TEST_VECTOR_SILENCE || type == TEST_VECTOR_IMPULSE || type == TEST_VECTOR_PLUCKED_TONE) {
+    if (needs_drain) {
         ValidateVoicesNotStuck(&engine);
     }
 
-    // Write interleaved raw float32 file
-    FILE* f = fopen(out_filename, "wb");
-    if (f) {
-        for (int i = 0; i < NUM_SAMPLES; i++) {
-            fwrite(&out_l_buffer[i], sizeof(float), 1, f);
-            fwrite(&out_r_buffer[i], sizeof(float), 1, f);
-        }
-        fclose(f);
-        printf("Wrote %s (Raw Interleaved Stereo Float32, 44100Hz)\n", out_filename);
-    } else {
-        printf("Failed to write %s\n", out_filename);
-    }
+    printf("  Peak Output: %f\n", peak_val);
+    WriteRawFile(out_filename, out_l_buffer, out_r_buffer, total_samples);
 
     free(in_buffer);
     free(out_l_buffer);
     free(out_r_buffer);
 }
 
-int main() {
+static void RunTestIrregularChunks(TestVectorType_t type, const char* out_filename) {
+    printf("Running irregular-chunk test vector %d...\n", type);
+    srand(42);
+
+    EngineConfig_t config = GetBaselineConfig();
+    SoundBubbles_Init(&engine, delay_buffer_memory, &config);
+    engine.master_dry_gain = 0.5f;
+    engine.master_wet_gain = 0.5f;
+
+    int total_samples = NUM_SAMPLES;
+    bool needs_drain = (type == TEST_VECTOR_SILENCE || type == TEST_VECTOR_IMPULSE || type == TEST_VECTOR_PLUCKED_TONE);
+    if (needs_drain) {
+        total_samples += NUM_DRAIN_SAMPLES;
+    }
+
+    float* in_buffer = (float*)malloc(total_samples * sizeof(float));
+    float* out_l_buffer = (float*)malloc(total_samples * sizeof(float));
+    float* out_r_buffer = (float*)malloc(total_samples * sizeof(float));
+
+    if (!in_buffer || !out_l_buffer || !out_r_buffer) {
+        printf("Error: Malloc failed for irregular-chunk test.\n");
+        free(in_buffer); free(out_l_buffer); free(out_r_buffer);
+        exit(1);
+    }
+
+    GenerateTestVector(type, in_buffer, NUM_SAMPLES);
+    if (needs_drain) {
+        for (int i = NUM_SAMPLES; i < total_samples; i++) {
+            in_buffer[i] = 0.0f;
+        }
+    }
+
+    float peak_val = 0.0f;
+    int chunk_sequence[] = {17, 48, 31, 127, 9, 64};
+    int num_sequence_items = sizeof(chunk_sequence) / sizeof(chunk_sequence[0]);
+    int seq_idx = 0;
+    int processed = 0;
+
+    while (processed < total_samples) {
+        int chunk = chunk_sequence[seq_idx];
+        if (processed + chunk > total_samples) {
+            chunk = total_samples - processed;
+        }
+
+        SoundBubbles_ProcessBlock(&engine, &in_buffer[processed], &out_l_buffer[processed], &out_r_buffer[processed], chunk);
+        ValidateEngineState(&engine);
+
+        processed += chunk;
+        seq_idx = (seq_idx + 1) % num_sequence_items;
+    }
+
+    ValidateAndTrackOutput(out_l_buffer, out_r_buffer, total_samples, &peak_val);
+
+    if (needs_drain) {
+        ValidateVoicesNotStuck(&engine);
+    }
+
+    printf("  Peak Output: %f\n", peak_val);
+    WriteRawFile(out_filename, out_l_buffer, out_r_buffer, total_samples);
+
+    free(in_buffer);
+    free(out_l_buffer);
+    free(out_r_buffer);
+}
+
+int main(void) {
     printf("Starting Sound Bubbles DSP Offline Test Harness...\n");
 
+    // Standard fixed-block tests
     RunTest(TEST_VECTOR_SILENCE, "test_out_silence.raw");
     RunTest(TEST_VECTOR_IMPULSE, "test_out_impulse.raw");
     RunTest(TEST_VECTOR_PLUCKED_TONE, "test_out_pluck.raw");
     RunTest(TEST_VECTOR_REPEATED_TRANSIENTS, "test_out_transients.raw");
     RunTest(TEST_VECTOR_SUSTAINED_SINE, "test_out_sustain.raw");
+
+    // Irregular chunk size validation
+    RunTestIrregularChunks(TEST_VECTOR_PLUCKED_TONE, "test_out_pluck_irregular.raw");
 
     printf("All tests completed successfully. No assertions failed.\n");
     return 0;

@@ -71,8 +71,8 @@ Concrete tests to verify functional behavior:
 ## 5. State machine test plan
 Tests verifying transitions of `engine_state`:
 *   **ENGINE_STATE_SILENCE:**
-    *   *Entry:* `smoothed_env <= tracking_thresh`.
-    *   *Exit:* `smoothed_env > tracking_thresh` (transitions to `SPARSE_DECAY` or `SUSTAIN_BODY`).
+    *   *Entry:* `smoothed_env < noise_floor`.
+    *   *Exit:* `smoothed_env >= tracking_thresh`.
     *   *Failure symptom:* Engine gets stuck in SILENCE despite valid input, or toggles rapidly due to inadequate hysteresis.
 *   **ENGINE_STATE_TRANSIENT_BURST:**
     *   *Entry:* `env_delta > transient_delta`.
@@ -87,8 +87,8 @@ Tests verifying transitions of `engine_state`:
     *   *Exit:* `smoothed_env < sustain_thresh` (drops to DECAY) or large `env_delta` (jumps to TRANSIENT).
     *   *Failure symptom:* Prematurely drops to DECAY during vibrato or tremolo.
 *   **ENGINE_STATE_SPARSE_DECAY:**
-    *   *Entry:* `smoothed_env <= sustain_thresh` and `smoothed_env > tracking_thresh`.
-    *   *Exit:* `smoothed_env <= tracking_thresh` (to SILENCE).
+    *   *Entry:* `smoothed_env < sustain_thresh` but `> noise_floor`.
+    *   *Exit:* `smoothed_env < noise_floor` (to SILENCE).
     *   *Failure symptom:* Stays in DECAY forever due to DC offset or high noise floor configuration.
 
 ## 6. Scheduler and voice-allocation test plan
@@ -146,7 +146,7 @@ If the validation tests expose bugs, follow this prioritized diagnostic checklis
 1.  **NaN/Inf in Output:** Check the 1-pole filter coefficients. Ensure `expf` inputs are sane. Check for division by zero in `LinearInterpolate` or window phase calculations.
 2.  **Voices Not Spawning:** Check the envelope tracker constants. Ensure the input signal is actually crossing `noise_floor` and `tracking_thresh`. Verify `burst_immediate_count` is not zero.
 3.  **Harsh Clicks/Pops:** Investigate voice stealing. Ensure `VOICE_STATE_PREEMPT_FADING` actually executes a fast fade-out and doesn't immediately jump to IDLE. Verify `CheckGuardZoneDirectional` is functioning.
-4.  **Audio Stutter/Dropouts:** This indicates `ProcessBlock` is taking too long. Check the complexity of the RNG (`rand()`) in the control-rate logic. Check if `Scheduler_SpawnImmediateBurst` is trying to spawn too many voices synchronously.
+4.  **Audio Stutter/Dropouts:** This indicates `ProcessBlock` is taking too long. Check the complexity of the RNG (`rand()`) in the hot loop. Check if `Scheduler_SpawnImmediateBurst` is trying to spawn too many voices synchronously.
 5.  **State Machine Stuck:** Check `burst_timer_ticks` incrementation in the control-rate tick. Ensure hysteresis between `sustain_thresh` and `tracking_thresh` is wide enough to prevent rapid oscillation.
 
 ## 13. Final recommendation
