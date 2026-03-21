@@ -71,8 +71,8 @@ Concrete tests to verify functional behavior:
 ## 5. State machine test plan
 Tests verifying transitions of `engine_state`:
 *   **ENGINE_STATE_SILENCE:**
-    *   *Entry:* `smoothed_env < noise_floor`.
-    *   *Exit:* `smoothed_env >= tracking_thresh`.
+    *   *Entry:* `smoothed_env <= tracking_thresh`.
+    *   *Exit:* `smoothed_env > tracking_thresh` (transitions to `SPARSE_DECAY` or `SUSTAIN_BODY`).
     *   *Failure symptom:* Engine gets stuck in SILENCE despite valid input, or toggles rapidly due to inadequate hysteresis.
 *   **ENGINE_STATE_TRANSIENT_BURST:**
     *   *Entry:* `env_delta > transient_delta`.
