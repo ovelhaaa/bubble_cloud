@@ -87,8 +87,8 @@ Tests verifying transitions of `engine_state`:
     *   *Exit:* `smoothed_env < sustain_thresh` (drops to DECAY) or large `env_delta` (jumps to TRANSIENT).
     *   *Failure symptom:* Prematurely drops to DECAY during vibrato or tremolo.
 *   **ENGINE_STATE_SPARSE_DECAY:**
-    *   *Entry:* `smoothed_env < sustain_thresh` but `> noise_floor`.
-    *   *Exit:* `smoothed_env < noise_floor` (to SILENCE).
+    *   *Entry:* `smoothed_env <= sustain_thresh` and `smoothed_env > tracking_thresh`.
+    *   *Exit:* `smoothed_env <= tracking_thresh` (to SILENCE).
     *   *Failure symptom:* Stays in DECAY forever due to DC offset or high noise floor configuration.
 
 ## 6. Scheduler and voice-allocation test plan
