@@ -50,7 +50,7 @@ Constants are explicitly separated into compile-time fixed configurations and va
 
 ## 2. Corrected Runtime Data Model
 
-To eliminate ambiguity, floating-point math is restricted where integer math is safer (e.g., buffer indexing, timer countdowns). The abstract `buffer_interest_region` is replaced with `sustain_read_anchor_samples`, a deterministic integer offset relative to the write head.
+To eliminate ambiguity, floating-point math is restricted where integer math is safer (e.g., buffer indexing, timer countdowns). The abstract `buffer_interest_region` is replaced with `sustain_read_center_offset_samples`, a deterministic integer offset relative to the write head.
 
 ### Tunable Configuration Structs
 ```c
@@ -202,15 +202,16 @@ Given the ESP32-S3's architectural constraints (Single-precision FPU, PSRAM cach
     *   `phase` (0.0 to 1.0) remains `float`.
     *   `read_ptr` remains `float`.
     *   Timers (`burst_timer_ticks`, `fade_samples_remaining`) must be `int`.
-    *   Buffer offsets (`sustain_read_anchor_samples`, `write_head`) must be `int`.
+    *   Buffer offsets (`sustain_read_center_offset_samples`, `write_head`) must be `int`.
 
 ## 6. Fixed Runtime Invariants
 
 To guarantee determinism and prevent audio artifacts, the following runtime invariants must be enforced within the DSP loop:
 
-1.  **Write-Head Guard Zone:** The distance between a bubble's `read_ptr` and the global `write_head` must always be evaluated per-sample. If the read pointer advances within `SCHED_WRITE_GUARD_SAMPLES` (e.g., 64 samples) behind the write head, the read pointer is **not** clamped. Instead, the bubble's `fade_samples_remaining` is immediately set to `SCHED_PREEMPT_FADE_SAMPLES` and its state is forced to `VOICE_PREEMPT_FADING`. This acts as a safety release valve to gracefully silence bubbles before they can read invalid memory or overtake the W pointer.
+1.  **Write-Head Guard Zone:** The distance between a bubble's `read_ptr` and the global `write_head` must always be evaluated per-sample. If the read pointer advances within `SCHED_WRITE_GUARD_SAMPLES` (e.g., 64 samples) behind the write head, the read pointer is **not** clamped. Instead, the bubble's `fade_samples_remaining` is immediately set to `SCHED_PREEMPT_FADE_SAMPLES` and its state is forced to `VOICE_PREEMPT_FADING`. This acts as a safety release valve to gracefully silence bubbles before they can read invalid memory or overtake the W pointer. *(Note: in v1, `VOICE_PREEMPT_FADING` is deliberately reused both for stolen voices and for this write-head-guard forced release).*
 2.  **Ducking Coefficient Pre-calculation:** The 1-pole IIR coefficients for ducking (`duck_attack_coef` and `duck_release_coef`) are never calculated inside the audio callback. They must be derived at init/config time using the standard formula `coef = 1.0f - exp(-1.0f / time_in_ticks)`.
 3.  **Strict State/Class Linkage:** Bubble classes are not randomly selected from a global pool. The probability distribution is rigidly hardcoded to the active engine state (Burst, Sustain, Decay) as defined in the Scheduler Model.
+4.  **Maximum Spawns Per Tick:** The `spawn_accumulator` logic must explicitly abort if the number of spawns attempts to exceed `SCHED_MAX_SPAWNS_PER_TICK` in a single control tick. This strict cap prevents unbounded loops and catastrophic CPU spikes.
 
 ## 7. Final v1 Baseline
 
