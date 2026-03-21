@@ -85,16 +85,6 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
 
 void SoundBubbles_UpdateConfig(SoundBubblesEngine_t* engine, const EngineConfig_t* new_config) {
     engine->config = *new_config;
-
-    // Update ducking coefficients runtime if changed.
-    // Explicitly preserve z1 state to prevent pops during control changes.
-    if (engine->internal_ducking_target < 1.0f) {
-        engine->ducking_lpf.b0 = engine->config.duck_attack_coef;
-        engine->ducking_lpf.a1 = 1.0f - engine->config.duck_attack_coef;
-    } else {
-        engine->ducking_lpf.b0 = engine->config.duck_release_coef;
-        engine->ducking_lpf.a1 = 1.0f - engine->config.duck_release_coef;
-    }
 }
 
 // --- Audio-Rate Processing Loop ---
