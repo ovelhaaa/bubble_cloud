@@ -29,6 +29,8 @@
 
 // --- WAV Header Structures ---
 
+// We only use this to build the exact output header now.
+// For input, we will robustly scan chunks.
 #pragma pack(push, 1)
 typedef struct {
     char chunkId[4];       // "RIFF"
@@ -47,7 +49,7 @@ typedef struct {
 
 typedef struct {
     float* data;
-    uint32_t numSamples;
+    uint32_t numSamples; // In frames
     uint16_t numChannels;
     uint32_t sampleRate;
 } WavData;
@@ -106,68 +108,159 @@ static int32_t GetJsonInt(const char* json_str, const char* key, int32_t default
     return default_val;
 }
 
+// --- Validation Functions ---
+static void ValidateConfig(const EngineConfig_t* config, float master_dry, float master_wet) {
+    if (config->density_burst < 0.0f || config->density_sustain < 0.0f || config->density_decay < 0.0f) {
+        ErrorExit("Preset validation failed: densities must be >= 0.");
+    }
+    if (config->burst_duration_ticks < 0 || config->burst_immediate_count < 0) {
+        ErrorExit("Preset validation failed: burst_duration_ticks and burst_immediate_count must be >= 0.");
+    }
+    if (config->sustain_read_center_offset_samples < 0) {
+        ErrorExit("Preset validation failed: sustain_read_center_offset_samples must be >= 0.");
+    }
+
+    if (!isfinite(config->duck_burst_level) || config->duck_burst_level < 0.0f || config->duck_burst_level > 1.0f) {
+        ErrorExit("Preset validation failed: duck_burst_level must be between 0.0 and 1.0.");
+    }
+    if (!isfinite(config->duck_attack_coef) || config->duck_attack_coef < 0.0f || config->duck_attack_coef > 1.0f) {
+        ErrorExit("Preset validation failed: duck_attack_coef must be between 0.0 and 1.0.");
+    }
+    if (!isfinite(config->duck_release_coef) || config->duck_release_coef < 0.0f || config->duck_release_coef > 1.0f) {
+        ErrorExit("Preset validation failed: duck_release_coef must be between 0.0 and 1.0.");
+    }
+
+    if (!isfinite(master_dry) || master_dry < 0.0f || !isfinite(master_wet) || master_wet < 0.0f) {
+        ErrorExit("Preset validation failed: master_dry and master_wet must be finite and >= 0.");
+    }
+
+    for (int i = 0; i < BUBBLE_CLASS_COUNT; i++) {
+        const BubbleClassConfig_t* c = &config->class_configs[i];
+        if (c->duration_ms_min <= 0.0f || c->duration_ms_max <= 0.0f) {
+            ErrorExit("Preset validation failed: class durations must be > 0.");
+        }
+        if (c->offset_samples < 0 || c->jitter_samples < 0) {
+            ErrorExit("Preset validation failed: class offsets and jitters must be >= 0.");
+        }
+    }
+}
+
 // --- WAV I/O ---
 
 static WavData ReadWav(const char* filename) {
     FILE* file = fopen(filename, "rb");
     if (!file) ErrorExit("Could not open input WAV file.");
 
-    WavHeader header;
-    if (fread(&header, sizeof(WavHeader), 1, file) != 1) {
+    char riff_id[4];
+    uint32_t riff_size;
+    char wave_id[4];
+
+    if (fread(riff_id, 1, 4, file) != 4 ||
+        fread(&riff_size, 4, 1, file) != 1 ||
+        fread(wave_id, 1, 4, file) != 4) {
         fclose(file);
-        ErrorExit("Failed to read WAV header.");
+        ErrorExit("Failed to read root RIFF header.");
     }
 
-    if (strncmp(header.chunkId, "RIFF", 4) != 0 || strncmp(header.format, "WAVE", 4) != 0) {
+    if (strncmp(riff_id, "RIFF", 4) != 0 || strncmp(wave_id, "WAVE", 4) != 0) {
         fclose(file);
-        ErrorExit("Input file is not a valid WAV file.");
+        ErrorExit("Input file is not a valid RIFF/WAVE file.");
     }
 
-    if (header.sampleRate != BUBBLES_SAMPLE_RATE) {
+    bool fmt_found = false;
+    bool data_found = false;
+
+    uint16_t audioFormat = 0;
+    uint16_t numChannels = 0;
+    uint32_t sampleRate = 0;
+    uint16_t bitsPerSample = 0;
+    uint32_t dataSize = 0;
+    long dataOffset = 0;
+
+    // Iterate through chunks
+    char chunkId[4];
+    uint32_t chunkSize;
+
+    while (fread(chunkId, 1, 4, file) == 4 && fread(&chunkSize, 4, 1, file) == 1) {
+        if (strncmp(chunkId, "fmt ", 4) == 0) {
+            fmt_found = true;
+            if (chunkSize < 16) {
+                fclose(file);
+                ErrorExit("Invalid fmt chunk size.");
+            }
+            if (fread(&audioFormat, 2, 1, file) != 1 ||
+                fread(&numChannels, 2, 1, file) != 1 ||
+                fread(&sampleRate, 4, 1, file) != 1 ||
+                fseek(file, 6, SEEK_CUR) != 0 || // skip byteRate and blockAlign
+                fread(&bitsPerSample, 2, 1, file) != 1) {
+                fclose(file);
+                ErrorExit("Failed to read fmt chunk.");
+            }
+            // Skip any remaining bytes in the fmt chunk (e.g. cbSize extensions)
+            fseek(file, chunkSize - 16, SEEK_CUR);
+        } else if (strncmp(chunkId, "data", 4) == 0) {
+            data_found = true;
+            dataSize = chunkSize;
+            dataOffset = ftell(file);
+            break; // Stop parsing chunks once we find data
+        } else {
+            // Skip unknown chunk
+            fseek(file, chunkSize, SEEK_CUR);
+        }
+
+        // RIFF pads odd-sized chunks with a single null byte
+        if (chunkSize % 2 != 0) {
+            fseek(file, 1, SEEK_CUR);
+        }
+    }
+
+    if (!fmt_found || !data_found) {
+        fclose(file);
+        ErrorExit("Input WAV file must contain 'fmt ' and 'data' chunks.");
+    }
+
+    if (sampleRate != BUBBLES_SAMPLE_RATE) {
         fclose(file);
         ErrorExit("Input WAV must be 44.1 kHz.");
     }
 
-    if (header.numChannels != 1 && header.numChannels != 2) {
+    if (numChannels != 1 && numChannels != 2) {
         fclose(file);
         ErrorExit("Input WAV must be Mono or Stereo.");
     }
 
-    if (header.audioFormat != 1 && header.audioFormat != 3) {
+    if (audioFormat != 1 && audioFormat != 3) {
         fclose(file);
         ErrorExit("Unsupported audio format (must be PCM or IEEE Float).");
     }
 
-    // Skip to data chunk
-    char chunkId[4];
-    uint32_t chunkSize;
-    bool dataFound = false;
+    // Seek back to start of data chunk
+    fseek(file, dataOffset, SEEK_SET);
 
-    // We might have an extended fmt chunk, cbSize etc. Let's just search for 'data' chunk
-    // But safely, by reading chunks
-    fseek(file, 12, SEEK_SET); // After RIFF... WAVE
-
-    while (fread(chunkId, 1, 4, file) == 4) {
-        if (fread(&chunkSize, 4, 1, file) != 1) break;
-        if (strncmp(chunkId, "data", 4) == 0) {
-            dataFound = true;
-            break;
+    uint32_t numSamplesTotal = 0;
+    if (bitsPerSample == 16) {
+        if (dataSize % 2 != 0) {
+             fclose(file);
+             ErrorExit("PCM16 data size is not a multiple of 2.");
         }
-        fseek(file, chunkSize, SEEK_CUR);
-    }
-
-    if (!dataFound) {
+        numSamplesTotal = dataSize / 2;
+    } else if (bitsPerSample == 32) {
+        if (dataSize % 4 != 0) {
+             fclose(file);
+             ErrorExit("Float32 data size is not a multiple of 4.");
+        }
+        numSamplesTotal = dataSize / 4;
+    } else {
         fclose(file);
-        ErrorExit("Could not find data chunk in WAV file.");
+        ErrorExit("Unsupported bit depth (must be 16-bit PCM or 32-bit Float).");
     }
 
-    uint32_t numSamplesTotal = chunkSize / (header.bitsPerSample / 8);
-    uint32_t numFrames = numSamplesTotal / header.numChannels;
+    uint32_t numFrames = numSamplesTotal / numChannels;
 
     WavData wav;
-    wav.numSamples = numFrames; // We'll store it as frames
-    wav.numChannels = header.numChannels;
-    wav.sampleRate = header.sampleRate;
+    wav.numSamples = numFrames;
+    wav.numChannels = numChannels;
+    wav.sampleRate = sampleRate;
     wav.data = (float*)malloc(numFrames * wav.numChannels * sizeof(float));
 
     if (!wav.data) {
@@ -175,9 +268,9 @@ static WavData ReadWav(const char* filename) {
         ErrorExit("Failed to allocate memory for input WAV data.");
     }
 
-    if (header.audioFormat == 1 && header.bitsPerSample == 16) {
-        int16_t* pcmData = (int16_t*)malloc(chunkSize);
-        if (!pcmData || fread(pcmData, 1, chunkSize, file) != chunkSize) {
+    if (audioFormat == 1 && bitsPerSample == 16) {
+        int16_t* pcmData = (int16_t*)malloc(dataSize);
+        if (!pcmData || fread(pcmData, 1, dataSize, file) != dataSize) {
             free(pcmData);
             free(wav.data);
             fclose(file);
@@ -187,16 +280,12 @@ static WavData ReadWav(const char* filename) {
             wav.data[i] = (float)pcmData[i] / 32768.0f;
         }
         free(pcmData);
-    } else if (header.audioFormat == 3 && header.bitsPerSample == 32) {
-        if (fread(wav.data, 1, chunkSize, file) != chunkSize) {
+    } else if (audioFormat == 3 && bitsPerSample == 32) {
+        if (fread(wav.data, 1, dataSize, file) != dataSize) {
             free(wav.data);
             fclose(file);
             ErrorExit("Failed to read Float data.");
         }
-    } else {
-        free(wav.data);
-        fclose(file);
-        ErrorExit("Unsupported bit depth (must be 16-bit PCM or 32-bit Float).");
     }
 
     fclose(file);
@@ -308,10 +397,10 @@ static void LoadPreset(const char* filename, EngineConfig_t* config, float* mast
     config->class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].jitter_samples = GetJsonInt(json_str, "short_jitter_samples", 500);
     config->class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].window_type = WINDOW_TYPE_HANN;
 
-    // Sustain Body
+    // Sustain Body - Fixed PR Feedback 2: Default body_offset_samples to 0
     config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_min = GetJsonFloat(json_str, "body_duration_ms_min", 80.0f);
     config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_max = GetJsonFloat(json_str, "body_duration_ms_max", 200.0f);
-    config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].offset_samples = GetJsonInt(json_str, "body_offset_samples", 22050);
+    config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].offset_samples = GetJsonInt(json_str, "body_offset_samples", 0);
     config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].jitter_samples = GetJsonInt(json_str, "body_jitter_samples", 4410);
     config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].window_type = WINDOW_TYPE_TUKEY_LIKE;
 
@@ -339,6 +428,7 @@ int main(int argc, char** argv) {
     float master_dry = 1.0f;
     float master_wet = 1.0f;
     LoadPreset(preset_json_file, &config, &master_dry, &master_wet);
+    ValidateConfig(&config, master_dry, master_wet);
 
     // Read Input Audio
     WavData in_wav = ReadWav(input_wav_file);
@@ -394,6 +484,13 @@ int main(int argc, char** argv) {
 
         SoundBubbles_ProcessBlock(&engine, &mono_in[processed], &out_left[processed], &out_right[processed], chunk);
         processed += chunk;
+    }
+
+    // Final Validation of Rendered Audio
+    for (uint32_t i = 0; i < num_frames; i++) {
+        if (!isfinite(out_left[i]) || !isfinite(out_right[i])) {
+            ErrorExit("Render validation failed: encountered NaN or infinite samples in the output buffer.");
+        }
     }
 
     // Write Output Audio
