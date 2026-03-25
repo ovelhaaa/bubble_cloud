@@ -173,7 +173,6 @@ document.addEventListener('alpine:init', () => {
             const a = document.createElement("a");
             a.href = url;
             a.download = "current.json";
-            a.style.display = "none";
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);

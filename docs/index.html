@@ -39,7 +39,7 @@
                     <template x-for="paramKey in group" :key="paramKey">
                         <div class="param-row">
                             <div class="param-labels">
-                                <label :for="paramKey + '_num'" x-text="formatLabel(paramKey)"></label>
+                                <label :for="paramKey" x-text="formatLabel(paramKey)"></label>
                                 <!-- Numeric Input for precise mobile entry -->
                                 <input
                                     type="number"
