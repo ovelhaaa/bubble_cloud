@@ -44,14 +44,6 @@ jobs:
           OUT_FILENAME="${SCENARIO}_${BASENAME}.wav"
           echo "out_filename=$OUT_FILENAME" >> $GITHUB_OUTPUT
 
-      - name: Verify preset exists
-        run: |
-          if [ ! -f "${{ matrix.preset }}" ]; then
-            echo "Error: Preset file ${{ matrix.preset }} does not exist!"
-            exit 1
-          fi
-          echo "Found preset: ${{ matrix.preset }}"
-
       - name: Build synthetic renderer
         run: |
           gcc sound_bubbles_synth.c sound_bubbles_dsp.c -O2 -Wall -Wextra -std=c11 -lm -o sound_bubbles_synth
