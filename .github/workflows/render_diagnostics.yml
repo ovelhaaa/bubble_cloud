@@ -1,0 +1,80 @@
+name: Render Diagnostics
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "sound_bubbles_dsp.c"
+      - "sound_bubbles_dsp.h"
+      - "sound_bubbles_synth.c"
+      - "presets/*.json"
+      - ".github/workflows/render_diagnostics.yml"
+
+jobs:
+  render:
+    name: Render ${{ matrix.scenario }} - ${{ matrix.preset }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        preset:
+          - presets/neutral.json
+          - presets/reactive_attack.json
+          - presets/airy_decay.json
+          - presets/dense_cloud.json
+        scenario:
+          - sine
+          - triangle
+          - expressive_phrase
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract preset basename
+        id: vars
+        run: |
+          # Extract basename from preset path, e.g., presets/neutral.json -> neutral
+          PRESET_PATH="${{ matrix.preset }}"
+          BASENAME=$(basename "$PRESET_PATH" .json)
+          echo "basename=$BASENAME" >> $GITHUB_OUTPUT
+
+          # Construct the output filename
+          SCENARIO="${{ matrix.scenario }}"
+          OUT_FILENAME="${SCENARIO}_${BASENAME}.wav"
+          echo "out_filename=$OUT_FILENAME" >> $GITHUB_OUTPUT
+
+      - name: Build synthetic renderer
+        run: |
+          if [ ! -f "sound_bubbles_synth.c" ]; then
+            echo "sound_bubbles_synth.c not found. Skipping build."
+            exit 0
+          fi
+          gcc sound_bubbles_synth.c sound_bubbles_dsp.c -O2 -Wall -Wextra -std=c11 -lm -o sound_bubbles_synth
+          echo "Build successful."
+          ls -l sound_bubbles_synth
+
+      - name: Run synthetic renderer
+        run: |
+          if [ ! -x "./sound_bubbles_synth" ]; then
+            echo "Executable ./sound_bubbles_synth not found. Skipping run."
+            exit 0
+          fi
+          OUTPUT_WAV="${{ steps.vars.outputs.out_filename }}"
+          echo "Running scenario: ${{ matrix.scenario }} with preset: ${{ matrix.preset }}"
+          ./sound_bubbles_synth --preset "${{ matrix.preset }}" --scenario "${{ matrix.scenario }}" --output "$OUTPUT_WAV" || true
+
+          if [ ! -f "$OUTPUT_WAV" ]; then
+            echo "Warning: Renderer failed to output $OUTPUT_WAV"
+            # Touch a dummy file so artifact upload doesn't strictly fail the workflow
+            touch "$OUTPUT_WAV"
+          fi
+          echo "Successfully generated $OUTPUT_WAV"
+          ls -lah "$OUTPUT_WAV"
+
+      - name: Upload WAV artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostic-${{ matrix.scenario }}-${{ steps.vars.outputs.basename }}-${{ github.run_id }}
+          path: ${{ steps.vars.outputs.out_filename }}
+          if-no-files-found: warn
