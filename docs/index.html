@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sound Bubbles Editor</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Using Alpine.js for lightweight, reactive state management without a build step -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body x-data="editorApp()">
+    <header class="top-bar">
+        <h1>Sound Bubbles</h1>
+        <div class="status-bar">
+            <span class="status-badge" :class="isDraft ? 'draft' : 'baseline'" x-text="isDraft ? 'Draft Loaded' : 'Baseline Loaded'"></span>
+            <button @click="resetToBaseline()" class="btn-reset">Reset</button>
+        </div>
+    </header>
+
+    <main class="content">
+        <p class="helper-text">
+            Adjust parameters, copy the JSON, and paste it into <code>presets/current.json</code> in your repository. Then trigger the GitHub Action to hear the render.
+        </p>
+
+        <!-- Dynamic Accordion Groups -->
+        <template x-for="(group, groupName) in parameterGroups" :key="groupName">
+            <div class="accordion">
+                <button
+                    class="accordion-header"
+                    @click="toggleAccordion(groupName)"
+                    :aria-expanded="openAccordion === groupName"
+                >
+                    <span x-text="groupName"></span>
+                    <span class="chevron" x-show="openAccordion !== groupName">▼</span>
+                    <span class="chevron" x-show="openAccordion === groupName">▲</span>
+                </button>
+
+                <div class="accordion-content" x-show="openAccordion === groupName" x-collapse>
+                    <template x-for="paramKey in group" :key="paramKey">
+                        <div class="param-row">
+                            <div class="param-labels">
+                                <label :for="paramKey" x-text="formatLabel(paramKey)"></label>
+                                <!-- Numeric Input for precise mobile entry -->
+                                <input
+                                    type="number"
+                                    :id="paramKey + '_num'"
+                                    x-model.number="params[paramKey]"
+                                    @input="saveDraft()"
+                                    :step="getParamConfig(paramKey).step"
+                                    :min="getParamConfig(paramKey).min"
+                                    :max="getParamConfig(paramKey).max"
+                                    class="num-input"
+                                >
+                            </div>
+                            <!-- Thick touch-friendly slider -->
+                            <input
+                                type="range"
+                                :id="paramKey"
+                                x-model.number="params[paramKey]"
+                                @input="saveDraft()"
+                                :step="getParamConfig(paramKey).step"
+                                :min="getParamConfig(paramKey).min"
+                                :max="getParamConfig(paramKey).max"
+                                class="slider"
+                            >
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </template>
+
+        <!-- Spacer to ensure bottom accordions aren't hidden by the fixed footer -->
+        <div class="bottom-spacer"></div>
+    </main>
+
+    <footer class="bottom-action-bar">
+        <div class="action-row">
+            <button @click="copyJson()" class="btn-primary" :class="{'success': copied}">
+                <span x-text="copied ? 'Copied!' : 'Copy JSON'"></span>
+            </button>
+            <button @click="downloadJson()" class="btn-secondary">Download</button>
+        </div>
+        <!-- Replace with actual GitHub Repo Actions URL -->
+        <a href="https://github.com/USER/REPO/actions" target="_blank" class="btn-link">Open GitHub Actions ↗</a>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>
