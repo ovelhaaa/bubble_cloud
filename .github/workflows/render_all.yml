@@ -1,0 +1,110 @@
+name: Render All Presets
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_file:
+        description: 'Input WAV file path'
+        required: false
+        default: 'sample/test_in.wav'
+        type: string
+  push:
+    paths:
+      - 'sound_bubbles_dsp.c'
+      - 'sound_bubbles_dsp.h'
+      - 'sound_bubbles_render.c'
+      - 'presets/*.json'
+      - 'sample/*.wav'
+      - '.github/workflows/render_current.yml'
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set Input Path
+        run: |
+          INPUT_FILE="${{ github.event.inputs.input_file }}"
+
+          if [ -z "$INPUT_FILE" ]; then
+            INPUT_FILE="sample/test_in.wav"
+          fi
+
+          echo "input_file=$INPUT_FILE" >> "$GITHUB_ENV"
+
+      - name: Verify Required Files
+        run: |
+          echo "Checking renderer sources..."
+          ls -l sound_bubbles_render.c sound_bubbles_dsp.c sound_bubbles_dsp.h
+
+          echo "Checking input file: $input_file"
+          if [ ! -f "$input_file" ]; then
+            echo "Error: Input file '$input_file' not found!"
+            exit 1
+          fi
+
+          echo "Checking presets directory..."
+          if [ ! -d presets ]; then
+            echo "Error: presets directory not found!"
+            exit 1
+          fi
+
+          PRESET_COUNT=$(find presets -maxdepth 1 -name '*.json' | wc -l)
+          if [ "$PRESET_COUNT" -eq 0 ]; then
+            echo "Error: No preset JSON files found in presets/!"
+            exit 1
+          fi
+
+          echo "Found $PRESET_COUNT preset(s):"
+          ls -lh presets/*.json
+          echo "Sample files:"
+          ls -lh sample || true
+
+      - name: Compile Offline Renderer
+        run: |
+          gcc sound_bubbles_render.c sound_bubbles_dsp.c -O2 -Wall -Wextra -std=c11 -lm -o sound_bubbles_render
+
+      - name: Render All Presets
+        run: |
+          mkdir -p renders
+
+          INPUT_BASE="$(basename "$input_file" .wav)"
+
+          for preset in presets/*.json; do
+            [ -f "$preset" ] || continue
+
+            PRESET_BASE="$(basename "$preset" .json)"
+            OUTPUT_FILE="renders/${INPUT_BASE}__${PRESET_BASE}.wav"
+
+            echo "Rendering:"
+            echo "  input  = $input_file"
+            echo "  preset = $preset"
+            echo "  output = $OUTPUT_FILE"
+
+            ./sound_bubbles_render "$input_file" "$preset" "$OUTPUT_FILE"
+
+            if [ ! -f "$OUTPUT_FILE" ]; then
+              echo "Error: Failed to generate '$OUTPUT_FILE'"
+              exit 1
+            fi
+          done
+
+      - name: Verify Outputs
+        run: |
+          OUTPUT_COUNT=$(find renders -maxdepth 1 -name '*.wav' | wc -l)
+          if [ "$OUTPUT_COUNT" -eq 0 ]; then
+            echo "Error: No WAV outputs were generated!"
+            exit 1
+          fi
+
+          echo "Generated $OUTPUT_COUNT WAV file(s):"
+          ls -lh renders/*.wav
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-all-presets-${{ github.run_id }}
+          path: renders/*.wav
