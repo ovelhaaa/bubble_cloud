@@ -28,35 +28,92 @@ const BASELINE = {
     master_wet_gain: 0.5
 };
 
-// Logical grouping for UI accordions
-const PARAMETER_GROUPS = {
-    "Analysis / Detection": [
-        "noise_floor", "tracking_thresh", "sustain_thresh", "transient_delta"
+const GROUPS = [
+  {
+    title: "Analysis / Detection",
+    description: "Signal floor and threshold tuning.",
+    fields: ["noise_floor", "tracking_thresh", "sustain_thresh", "transient_delta"],
+  },
+  {
+    title: "Ducking",
+    description: "Burst attenuation and envelope timing.",
+    fields: ["duck_burst_level", "duck_attack_coef", "duck_release_coef"],
+  },
+  {
+    title: "Burst",
+    description: "Burst trigger length and instant spawn count.",
+    fields: ["burst_duration_ticks", "burst_immediate_count"],
+  },
+  {
+    title: "Density",
+    description: "Spawn rates across burst/sustain/decay phases.",
+    fields: ["density_burst", "density_sustain", "density_decay"],
+  },
+  {
+    title: "Sustain Read Position",
+    description: "Read center offset in samples.",
+    fields: ["sustain_read_center_offset_samples"],
+  },
+  {
+    title: "Micro Class",
+    description: "Micro event duration and timeline jitter.",
+    fields: [
+      "micro_duration_ms_min",
+      "micro_duration_ms_max",
+      "micro_offset_samples",
+      "micro_jitter_samples",
     ],
-    "Ducking": [
-        "duck_burst_level", "duck_attack_coef", "duck_release_coef"
+  },
+  {
+    title: "Short Class",
+    description: "Short event duration and timeline jitter.",
+    fields: [
+      "short_duration_ms_min",
+      "short_duration_ms_max",
+      "short_offset_samples",
+      "short_jitter_samples",
     ],
-    "Burst": [
-        "burst_duration_ticks", "burst_immediate_count"
-    ],
-    "Density": [
-        "density_burst", "density_sustain", "density_decay"
-    ],
-    "Sustain Read Position": [
-        "sustain_read_center_offset_samples"
-    ],
-    "Micro Class": [
-        "micro_duration_ms_min", "micro_duration_ms_max", "micro_offset_samples", "micro_jitter_samples"
-    ],
-    "Short Class": [
-        "short_duration_ms_min", "short_duration_ms_max", "short_offset_samples", "short_jitter_samples"
-    ],
-    "Body Class": [
-        "body_duration_ms_min", "body_duration_ms_max", "body_offset_samples", "body_jitter_samples"
-    ],
-    "Output Mix": [
-        "master_dry_gain", "master_wet_gain"
-    ]
+  },
+  {
+    title: "Body Class",
+    description: "Body event duration and timeline jitter.",
+    fields: ["body_duration_ms_min", "body_duration_ms_max", "body_offset_samples", "body_jitter_samples"],
+  },
+  {
+    title: "Output Mix",
+    description: "Final dry/wet blend.",
+    fields: ["master_dry_gain", "master_wet_gain"],
+  },
+];
+
+const FIELD_CONFIG = {
+  noise_floor: { min: 0, max: 0.1, step: 0.001 },
+  tracking_thresh: { min: 0, max: 0.5, step: 0.005 },
+  sustain_thresh: { min: 0, max: 0.5, step: 0.005 },
+  transient_delta: { min: 0, max: 0.5, step: 0.005 },
+  duck_burst_level: { min: 0, max: 1, step: 0.01 },
+  duck_attack_coef: { min: 0.5, max: 0.999, step: 0.001 },
+  duck_release_coef: { min: 0.5, max: 0.999, step: 0.001 },
+  burst_duration_ticks: { min: 0, max: 100, step: 1 },
+  burst_immediate_count: { min: 0, max: 20, step: 1 },
+  density_burst: { min: 0, max: 200, step: 1 },
+  density_sustain: { min: 0, max: 100, step: 1 },
+  density_decay: { min: 0, max: 50, step: 1 },
+  sustain_read_center_offset_samples: { min: 0, max: 88200, step: 10 },
+  micro_duration_ms_min: { min: 1, max: 50, step: 0.5 },
+  micro_duration_ms_max: { min: 1, max: 100, step: 0.5 },
+  micro_offset_samples: { min: 0, max: 88200, step: 10 },
+  micro_jitter_samples: { min: 0, max: 44100, step: 10 },
+  short_duration_ms_min: { min: 10, max: 100, step: 1 },
+  short_duration_ms_max: { min: 10, max: 200, step: 1 },
+  short_offset_samples: { min: 0, max: 88200, step: 10 },
+  short_jitter_samples: { min: 0, max: 44100, step: 10 },
+  body_duration_ms_min: { min: 50, max: 500, step: 1 },
+  body_duration_ms_max: { min: 50, max: 1000, step: 1 },
+  body_offset_samples: { min: 0, max: 88200, step: 10 },
+  body_jitter_samples: { min: 0, max: 88200, step: 10 },
+  master_dry_gain: { min: 0, max: 2, step: 0.01 },
+  master_wet_gain: { min: 0, max: 2, step: 0.01 },
 };
 
 // Provides min, max, and sensible step values for the thick sliders
