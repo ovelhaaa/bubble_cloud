@@ -1,89 +1,68 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Sound Bubbles Editor</title>
-    <link rel="stylesheet" href="style.css">
-    <!-- Using Alpine.js for lightweight, reactive state management without a build step -->
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-</head>
-<body x-data="editorApp()">
-    <header class="top-bar">
-        <h1>Sound Bubbles</h1>
-        <div class="status-bar">
-            <span class="status-badge" :class="isDraft ? 'draft' : 'baseline'" x-text="isDraft ? 'Draft Loaded' : 'Baseline Loaded'"></span>
-            <button @click="resetToBaseline()" class="btn-reset">Reset</button>
-        </div>
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
+    />
+    <title>Sound Bubbles Preset Editor</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <h1>Sound Bubbles Preset Editor</h1>
+        <p class="subtitle">Track A · Mobile-first static UI</p>
+      </div>
+      <span id="loadStatus" class="status-pill" aria-live="polite">Baseline loaded</span>
     </header>
 
-    <main class="content">
-        <p class="helper-text">
-            Adjust parameters, copy the JSON, and paste it into <code>presets/current.json</code> in your repository. Then trigger the GitHub Action to hear the render.
+    <main class="app-main" id="appRoot">
+      <section class="card intro">
+        <p>
+          Edit parameters, then copy/download JSON and commit it to
+          <code>presets/current.json</code> before running the render workflow.
         </p>
+        <ol>
+          <li>Update values below (saved as local draft automatically).</li>
+          <li>Copy or download flat JSON.</li>
+          <li>Commit JSON, then run GitHub Actions render.</li>
+        </ol>
+        <p class="actions-hint">
+          Replace these placeholders with your real repo links:
+          <a href="https://github.com/REPLACE_ME_ORG/REPLACE_ME_REPO/actions" target="_blank" rel="noreferrer">
+            GitHub Actions URL
+          </a>
+          ·
+          <a href="https://github.com/REPLACE_ME_ORG/REPLACE_ME_REPO/blob/main/.github/workflows/render.yml" target="_blank" rel="noreferrer">
+            workflow file URL
+          </a>
+        </p>
+        <button id="resetDraftBtn" class="btn btn-danger" type="button">Reset Draft</button>
+      </section>
 
-        <!-- Dynamic Accordion Groups -->
-        <template x-for="(group, groupName) in parameterGroups" :key="groupName">
-            <div class="accordion">
-                <button
-                    class="accordion-header"
-                    @click="toggleAccordion(groupName)"
-                    :aria-expanded="openAccordion === groupName"
-                >
-                    <span x-text="groupName"></span>
-                    <span class="chevron" x-show="openAccordion !== groupName">▼</span>
-                    <span class="chevron" x-show="openAccordion === groupName">▲</span>
-                </button>
-
-                <div class="accordion-content" x-show="openAccordion === groupName" x-collapse>
-                    <template x-for="paramKey in group" :key="paramKey">
-                        <div class="param-row">
-                            <div class="param-labels">
-                                <label :for="paramKey" x-text="formatLabel(paramKey)"></label>
-                                <!-- Numeric Input for precise mobile entry -->
-                                <input
-                                    type="number"
-                                    :id="paramKey + '_num'"
-                                    x-model.number="params[paramKey]"
-                                    @input="saveDraft()"
-                                    :step="getParamConfig(paramKey).step"
-                                    :min="getParamConfig(paramKey).min"
-                                    :max="getParamConfig(paramKey).max"
-                                    class="num-input"
-                                >
-                            </div>
-                            <!-- Thick touch-friendly slider -->
-                            <input
-                                type="range"
-                                :id="paramKey"
-                                x-model.number="params[paramKey]"
-                                @input="saveDraft()"
-                                :step="getParamConfig(paramKey).step"
-                                :min="getParamConfig(paramKey).min"
-                                :max="getParamConfig(paramKey).max"
-                                class="slider"
-                            >
-                        </div>
-                    </template>
-                </div>
-            </div>
-        </template>
-
-        <!-- Spacer to ensure bottom accordions aren't hidden by the fixed footer -->
-        <div class="bottom-spacer"></div>
+      <section id="editorSections" aria-label="Preset parameters"></section>
+      <div class="footer-spacer" aria-hidden="true"></div>
     </main>
 
-    <footer class="bottom-action-bar">
-        <div class="action-row">
-            <button @click="copyJson()" class="btn-primary" :class="{'success': copied}">
-                <span x-text="copied ? 'Copied!' : 'Copy JSON'"></span>
-            </button>
-            <button @click="downloadJson()" class="btn-secondary">Download</button>
-        </div>
-        <!-- Replace with actual GitHub Repo Actions URL -->
-        <a href="https://github.com/USER/REPO/actions" target="_blank" class="btn-link">Open GitHub Actions ↗</a>
+    <footer class="sticky-footer">
+      <div class="footer-actions">
+        <button id="copyJsonBtn" class="btn btn-primary" type="button">Copy JSON</button>
+        <button id="downloadJsonBtn" class="btn btn-secondary" type="button">Download JSON</button>
+      </div>
+      <a
+        class="btn btn-link"
+        href="https://github.com/REPLACE_ME_ORG/REPLACE_ME_REPO/actions"
+        target="_blank"
+        rel="noreferrer"
+      >
+        Open GitHub Actions
+      </a>
     </footer>
 
+    <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
     <script src="app.js"></script>
-</body>
+  </body>
 </html>
