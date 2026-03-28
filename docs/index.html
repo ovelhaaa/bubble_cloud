@@ -12,14 +12,14 @@
     <header class="top-bar">
         <h1>Sound Bubbles</h1>
         <div class="status-bar">
-            <span class="status-badge" :class="isDraft ? 'draft' : 'baseline'" x-text="isDraft ? 'Draft Loaded' : 'Baseline Loaded'"></span>
+            <span class="status-badge" :class="isDraft ? 'draft' : 'baseline'" x-text="isDraft ? 'Local Draft' : 'Baseline Defaults'"></span>
             <button @click="resetToBaseline()" class="btn-reset">Reset</button>
         </div>
     </header>
 
     <main class="content">
         <p class="helper-text">
-            Adjust parameters, copy the JSON, and paste it into <code>presets/current.json</code> in your repository. Then trigger the GitHub Action to hear the render.
+            Adjust parameters, copy or download the flat JSON, update <code>presets/current.json</code> in GitHub, then run the render workflow.
         </p>
 
         <!-- Dynamic Accordion Groups -->
@@ -35,7 +35,7 @@
                     <span class="chevron" x-show="openAccordion === groupName">▲</span>
                 </button>
 
-                <div class="accordion-content" x-show="openAccordion === groupName" x-collapse>
+                <div class="accordion-content" x-show="openAccordion === groupName">
                     <template x-for="paramKey in group" :key="paramKey">
                         <div class="param-row">
                             <div class="param-labels">
