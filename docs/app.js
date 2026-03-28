@@ -1,11 +1,11 @@
 const BASELINE = {
     noise_floor: 0.001,
     tracking_thresh: 0.01,
-    sustain_thresh: 0.1,
+    sustain_thresh: 0.05,
     transient_delta: 0.05,
     duck_burst_level: 0.2,
-    duck_attack_coef: 0.99,
-    duck_release_coef: 0.999,
+    duck_attack_coef: 0.80,
+    duck_release_coef: 0.99,
     burst_duration_ticks: 10,
     burst_immediate_count: 3,
     density_burst: 50.0,
@@ -22,7 +22,7 @@ const BASELINE = {
     short_jitter_samples: 500,
     body_duration_ms_min: 80.0,
     body_duration_ms_max: 200.0,
-    body_offset_samples: 22050,
+    body_offset_samples: 0,
     body_jitter_samples: 4410,
     master_dry_gain: 0.5,
     master_wet_gain: 0.5
@@ -74,9 +74,9 @@ const PARAM_CONFIGS = {
     burst_duration_ticks: { min: 0, max: 100, step: 1 },
     burst_immediate_count: { min: 0, max: 20, step: 1 },
     // Density (Spawns per second)
-    density_burst: { min: 0.0, max: 200.0, step: 1.0 },
-    density_sustain: { min: 0.0, max: 100.0, step: 1.0 },
-    density_decay: { min: 0.0, max: 50.0, step: 1.0 },
+    density_burst: { min: 0.0, max: 100.0, step: 1.0 },
+    density_sustain: { min: 0.0, max: 40.0, step: 1.0 },
+    density_decay: { min: 0.0, max: 20.0, step: 1.0 },
     // Global Read Offset
     sustain_read_center_offset_samples: { min: 0, max: 88200, step: 100 },
     // Micro
@@ -127,8 +127,21 @@ document.addEventListener('alpine:init', () => {
             this.isDraft = false;
         },
 
+        sanitizeDurations() {
+            if (this.params.micro_duration_ms_min > this.params.micro_duration_ms_max) {
+                this.params.micro_duration_ms_max = this.params.micro_duration_ms_min;
+            }
+            if (this.params.short_duration_ms_min > this.params.short_duration_ms_max) {
+                this.params.short_duration_ms_max = this.params.short_duration_ms_min;
+            }
+            if (this.params.body_duration_ms_min > this.params.body_duration_ms_max) {
+                this.params.body_duration_ms_max = this.params.body_duration_ms_min;
+            }
+        },
+
         saveDraft() {
             // Keep JSON absolutely flat, ignoring UI grouping logic
+            this.sanitizeDurations();
             localStorage.setItem('sb_draft', JSON.stringify(this.params, null, 2));
             this.isDraft = true;
         },
@@ -156,6 +169,7 @@ document.addEventListener('alpine:init', () => {
         },
 
         copyJson() {
+            this.sanitizeDurations();
             const jsonStr = JSON.stringify(this.params, null, 2);
             navigator.clipboard.writeText(jsonStr).then(() => {
                 this.copied = true;
@@ -167,6 +181,7 @@ document.addEventListener('alpine:init', () => {
         },
 
         downloadJson() {
+            this.sanitizeDurations();
             const jsonStr = JSON.stringify(this.params, null, 2);
             const blob = new Blob([jsonStr], { type: "application/json" });
             const url = URL.createObjectURL(blob);
