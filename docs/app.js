@@ -1,33 +1,31 @@
-const STORAGE_KEY = "sound_bubbles_preset_draft_v1";
-
-const BASELINE_PRESET = {
-  noise_floor: 0.001,
-  tracking_thresh: 0.01,
-  sustain_thresh: 0.1,
-  transient_delta: 0.05,
-  duck_burst_level: 0.2,
-  duck_attack_coef: 0.99,
-  duck_release_coef: 0.999,
-  burst_duration_ticks: 10,
-  burst_immediate_count: 3,
-  density_burst: 50,
-  density_sustain: 15,
-  density_decay: 5,
-  sustain_read_center_offset_samples: 22050,
-  micro_duration_ms_min: 5,
-  micro_duration_ms_max: 15,
-  micro_offset_samples: 441,
-  micro_jitter_samples: 100,
-  short_duration_ms_min: 20,
-  short_duration_ms_max: 50,
-  short_offset_samples: 4410,
-  short_jitter_samples: 500,
-  body_duration_ms_min: 80,
-  body_duration_ms_max: 200,
-  body_offset_samples: 22050,
-  body_jitter_samples: 4410,
-  master_dry_gain: 0.5,
-  master_wet_gain: 0.5,
+const BASELINE = {
+    noise_floor: 0.001,
+    tracking_thresh: 0.01,
+    sustain_thresh: 0.05,
+    transient_delta: 0.05,
+    duck_burst_level: 0.2,
+    duck_attack_coef: 0.80,
+    duck_release_coef: 0.99,
+    burst_duration_ticks: 10,
+    burst_immediate_count: 3,
+    density_burst: 50.0,
+    density_sustain: 15.0,
+    density_decay: 5.0,
+    sustain_read_center_offset_samples: 22050,
+    micro_duration_ms_min: 5.0,
+    micro_duration_ms_max: 15.0,
+    micro_offset_samples: 441,
+    micro_jitter_samples: 100,
+    short_duration_ms_min: 20.0,
+    short_duration_ms_max: 50.0,
+    short_offset_samples: 4410,
+    short_jitter_samples: 500,
+    body_duration_ms_min: 80.0,
+    body_duration_ms_max: 200.0,
+    body_offset_samples: 0,
+    body_jitter_samples: 4410,
+    master_dry_gain: 0.5,
+    master_wet_gain: 0.5
 };
 
 const GROUPS = [
@@ -118,189 +116,139 @@ const FIELD_CONFIG = {
   master_wet_gain: { min: 0, max: 2, step: 0.01 },
 };
 
-const state = {
-  preset: { ...BASELINE_PRESET },
+// Provides min, max, and sensible step values for the thick sliders
+const PARAM_CONFIGS = {
+    // Analysis
+    noise_floor: { min: 0.0, max: 0.1, step: 0.001 },
+    tracking_thresh: { min: 0.0, max: 0.5, step: 0.01 },
+    sustain_thresh: { min: 0.0, max: 0.5, step: 0.01 },
+    transient_delta: { min: 0.0, max: 0.5, step: 0.01 },
+    // Ducking
+    duck_burst_level: { min: 0.0, max: 1.0, step: 0.01 },
+    duck_attack_coef: { min: 0.5, max: 0.999, step: 0.001 },
+    duck_release_coef: { min: 0.5, max: 0.999, step: 0.001 },
+    // Burst
+    burst_duration_ticks: { min: 0, max: 100, step: 1 },
+    burst_immediate_count: { min: 0, max: 20, step: 1 },
+    // Density (Spawns per second)
+    density_burst: { min: 0.0, max: 100.0, step: 1.0 },
+    density_sustain: { min: 0.0, max: 40.0, step: 1.0 },
+    density_decay: { min: 0.0, max: 20.0, step: 1.0 },
+    // Global Read Offset
+    sustain_read_center_offset_samples: { min: 0, max: 88200, step: 100 },
+    // Micro
+    micro_duration_ms_min: { min: 1.0, max: 50.0, step: 0.5 },
+    micro_duration_ms_max: { min: 1.0, max: 100.0, step: 0.5 },
+    micro_offset_samples: { min: 0, max: 88200, step: 10 },
+    micro_jitter_samples: { min: 0, max: 44100, step: 10 },
+    // Short
+    short_duration_ms_min: { min: 10.0, max: 100.0, step: 1.0 },
+    short_duration_ms_max: { min: 10.0, max: 200.0, step: 1.0 },
+    short_offset_samples: { min: 0, max: 88200, step: 100 },
+    short_jitter_samples: { min: 0, max: 44100, step: 100 },
+    // Body
+    body_duration_ms_min: { min: 50.0, max: 500.0, step: 5.0 },
+    body_duration_ms_max: { min: 50.0, max: 1000.0, step: 5.0 },
+    body_offset_samples: { min: 0, max: 88200, step: 100 },
+    body_jitter_samples: { min: 0, max: 88200, step: 100 },
+    // Mix
+    master_dry_gain: { min: 0.0, max: 2.0, step: 0.01 },
+    master_wet_gain: { min: 0.0, max: 2.0, step: 0.01 },
 };
 
-const editorSectionsEl = document.getElementById("editorSections");
-const loadStatusEl = document.getElementById("loadStatus");
-const toastEl = document.getElementById("toast");
+document.addEventListener('alpine:init', () => {
+    Alpine.data('editorApp', () => ({
+        params: {},
+        isDraft: false,
+        copied: false,
+        parameterGroups: PARAMETER_GROUPS,
+        openAccordion: null,
 
-init();
+        init() {
+            this.loadState();
+        },
 
-function init() {
-  const loadedDraft = loadDraft();
-  state.preset = loadedDraft || { ...BASELINE_PRESET };
-  setLoadStatus(loadedDraft ? "Draft loaded" : "Baseline loaded", Boolean(loadedDraft));
-  renderEditor();
-  bindActions();
-}
+        loadState() {
+            const saved = localStorage.getItem('sb_draft');
+            if (saved) {
+                try {
+                    this.params = { ...BASELINE, ...JSON.parse(saved) };
+                    this.isDraft = true;
+                    return;
+                } catch (e) {
+                    console.error("Failed to parse localStorage draft", e);
+                }
+            }
+            // Fallback
+            this.params = { ...BASELINE };
+            this.isDraft = false;
+        },
 
-function bindActions() {
-  document.getElementById("copyJsonBtn").addEventListener("click", copyJson);
-  document.getElementById("downloadJsonBtn").addEventListener("click", downloadJson);
-  document.getElementById("resetDraftBtn").addEventListener("click", resetDraft);
-}
+        sanitizeDurations() {
+            if (this.params.micro_duration_ms_min > this.params.micro_duration_ms_max) {
+                this.params.micro_duration_ms_max = this.params.micro_duration_ms_min;
+            }
+            if (this.params.short_duration_ms_min > this.params.short_duration_ms_max) {
+                this.params.short_duration_ms_max = this.params.short_duration_ms_min;
+            }
+            if (this.params.body_duration_ms_min > this.params.body_duration_ms_max) {
+                this.params.body_duration_ms_max = this.params.body_duration_ms_min;
+            }
+        },
 
-function loadDraft() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return null;
+        saveDraft() {
+            // Keep JSON absolutely flat, ignoring UI grouping logic
+            this.sanitizeDurations();
+            localStorage.setItem('sb_draft', JSON.stringify(this.params, null, 2));
+            this.isDraft = true;
+        },
 
-  try {
-    const parsed = JSON.parse(raw);
-    const merged = { ...BASELINE_PRESET };
-    for (const key of Object.keys(BASELINE_PRESET)) {
-      if (Object.hasOwn(parsed, key)) {
-        merged[key] = Number(parsed[key]);
-      }
-    }
-    return merged;
-  } catch {
-    return null;
-  }
-}
+        resetToBaseline() {
+            if (confirm("Reset local draft to baseline defaults? You will lose any unsaved edits.")) {
+                this.params = { ...BASELINE };
+                this.isDraft = false;
+                localStorage.removeItem('sb_draft');
+            }
+        },
 
-function saveDraft() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.preset));
-  setLoadStatus("Draft loaded", true);
-}
+        toggleAccordion(groupName) {
+            this.openAccordion = this.openAccordion === groupName ? null : groupName;
+        },
 
-function resetDraft() {
-  localStorage.removeItem(STORAGE_KEY);
-  state.preset = { ...BASELINE_PRESET };
-  renderEditor();
-  setLoadStatus("Baseline loaded", false);
-  showToast("Draft reset");
-}
+        formatLabel(key) {
+            return key.replace(/_/g, ' ')
+                      .replace(/\b\w/g, c => c.toUpperCase());
+        },
 
-function renderEditor() {
-  editorSectionsEl.innerHTML = "";
+        getParamConfig(key) {
+            // Fallback just in case a parameter isn't explicitly configured
+            return PARAM_CONFIGS[key] || { min: 0, max: 100, step: 1 };
+        },
 
-  GROUPS.forEach((group, index) => {
-    const section = document.createElement("section");
-    section.className = "card";
+        copyJson() {
+            this.sanitizeDurations();
+            const jsonStr = JSON.stringify(this.params, null, 2);
+            navigator.clipboard.writeText(jsonStr).then(() => {
+                this.copied = true;
+                setTimeout(() => this.copied = false, 2000);
+            }).catch(err => {
+                console.error("Could not copy text: ", err);
+                alert("Failed to copy JSON. Please try downloading it instead.");
+            });
+        },
 
-    const details = document.createElement("details");
-    details.className = "param-group";
-    details.open = index === 0;
-
-    const summary = document.createElement("summary");
-    summary.innerHTML = `<span>${group.title}</span>`;
-    details.appendChild(summary);
-
-    const helper = document.createElement("p");
-    helper.className = "group-helper";
-    helper.textContent = group.description;
-    details.appendChild(helper);
-
-    group.fields.forEach((fieldName) => {
-      details.appendChild(createFieldRow(fieldName));
-    });
-
-    section.appendChild(details);
-    editorSectionsEl.appendChild(section);
-  });
-}
-
-function createFieldRow(fieldName) {
-  const cfg = FIELD_CONFIG[fieldName] || { min: 0, max: 100, step: 1 };
-
-  const row = document.createElement("div");
-  row.className = "field-row";
-
-  const topRow = document.createElement("div");
-  topRow.className = "field-top";
-
-  const label = document.createElement("label");
-  label.setAttribute("for", `${fieldName}-range`);
-  label.textContent = humanize(fieldName);
-
-  const numberInput = document.createElement("input");
-  numberInput.type = "number";
-  numberInput.className = "number-input";
-  numberInput.id = `${fieldName}-number`;
-  numberInput.min = String(cfg.min);
-  numberInput.max = String(cfg.max);
-  numberInput.step = String(cfg.step);
-  numberInput.value = String(state.preset[fieldName]);
-
-  const slider = document.createElement("input");
-  slider.type = "range";
-  slider.className = "slider-input";
-  slider.id = `${fieldName}-range`;
-  slider.min = String(cfg.min);
-  slider.max = String(cfg.max);
-  slider.step = String(cfg.step);
-  slider.value = String(state.preset[fieldName]);
-
-  const applyValue = (rawValue) => {
-    const value = clamp(Number(rawValue), cfg.min, cfg.max);
-    state.preset[fieldName] = value;
-    numberInput.value = String(value);
-    slider.value = String(value);
-    saveDraft();
-  };
-
-  slider.addEventListener("input", (event) => applyValue(event.target.value));
-  numberInput.addEventListener("input", (event) => applyValue(event.target.value));
-
-  topRow.appendChild(label);
-  topRow.appendChild(numberInput);
-  row.appendChild(topRow);
-  row.appendChild(slider);
-
-  return row;
-}
-
-function copyJson() {
-  const text = JSON.stringify(state.preset, null, 2);
-  navigator.clipboard
-    .writeText(text)
-    .then(() => {
-      showToast("Copied!");
-    })
-    .catch(() => {
-      showToast("Copy failed");
-    });
-}
-
-function downloadJson() {
-  const text = JSON.stringify(state.preset, null, 2);
-  const blob = new Blob([text], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = "current.json";
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-  showToast("JSON downloaded");
-}
-
-function setLoadStatus(text, isDraft) {
-  loadStatusEl.textContent = text;
-  loadStatusEl.classList.toggle("draft", isDraft);
-  loadStatusEl.classList.toggle("baseline", !isDraft);
-}
-
-function showToast(text) {
-  toastEl.textContent = text;
-  toastEl.classList.add("show");
-  window.clearTimeout(showToast.timeoutId);
-  showToast.timeoutId = window.setTimeout(() => {
-    toastEl.classList.remove("show");
-  }, 1200);
-}
-
-function clamp(value, min, max) {
-  if (!Number.isFinite(value)) return min;
-  return Math.min(max, Math.max(min, value));
-}
-
-function humanize(key) {
-  return key
-    .split("_")
-    .map((token) => token[0].toUpperCase() + token.slice(1))
-    .join(" ");
-}
+        downloadJson() {
+            this.sanitizeDurations();
+            const jsonStr = JSON.stringify(this.params, null, 2);
+            const blob = new Blob([jsonStr], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "current.json";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+    }));
+});

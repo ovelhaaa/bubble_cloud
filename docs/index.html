@@ -1,28 +1,25 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
-    />
-    <title>Sound Bubbles Preset Editor</title>
-    <link rel="stylesheet" href="style.css" />
-  </head>
-  <body>
-    <header class="app-header">
-      <div>
-        <h1>Sound Bubbles Preset Editor</h1>
-        <p class="subtitle">Track A · Mobile-first static UI</p>
-      </div>
-      <span id="loadStatus" class="status-pill" aria-live="polite">Baseline loaded</span>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sound Bubbles Editor</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Using Alpine.js for lightweight, reactive state management without a build step -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body x-data="editorApp()">
+    <header class="top-bar">
+        <h1>Sound Bubbles</h1>
+        <div class="status-bar">
+            <span class="status-badge" :class="isDraft ? 'draft' : 'baseline'" x-text="isDraft ? 'Local Draft' : 'Baseline Defaults'"></span>
+            <button @click="resetToBaseline()" class="btn-reset">Reset</button>
+        </div>
     </header>
 
-    <main class="app-main" id="appRoot">
-      <section class="card intro">
-        <p>
-          Edit parameters, then copy/download JSON and commit it to
-          <code>presets/current.json</code> before running the render workflow.
+    <main class="content">
+        <p class="helper-text">
+            Adjust parameters, copy or download the flat JSON, update <code>presets/current.json</code> in GitHub, then run the render workflow.
         </p>
         <ol>
           <li>Update values below (saved as local draft automatically).</li>
@@ -42,8 +39,55 @@
         <button id="resetDraftBtn" class="btn btn-danger" type="button">Reset Draft</button>
       </section>
 
-      <section id="editorSections" aria-label="Preset parameters"></section>
-      <div class="footer-spacer" aria-hidden="true"></div>
+        <!-- Dynamic Accordion Groups -->
+        <template x-for="(group, groupName) in parameterGroups" :key="groupName">
+            <div class="accordion">
+                <button
+                    class="accordion-header"
+                    @click="toggleAccordion(groupName)"
+                    :aria-expanded="openAccordion === groupName"
+                >
+                    <span x-text="groupName"></span>
+                    <span class="chevron" x-show="openAccordion !== groupName">▼</span>
+                    <span class="chevron" x-show="openAccordion === groupName">▲</span>
+                </button>
+
+                <div class="accordion-content" x-show="openAccordion === groupName">
+                    <template x-for="paramKey in group" :key="paramKey">
+                        <div class="param-row">
+                            <div class="param-labels">
+                                <label :for="paramKey" x-text="formatLabel(paramKey)"></label>
+                                <!-- Numeric Input for precise mobile entry -->
+                                <input
+                                    type="number"
+                                    :id="paramKey + '_num'"
+                                    x-model.number="params[paramKey]"
+                                    @input="saveDraft()"
+                                    :step="getParamConfig(paramKey).step"
+                                    :min="getParamConfig(paramKey).min"
+                                    :max="getParamConfig(paramKey).max"
+                                    class="num-input"
+                                >
+                            </div>
+                            <!-- Thick touch-friendly slider -->
+                            <input
+                                type="range"
+                                :id="paramKey"
+                                x-model.number="params[paramKey]"
+                                @input="saveDraft()"
+                                :step="getParamConfig(paramKey).step"
+                                :min="getParamConfig(paramKey).min"
+                                :max="getParamConfig(paramKey).max"
+                                class="slider"
+                            >
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </template>
+
+        <!-- Spacer to ensure bottom accordions aren't hidden by the fixed footer -->
+        <div class="bottom-spacer"></div>
     </main>
 
     <footer class="sticky-footer">
