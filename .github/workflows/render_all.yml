@@ -19,7 +19,7 @@ on:
       - 'sound_bubbles_render.c'
       - 'presets/*.json'
       - 'sample/*.wav'
-      - '.github/workflows/render_current.yml'
+      - '.github/workflows/render_all.yml'
 
 jobs:
   render:
@@ -41,6 +41,13 @@ jobs:
 
           echo "input_file=$INPUT_FILE" >> "$GITHUB_ENV"
           echo "INPUT_BASE=$INPUT_BASE" >> "$GITHUB_ENV"
+
+      - name: Debug Input Path
+        run: |
+          echo "input_file=$input_file"
+          echo "INPUT_BASE=$INPUT_BASE"
+          file "$input_file"
+          sha256sum "$input_file"
 
       - name: Verify Required Files
         run: |
@@ -78,6 +85,9 @@ jobs:
         run: |
           rm -rf renders
           mkdir -p renders
+
+          echo "Selected input file: $input_file"
+          echo "Input basename: $INPUT_BASE"
 
           for preset in presets/*.json; do
             [ -f "$preset" ] || continue
