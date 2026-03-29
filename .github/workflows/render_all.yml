@@ -5,9 +5,13 @@ on:
     inputs:
       input_file:
         description: 'Input WAV file path'
-        required: false
+        required: true
         default: 'sample/test_in.wav'
-        type: string
+        type: choice
+        options:
+          - 'sample/test_in.wav'
+          - 'sample/chords.wav'
+          - 'sample/liecio-guitar-chord-sequence-to-make-a-beat-258061.wav'
   push:
     paths:
       - 'sound_bubbles_dsp.c'
@@ -33,7 +37,10 @@ jobs:
             INPUT_FILE="sample/test_in.wav"
           fi
 
+          INPUT_BASE="$(basename "$INPUT_FILE" .wav)"
+
           echo "input_file=$INPUT_FILE" >> "$GITHUB_ENV"
+          echo "INPUT_BASE=$INPUT_BASE" >> "$GITHUB_ENV"
 
       - name: Verify Required Files
         run: |
@@ -69,9 +76,8 @@ jobs:
 
       - name: Render All Presets
         run: |
+          rm -rf renders
           mkdir -p renders
-
-          INPUT_BASE="$(basename "$input_file" .wav)"
 
           for preset in presets/*.json; do
             [ -f "$preset" ] || continue
@@ -106,5 +112,5 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: render-all-presets-${{ github.run_id }}
+          name: render-${{ env.INPUT_BASE }}-${{ github.run_id }}
           path: renders/*.wav
