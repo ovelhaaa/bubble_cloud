@@ -6,6 +6,7 @@
     <title>Sound Bubbles Editor</title>
     <link rel="stylesheet" href="style.css">
     <!-- Using Alpine.js for lightweight, reactive state management without a build step -->
+    <script defer src="app.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 </head>
 <body x-data="editorApp()">
@@ -40,20 +41,20 @@
       </section>
 
         <!-- Dynamic Accordion Groups -->
-        <template x-for="(group, groupName) in parameterGroups" :key="groupName">
+        <template x-for="group in parameterGroups" :key="group.name">
             <div class="accordion">
                 <button
                     class="accordion-header"
-                    @click="toggleAccordion(groupName)"
-                    :aria-expanded="openAccordion === groupName"
+                    @click="toggleAccordion(group.name)"
+                    :aria-expanded="openAccordion === group.name"
                 >
-                    <span x-text="groupName"></span>
-                    <span class="chevron" x-show="openAccordion !== groupName">▼</span>
-                    <span class="chevron" x-show="openAccordion === groupName">▲</span>
+                    <span x-text="group.name"></span>
+                    <span class="chevron" x-show="openAccordion !== group.name">▼</span>
+                    <span class="chevron" x-show="openAccordion === group.name">▲</span>
                 </button>
 
-                <div class="accordion-content" x-show="openAccordion === groupName">
-                    <template x-for="paramKey in group" :key="paramKey">
+                <div class="accordion-content" x-show="openAccordion === group.name">
+                    <template x-for="paramKey in group.params" :key="paramKey">
                         <div class="param-row">
                             <div class="param-labels">
                                 <label :for="paramKey" x-text="formatLabel(paramKey)"></label>
@@ -106,7 +107,5 @@
     </footer>
 
     <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
-
-    <script src="app.js"></script>
   </body>
 </html>

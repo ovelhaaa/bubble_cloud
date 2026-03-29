@@ -28,36 +28,30 @@ const BASELINE = {
     master_wet_gain: 0.5
 };
 
-const GROUPS = [
+const PARAMETER_GROUPS = [
   {
-    title: "Analysis / Detection",
-    description: "Signal floor and threshold tuning.",
-    fields: ["noise_floor", "tracking_thresh", "sustain_thresh", "transient_delta"],
+    name: "Analysis / Detection",
+    params: ["noise_floor", "tracking_thresh", "sustain_thresh", "transient_delta"],
   },
   {
-    title: "Ducking",
-    description: "Burst attenuation and envelope timing.",
-    fields: ["duck_burst_level", "duck_attack_coef", "duck_release_coef"],
+    name: "Ducking",
+    params: ["duck_burst_level", "duck_attack_coef", "duck_release_coef"],
   },
   {
-    title: "Burst",
-    description: "Burst trigger length and instant spawn count.",
-    fields: ["burst_duration_ticks", "burst_immediate_count"],
+    name: "Burst",
+    params: ["burst_duration_ticks", "burst_immediate_count"],
   },
   {
-    title: "Density",
-    description: "Spawn rates across burst/sustain/decay phases.",
-    fields: ["density_burst", "density_sustain", "density_decay"],
+    name: "Density",
+    params: ["density_burst", "density_sustain", "density_decay"],
   },
   {
-    title: "Sustain Read Position",
-    description: "Read center offset in samples.",
-    fields: ["sustain_read_center_offset_samples"],
+    name: "Sustain Read Position",
+    params: ["sustain_read_center_offset_samples"],
   },
   {
-    title: "Micro Class",
-    description: "Micro event duration and timeline jitter.",
-    fields: [
+    name: "Micro Class",
+    params: [
       "micro_duration_ms_min",
       "micro_duration_ms_max",
       "micro_offset_samples",
@@ -65,9 +59,8 @@ const GROUPS = [
     ],
   },
   {
-    title: "Short Class",
-    description: "Short event duration and timeline jitter.",
-    fields: [
+    name: "Short Class",
+    params: [
       "short_duration_ms_min",
       "short_duration_ms_max",
       "short_offset_samples",
@@ -75,14 +68,12 @@ const GROUPS = [
     ],
   },
   {
-    title: "Body Class",
-    description: "Body event duration and timeline jitter.",
-    fields: ["body_duration_ms_min", "body_duration_ms_max", "body_offset_samples", "body_jitter_samples"],
+    name: "Body Class",
+    params: ["body_duration_ms_min", "body_duration_ms_max", "body_offset_samples", "body_jitter_samples"],
   },
   {
-    title: "Output Mix",
-    description: "Final dry/wet blend.",
-    fields: ["master_dry_gain", "master_wet_gain"],
+    name: "Output Mix",
+    params: ["master_dry_gain", "master_wet_gain"],
   },
 ];
 
