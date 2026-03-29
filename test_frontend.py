@@ -9,14 +9,14 @@ def run_cuj(page):
     page.wait_for_timeout(500)
 
     # Take screenshot
-    page.screenshot(path="/home/jules/verification/screenshots/verification2.png")
+    page.screenshot(path="test-results/screenshots/verification2.png")
     page.wait_for_timeout(1000)
 
 if __name__ == "__main__":
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
-            record_video_dir="/home/jules/verification/videos"
+            record_video_dir="test-results/videos"
         )
         page = context.new_page()
         try:
