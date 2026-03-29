@@ -12,6 +12,12 @@ on:
           - 'sample/test_in.wav'
           - 'sample/chords.wav'
           - 'sample/liecio-guitar-chord-sequence-to-make-a-beat-258061.wav'
+          - 'sample/farran_ez-soft-indie-guitar-sample-456142.wav'
+          - 'sample/freesound_community-electric-guitar-phrase-38142.wav'
+          - 'sample/freesound_community-guitar-103460.wav'
+          - 'sample/freesound_community-spanish-guitar-loop-17221 (1).wav'
+          - 'sample/ncone-bgm-blues-guitar-loop-192099.wav'
+          - 'sample/u_1aiqn32afi-clean-country-lick-bend-289052.wav'
   push:
     paths:
       - 'sound_bubbles_dsp.c'
