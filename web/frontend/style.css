@@ -15,6 +15,10 @@
   box-sizing: border-box;
 }
 
+[x-cloak] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -198,6 +202,48 @@ label {
   background: var(--primary);
   border: 2px solid #ffffff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
+.btn-help-toggle {
+  background: #e5e7eb;
+  color: #4b5563;
+  border: none;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  font-size: 0.8rem;
+  font-weight: bold;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+}
+
+.btn-help-toggle:hover {
+  background: #d1d5db;
+  color: #1f2937;
+}
+
+.help-content {
+  background: #f9fafb;
+  border-left: 3px solid var(--primary);
+  padding: 0.5rem 0.75rem;
+  margin-top: 0.25rem;
+  margin-bottom: 0.75rem;
+  border-radius: 0 4px 4px 0;
+  font-size: 0.85rem;
+  color: #4b5563;
+}
+
+.help-content p {
+  margin: 0.25rem 0;
+  line-height: 1.4;
+}
+
+.help-content strong {
+  color: #111827;
 }
 
 .footer-spacer {
