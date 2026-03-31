@@ -39,3 +39,12 @@ A standard `Makefile` is provided to compile both the offline tools and the WASM
 - `make wasm`: Builds the WebAssembly output using `emcc`. You must have the [Emscripten SDK (emsdk)](https://emscripten.org/docs/getting_started/downloads.html) installed and active.
 
 **Important Note for WASM:** We compile using `-s SINGLE_FILE=1` to embed the `.wasm` data directly into the `.js` glue code. This significantly simplifies loading inside the `AudioWorklet` scope since we don't have to battle relative path issues for fetching `.wasm` files.
+
+## GitHub Actions & Workflows
+
+The project contains several GitHub Actions workflows with separated responsibilities:
+
+- **`.github/workflows/deploy-pages.yml`**: Automatically builds the WebAssembly `.js` file, creates a `dist/` directory containing the frontend code from `web/frontend/`, and deploys the web interface to GitHub Pages. It runs on push to `main` or manual trigger.
+- **`.github/workflows/main.yaml` (DSP Harness)**: Runs offline C tests to ensure the core DSP engine compiles and correctly synthesizes raw audio.
+- **`.github/workflows/render_all.yml`**: An offline renderer that processes all JSON preset configurations in `presets/` against an input WAV file and uploads output WAV artifacts for downloading.
+- **`.github/workflows/render_diagnostics.yml`**: Runs the offline synth renderer against multiple diagnostic scenarios (sine, triangle, expressive phrase) to test the engine's response to different waveforms and dynamic tracking, providing unique WAV artifacts per matrix run.
