@@ -20,9 +20,9 @@ on:
           - 'sample/u_1aiqn32afi-clean-country-lick-bend-289052.wav'
   push:
     paths:
-      - 'sound_bubbles_dsp.c'
-      - 'sound_bubbles_dsp.h'
-      - 'sound_bubbles_render.c'
+      - 'core/sound_bubbles_dsp.c'
+      - 'core/sound_bubbles_dsp.h'
+      - 'platform/offline/sound_bubbles_render.c'
       - 'presets/*.json'
       - 'sample/*.wav'
       - '.github/workflows/render_all.yml'
@@ -58,7 +58,7 @@ jobs:
       - name: Verify Required Files
         run: |
           echo "Checking renderer sources..."
-          ls -l sound_bubbles_render.c sound_bubbles_dsp.c sound_bubbles_dsp.h
+          ls -l platform/offline/sound_bubbles_render.c core/sound_bubbles_dsp.c core/sound_bubbles_dsp.h
 
           echo "Checking input file: $input_file"
           if [ ! -f "$input_file" ]; then
@@ -85,7 +85,7 @@ jobs:
 
       - name: Compile Offline Renderer
         run: |
-          gcc sound_bubbles_render.c sound_bubbles_dsp.c -O2 -Wall -Wextra -std=c11 -lm -o sound_bubbles_render
+          gcc platform/offline/sound_bubbles_render.c core/sound_bubbles_dsp.c -O2 -Wall -Wextra -std=c11 -lm -Icore -o platform/offline/sound_bubbles_render
 
       - name: Render All Presets
         run: |
@@ -106,7 +106,7 @@ jobs:
             echo "  preset = $preset"
             echo "  output = $OUTPUT_FILE"
 
-            ./sound_bubbles_render "$input_file" "$preset" "$OUTPUT_FILE"
+            ./platform/offline/sound_bubbles_render "$input_file" "$preset" "$OUTPUT_FILE"
 
             if [ ! -f "$OUTPUT_FILE" ]; then
               echo "Error: Failed to generate '$OUTPUT_FILE'"

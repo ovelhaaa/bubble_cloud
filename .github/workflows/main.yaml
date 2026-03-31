@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - "sound_bubbles_dsp.c"
-      - "sound_bubbles_dsp.h"
-      - "test_harness.c"
-      - ".github/workflows/dsp-harness.yml"
+      - "core/sound_bubbles_dsp.c"
+      - "core/sound_bubbles_dsp.h"
+      - "platform/offline/test_harness.c"
+      - ".github/workflows/main.yaml"
 
 jobs:
   run-harness:
@@ -24,7 +24,7 @@ jobs:
 
       - name: Build harness
         run: |
-          gcc test_harness.c sound_bubbles_dsp.c -O2 -Wall -Wextra -std=c11 -lm -o test_harness
+          gcc platform/offline/test_harness.c core/sound_bubbles_dsp.c -O2 -Wall -Wextra -std=c11 -lm -Icore -o test_harness
 
       - name: Run harness
         run: |

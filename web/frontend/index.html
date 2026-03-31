@@ -19,26 +19,32 @@
     </header>
 
     <main class="content">
+        <section class="audio-control-panel">
+            <h2>Web Audio Preview</h2>
+            <div class="audio-controls">
+                <button class="btn btn-primary" @click="initAudio()" x-show="!audioInitialized">Start Audio</button>
+                <div x-show="audioInitialized">
+                    <button class="btn" :class="isPlaying ? 'btn-danger' : 'btn-primary'" @click="togglePlayback()" x-text="isPlaying ? 'Stop' : 'Play Test Signal'"></button>
+                    <div class="audio-status" style="margin-top: 10px;">
+                        <p>Status: <span x-text="audioStateText"></span></p>
+                        <p style="font-size: 0.8em; color: #666;">Note: Audio processing runs in browser via WASM</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="metrics-panel" x-show="audioInitialized" style="margin-top: 15px; padding: 10px; background: #f0f0f0; border-radius: 4px;">
+                <h3>DSP Internal Metrics</h3>
+                <p>Envelope: <span x-text="metrics.envelope.toFixed(4)"></span></p>
+                <p>State: <span x-text="getEngineStateName(metrics.state)"></span></p>
+                <p>Active Voices: <span x-text="metrics.voices"></span> / 12</p>
+            </div>
+        </section>
+
+        <hr style="margin: 20px 0; border: 0; border-top: 1px solid #ddd;">
+
         <p class="helper-text">
-            Adjust parameters, copy or download the flat JSON, update <code>presets/current.json</code> in GitHub, then run the render workflow.
+            Adjust parameters below. The audio preview updates in real-time. You can also copy or download the flat JSON preset.
         </p>
-        <ol>
-          <li>Update values below (saved as local draft automatically).</li>
-          <li>Copy or download flat JSON.</li>
-          <li>Commit JSON, then run GitHub Actions render.</li>
-        </ol>
-        <p class="actions-hint">
-          Replace these placeholders with your real repo links:
-          <a href="https://github.com/REPLACE_ME_ORG/REPLACE_ME_REPO/actions" target="_blank" rel="noreferrer">
-            GitHub Actions URL
-          </a>
-          ·
-          <a href="https://github.com/REPLACE_ME_ORG/REPLACE_ME_REPO/blob/main/.github/workflows/render.yml" target="_blank" rel="noreferrer">
-            workflow file URL
-          </a>
-        </p>
-        <button id="resetDraftBtn" class="btn btn-danger" type="button">Reset Draft</button>
-      </section>
 
         <!-- Dynamic Accordion Groups -->
         <template x-for="group in parameterGroups" :key="group.name">

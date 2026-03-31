@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - "sound_bubbles_dsp.c"
-      - "sound_bubbles_dsp.h"
-      - "sound_bubbles_synth.c"
+      - "core/sound_bubbles_dsp.c"
+      - "core/sound_bubbles_dsp.h"
+      - "platform/offline/sound_bubbles_synth.c"
       - "presets/*.json"
       - ".github/workflows/render_diagnostics.yml"
 
@@ -46,23 +46,23 @@ jobs:
 
       - name: Build synthetic renderer
         run: |
-          if [ ! -f "sound_bubbles_synth.c" ]; then
-            echo "sound_bubbles_synth.c not found. Skipping build."
+          if [ ! -f "platform/offline/sound_bubbles_synth.c" ]; then
+            echo "platform/offline/sound_bubbles_synth.c not found. Skipping build."
             exit 0
           fi
-          gcc sound_bubbles_synth.c sound_bubbles_dsp.c -O2 -Wall -Wextra -std=c11 -lm -o sound_bubbles_synth
+          gcc platform/offline/sound_bubbles_synth.c core/sound_bubbles_dsp.c -O2 -Wall -Wextra -std=c11 -lm -Icore -o platform/offline/sound_bubbles_synth
           echo "Build successful."
-          ls -l sound_bubbles_synth
+          ls -l platform/offline/sound_bubbles_synth
 
       - name: Run synthetic renderer
         run: |
-          if [ ! -x "./sound_bubbles_synth" ]; then
-            echo "Executable ./sound_bubbles_synth not found. Skipping run."
+          if [ ! -x "./platform/offline/sound_bubbles_synth" ]; then
+            echo "Executable ./platform/offline/sound_bubbles_synth not found. Skipping run."
             exit 0
           fi
           OUTPUT_WAV="${{ steps.vars.outputs.out_filename }}"
           echo "Running scenario: ${{ matrix.scenario }} with preset: ${{ matrix.preset }}"
-          ./sound_bubbles_synth --preset "${{ matrix.preset }}" --scenario "${{ matrix.scenario }}" --output "$OUTPUT_WAV" || true
+          ./platform/offline/sound_bubbles_synth --preset "${{ matrix.preset }}" --scenario "${{ matrix.scenario }}" --output "$OUTPUT_WAV" || true
 
           if [ ! -f "$OUTPUT_WAV" ]; then
             echo "Warning: Renderer failed to output $OUTPUT_WAV"
