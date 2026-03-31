@@ -1,3 +1,5 @@
+importScripts('bubble_cloud_wasm.js');
+
 class SoundBubblesWorklet extends AudioWorkletProcessor {
   constructor() {
     super();

@@ -2,9 +2,10 @@ name: Deploy Pages
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
     paths:
-      - 'docs/**'
+      - 'web/**'
+      - 'core/**'
       - '.github/workflows/deploy-pages.yml'
   workflow_dispatch:
 
@@ -27,13 +28,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verify docs content
+      - name: Setup emsdk
+        uses: mymindstorm/setup-emsdk@v14
+
+      - name: Build WASM
+        run: make wasm
+
+      - name: Prepare distribution directory
         run: |
-          echo "Repository root:"
-          ls -la
-          echo "docs directory:"
-          ls -la docs || { echo "ERROR: docs/ directory is missing"; exit 1; }
-          test -f docs/index.html || { echo "ERROR: docs/index.html is missing"; exit 1; }
+          mkdir dist
+          cp -r web/frontend/* dist/
+          touch dist/.nojekyll
+
+          echo "Verified dist contents:"
+          ls -lah dist
+          test -f dist/index.html || (echo "ERROR: dist/index.html is missing" && false)
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -41,7 +50,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs
+          path: dist
 
       - name: Deploy to GitHub Pages
         id: deployment
