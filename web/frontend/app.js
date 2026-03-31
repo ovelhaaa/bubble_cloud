@@ -187,11 +187,149 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
+        // Audio Worklet Integration
+        audioInitialized: false,
+        isPlaying: false,
+        audioContext: null,
+        oscillator: null,
+        workletNode: null,
+        audioStateText: "Not Started",
+        metrics: {
+            envelope: 0,
+            state: 0,
+            voices: 0
+        },
+        pollInterval: null,
+
+        async initAudio() {
+            try {
+                this.audioStateText = "Initializing AudioContext...";
+                this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+                this.audioStateText = "Loading AudioWorklet...";
+                // Make sure bubble_cloud_wasm.js is loaded internally by the worklet
+                await this.audioContext.audioWorklet.addModule('worklet.js');
+
+                this.workletNode = new AudioWorkletNode(this.audioContext, 'sound-bubbles-worklet');
+
+                // Set audioInitialized immediately so UI updates
+                this.audioInitialized = true;
+
+                // Wait for the worklet to be ready
+                this.workletNode.port.onmessage = (e) => {
+                    if (e.data.type === 'ready') {
+                        this.audioStateText = "Ready";
+                        this.pushAllParamsToAudio();
+
+                        // Start polling metrics
+                        this.pollInterval = setInterval(() => {
+                            if (this.audioInitialized && this.workletNode) {
+                                this.workletNode.port.postMessage({type: 'poll'});
+                            }
+                        }, 100);
+                    } else if (e.data.type === 'state') {
+                        this.metrics.envelope = e.data.envelope;
+                        this.metrics.state = e.data.state;
+                        this.metrics.voices = e.data.voices;
+                    }
+                };
+
+                this.workletNode.connect(this.audioContext.destination);
+
+            } catch (err) {
+                console.error("Audio initialization failed:", err);
+                this.audioStateText = "Error initializing audio. Check console.";
+            }
+        },
+
+        togglePlayback() {
+            if (!this.audioInitialized) return;
+
+            if (this.isPlaying) {
+                // Stop
+                if (this.oscillator) {
+                    this.oscillator.stop();
+                    this.oscillator.disconnect();
+                    this.oscillator = null;
+                }
+                this.isPlaying = false;
+                this.audioStateText = "Stopped";
+            } else {
+                // Play a simple test signal (e.g. short pulses to simulate plucks)
+                this.oscillator = this.audioContext.createOscillator();
+                this.oscillator.type = 'sawtooth';
+                this.oscillator.frequency.value = 220;
+
+                // Add an envelope to make it plucky
+                const gainNode = this.audioContext.createGain();
+                gainNode.gain.value = 0;
+
+                this.oscillator.connect(gainNode);
+                gainNode.connect(this.workletNode);
+
+                this.oscillator.start();
+
+                // Pluck loop
+                const pluck = () => {
+                    if (!this.isPlaying) return;
+                    const now = this.audioContext.currentTime;
+                    gainNode.gain.setValueAtTime(0, now);
+                    gainNode.gain.linearRampToValueAtTime(0.8, now + 0.01);
+                    gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+                    setTimeout(pluck, 1000); // 1 pluck per second
+                };
+
+                this.isPlaying = true;
+                this.audioStateText = "Playing Plucks";
+                pluck();
+            }
+        },
+
+        pushParamToAudio(key, val) {
+            if (!this.audioInitialized || !this.workletNode) return;
+
+            const paramMap = {
+                "noise_floor": 0, "tracking_thresh": 1, "sustain_thresh": 2, "transient_delta": 3,
+                "duck_burst_level": 4, "duck_attack_coef": 5, "duck_release_coef": 6,
+                "burst_duration_ticks": 7, "burst_immediate_count": 8,
+                "density_burst": 9, "density_sustain": 10, "density_decay": 11,
+                "sustain_read_center_offset_samples": 12,
+                "micro_duration_ms_min": 13, "micro_duration_ms_max": 14, "micro_offset_samples": 15, "micro_jitter_samples": 16,
+                "short_duration_ms_min": 17, "short_duration_ms_max": 18, "short_offset_samples": 19, "short_jitter_samples": 20,
+                "body_duration_ms_min": 21, "body_duration_ms_max": 22, "body_offset_samples": 23, "body_jitter_samples": 24,
+                "master_dry_gain": 25, "master_wet_gain": 26
+            };
+
+            if (key in paramMap) {
+                this.workletNode.port.postMessage({
+                    type: 'param',
+                    id: paramMap[key],
+                    value: val
+                });
+            }
+        },
+
+        pushAllParamsToAudio() {
+            for (const key in this.params) {
+                this.pushParamToAudio(key, this.params[key]);
+            }
+        },
+
+        getEngineStateName(stateCode) {
+            const states = ["Silence", "Transient Burst", "Attack Ongoing", "Sustain Body", "Sparse Decay"];
+            return states[stateCode] || "Unknown";
+        },
+
         saveDraft() {
             // Keep JSON absolutely flat, ignoring UI grouping logic
             this.sanitizeDurations();
             localStorage.setItem('sb_draft', JSON.stringify(this.params, null, 2));
             this.isDraft = true;
+
+            // Push updates to audio engine
+            if (this.audioInitialized) {
+                this.pushAllParamsToAudio();
+            }
         },
 
         resetToBaseline() {
@@ -199,6 +337,10 @@ document.addEventListener('alpine:init', () => {
                 this.params = { ...BASELINE };
                 this.isDraft = false;
                 localStorage.removeItem('sb_draft');
+
+                if (this.audioInitialized) {
+                    this.pushAllParamsToAudio();
+                }
             }
         },
 
