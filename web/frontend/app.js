@@ -28,6 +28,117 @@ const BASELINE = {
     master_wet_gain: 0.5
 };
 
+const PARAM_HELP = {
+  noise_floor: {
+    musical: "Sets how quiet the input can get before the effect effectively treats it as silence.",
+    technical: "Minimum envelope level below which the tracker is forced toward silence and activity should stop."
+  },
+  tracking_thresh: {
+    musical: "Raises or lowers how easily the effect begins reacting to low-level playing.",
+    technical: "Threshold used to distinguish meaningful signal from low-level residual activity after the noise floor."
+  },
+  sustain_thresh: {
+    musical: "Controls how much input energy is needed before the effect feels like it has entered a stable sustained state.",
+    technical: "Envelope threshold above which the engine prefers sustain-body behavior instead of sparse decay behavior."
+  },
+  transient_delta: {
+    musical: "Makes the effect more or less eager to explode on note attacks and percussive hits.",
+    technical: "Required envelope derivative jump needed to enter transient/burst behavior."
+  },
+  duck_burst_level: {
+    musical: "Sets how far the wet signal ducks during sharp attacks so the dry hit stays clear.",
+    technical: "Target wet-gain multiplier used during burst/attack-oriented ducking."
+  },
+  duck_attack_coef: {
+    musical: "Controls how quickly the wet signal ducks when a strong attack happens.",
+    technical: "1-pole smoothing coefficient used for the ducking transition toward the burst target."
+  },
+  duck_release_coef: {
+    musical: "Controls how quickly the wet signal recovers after the attack has passed.",
+    technical: "1-pole smoothing coefficient used for recovery back toward full wet level."
+  },
+  burst_duration_ticks: {
+    musical: "Determines how long the engine keeps behaving like it is in the burst region after a transient.",
+    technical: "Control-rate timer length for transient burst state persistence."
+  },
+  burst_immediate_count: {
+    musical: "Sets how many grains are forced instantly when a strong attack is detected.",
+    technical: "Immediate spawn count triggered at transient entry, before normal accumulator-based spawning."
+  },
+  density_burst: {
+    musical: "Controls how busy and explosive the effect feels right after an attack.",
+    technical: "Spawn rate in spawns per second while the engine is in burst/attack-oriented behavior."
+  },
+  density_sustain: {
+    musical: "Controls how thick the effect feels while the note is stably ringing.",
+    technical: "Spawn rate in spawns per second while the engine is in sustain-body behavior."
+  },
+  density_decay: {
+    musical: "Controls how many bubbles remain as the sound falls away.",
+    technical: "Spawn rate in spawns per second while the engine is in sparse decay behavior."
+  },
+  sustain_read_center_offset_samples: {
+    musical: "Pushes the sustain/body material farther back in time, making the texture feel more delayed or more immediate.",
+    technical: "Global read-position offset behind the write head used as the main center for body-oriented grain reading."
+  },
+  micro_duration_ms_min: {
+    musical: "Sets the shortest possible length of the smallest attack-oriented grains.",
+    technical: "Minimum grain duration in milliseconds for the micro class."
+  },
+  micro_duration_ms_max: {
+    musical: "Sets the longest possible length of the smallest attack-oriented grains.",
+    technical: "Maximum grain duration in milliseconds for the micro class."
+  },
+  micro_offset_samples: {
+    musical: "Moves micro grains closer to or farther from the present input, affecting how immediate the attack texture feels.",
+    technical: "Base circular-buffer read offset behind the write head for the micro class."
+  },
+  micro_jitter_samples: {
+    musical: "Adds randomness to micro grain placement, making attacks feel either tighter or more scattered.",
+    technical: "Random variation range applied to micro-class read offset."
+  },
+  short_duration_ms_min: {
+    musical: "Sets the shortest possible length of the middle-sized grains.",
+    technical: "Minimum grain duration in milliseconds for the short class."
+  },
+  short_duration_ms_max: {
+    musical: "Sets the longest possible length of the middle-sized grains.",
+    technical: "Maximum grain duration in milliseconds for the short class."
+  },
+  short_offset_samples: {
+    musical: "Moves short grains earlier or later in the recent buffer, affecting how connected or delayed the mid-layer feels.",
+    technical: "Base circular-buffer read offset behind the write head for the short class."
+  },
+  short_jitter_samples: {
+    musical: "Adds looseness or spread to the short-grain layer.",
+    technical: "Random variation range applied to short-class read offset."
+  },
+  body_duration_ms_min: {
+    musical: "Sets the shortest possible length of the body/sustain grains.",
+    technical: "Minimum grain duration in milliseconds for the body class."
+  },
+  body_duration_ms_max: {
+    musical: "Sets the longest possible length of the body/sustain grains.",
+    technical: "Maximum grain duration in milliseconds for the body class."
+  },
+  body_offset_samples: {
+    musical: "Fine-tunes where the body grains read from relative to the global sustain position.",
+    technical: "Additional base read offset for the body class, applied alongside the sustain read center offset in the current implementation model."
+  },
+  body_jitter_samples: {
+    musical: "Adds spread and variation to the body layer so it feels either tighter or more cloud-like.",
+    technical: "Random variation range applied to body-class read offset."
+  },
+  master_dry_gain: {
+    musical: "Sets how much direct unaffected signal stays in front of the bubbles.",
+    technical: "Final gain multiplier applied to the dry signal path before output summing."
+  },
+  master_wet_gain: {
+    musical: "Sets how prominent the bubbles are compared with the direct signal.",
+    technical: "Final gain multiplier applied to the summed wet buses before output summing."
+  }
+};
+
 const PARAMETER_GROUPS = [
   {
     name: "Analysis / Detection",
@@ -153,7 +264,9 @@ document.addEventListener('alpine:init', () => {
         isDraft: false,
         copied: false,
         parameterGroups: PARAMETER_GROUPS,
+        paramHelp: PARAM_HELP,
         openAccordion: null,
+        openHelp: {},
 
         init() {
             this.loadState();
@@ -346,6 +459,10 @@ document.addEventListener('alpine:init', () => {
 
         toggleAccordion(groupName) {
             this.openAccordion = this.openAccordion === groupName ? null : groupName;
+        },
+
+        toggleHelp(paramKey) {
+            this.openHelp[paramKey] = !this.openHelp[paramKey];
         },
 
         formatLabel(key) {

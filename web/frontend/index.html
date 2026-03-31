@@ -63,7 +63,10 @@
                     <template x-for="paramKey in group.params" :key="paramKey">
                         <div class="param-row">
                             <div class="param-labels">
-                                <label :for="paramKey" x-text="formatLabel(paramKey)"></label>
+                                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                    <label :for="paramKey" x-text="formatLabel(paramKey)"></label>
+                                    <button class="btn-help-toggle" @click="toggleHelp(paramKey)" title="What this does">?</button>
+                                </div>
                                 <!-- Numeric Input for precise mobile entry -->
                                 <input
                                     type="number"
@@ -76,6 +79,12 @@
                                     class="num-input"
                                 >
                             </div>
+
+                            <div class="help-content" x-show="openHelp[paramKey]" x-transition>
+                                <p><strong>Musically:</strong> <span x-text="paramHelp[paramKey].musical"></span></p>
+                                <p><strong>Technically:</strong> <span x-text="paramHelp[paramKey].technical"></span></p>
+                            </div>
+
                             <!-- Thick touch-friendly slider -->
                             <input
                                 type="range"
