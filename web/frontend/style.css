@@ -15,6 +15,10 @@
   box-sizing: border-box;
 }
 
+[x-cloak] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -205,9 +209,9 @@ label {
   color: #4b5563;
   border: none;
   border-radius: 50%;
-  width: 20px;
-  height: 20px;
-  font-size: 0.75rem;
+  width: 24px;
+  height: 24px;
+  font-size: 0.8rem;
   font-weight: bold;
   cursor: pointer;
   display: flex;
