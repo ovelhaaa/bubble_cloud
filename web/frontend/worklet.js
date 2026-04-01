@@ -85,11 +85,15 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
       return false; // Not available yet
     }
 
-    if (!this.inView || this.inView.buffer !== buffer) {
+    if (!this.inView || !this.outLView || !this.outRView || this.inView.buffer !== buffer) {
       try {
-        this.inView = new Float32Array(buffer, this.inPtr, this.bufferSize);
-        this.outLView = new Float32Array(buffer, this.outLPtr, this.bufferSize);
-        this.outRView = new Float32Array(buffer, this.outRPtr, this.bufferSize);
+        const inView = new Float32Array(buffer, this.inPtr, this.bufferSize);
+        const outLView = new Float32Array(buffer, this.outLPtr, this.bufferSize);
+        const outRView = new Float32Array(buffer, this.outRPtr, this.bufferSize);
+
+        this.inView = inView;
+        this.outLView = outLView;
+        this.outRView = outRView;
         return true;
       } catch (e) {
         console.error("Worklet: Failed to create views", e);
