@@ -359,7 +359,7 @@ document.addEventListener('alpine:init', () => {
                 console.log("[Audio Engine] Loading worklet module...");
 
                 try {
-                    await this.audioContext.audioWorklet.addModule('worklet.js');
+                    await this.audioContext.audioWorklet.addModule('worklet.js', { type: 'module' });
                     console.log("[Audio Engine] Worklet module loaded.");
                 } catch (moduleErr) {
                     console.error("[Audio Engine] Error loading worklet module:", moduleErr);
@@ -367,7 +367,9 @@ document.addEventListener('alpine:init', () => {
                 }
 
                 console.log("[Audio Engine] Creating AudioWorkletNode...");
-                this.workletNode = new AudioWorkletNode(this.audioContext, 'sound-bubbles-worklet');
+                this.workletNode = new AudioWorkletNode(this.audioContext, 'sound-bubbles-worklet', {
+                    outputChannelCount: [2]
+                });
 
                 this.workletNode.port.onmessage = (e) => {
                     if (e.data.type === 'ready') {
@@ -388,7 +390,8 @@ document.addEventListener('alpine:init', () => {
                     } else if (e.data.type === 'error' || e.data.type === 'init-failed' || e.data.type === 'wasm-error') {
                         console.error("[Audio Engine] Worklet error:", e.data.message);
                         this.audioError = true;
-                        this.audioStatusMsg = "Erro no Engine";
+                        this.audioStatusMsg = "Erro no Engine: " + (e.data.message || "Falha desconhecida");
+                        this.showToast("Falha no WASM: " + (e.data.message || "Erro desconhecido"), "error");
                     }
                 };
 
