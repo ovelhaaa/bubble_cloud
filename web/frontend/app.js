@@ -130,7 +130,7 @@ document.addEventListener('alpine:init', () => {
         workletNode: null,
         sourceNode: null, // oscillator or file buffer
         gainNode: null,   // for synth envelope
-        audioStatusMsg: "Not Started",
+        audioStatusMsg: "Não iniciado",
         audioError: false,
 
         // Progress tracking
@@ -274,8 +274,10 @@ document.addEventListener('alpine:init', () => {
         },
 
         async processSelectedFile(file) {
+            console.log("[File] Processing selected file:", file.name, "Type:", file.type);
             if (!file.type.startsWith('audio/')) {
-                this.showToast('Please upload a valid audio file format (.wav, .mp3, etc)', 'error');
+                console.error("[File] Invalid format.");
+                this.showToast('Formato inválido. Use .wav, .mp3, etc.', 'error');
                 return;
             }
 
@@ -290,11 +292,13 @@ document.addEventListener('alpine:init', () => {
             if (this.audioInitialized) {
                 this.decodeAudioFile();
             } else {
-                this.audioStatusMsg = "Ready to decode (Start Engine)";
+                console.log("[File] Waiting for audio engine to decode:", file.name);
+                this.audioStatusMsg = "Pronto para decodificar (Ative o Engine)";
             }
         },
 
         clearAudioFile() {
+            console.log("[File] Clearing audio file.");
             this.stopPlay();
             this.audioFile = null;
             this.audioBuffer = null;
@@ -311,22 +315,24 @@ document.addEventListener('alpine:init', () => {
         async decodeAudioFile() {
             if (!this.audioFile || !this.audioContext) return;
 
+            console.log("[File] Decoding file:", this.audioFile.name);
             this.isDecoding = true;
-            this.audioStatusMsg = "Decoding audio...";
+            this.audioStatusMsg = "Decodificando áudio...";
             this.audioError = false;
 
             try {
                 const arrayBuffer = await this.audioFile.arrayBuffer();
                 this.audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
                 this.duration = this.audioBuffer.duration;
-                this.audioStatusMsg = "Ready to play";
+                console.log("[File] Decode success. Duration:", this.duration);
+                this.audioStatusMsg = "Pronto para tocar";
                 this.isDecoding = false;
             } catch (err) {
-                console.error("Audio decode error:", err);
+                console.error("[File] Audio decode error:", err);
                 this.isDecoding = false;
                 this.audioError = true;
-                this.audioStatusMsg = "Failed to decode audio file";
-                this.showToast("Could not decode audio. Try another format.", "error");
+                this.audioStatusMsg = "Falha ao decodificar áudio";
+                this.showToast("Erro ao decodificar. Tente outro arquivo.", "error");
                 this.audioBuffer = null;
             }
         },
@@ -334,22 +340,40 @@ document.addEventListener('alpine:init', () => {
         // --- Web Audio Initialization ---
         async initAudio() {
             try {
-                this.audioStatusMsg = "Starting AudioContext...";
-                this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                console.log("[Audio Engine] Starting initAudio()...");
+                this.audioStatusMsg = "Inicializando AudioContext...";
 
-                if (this.audioContext.state === 'suspended') {
-                    await this.audioContext.resume();
+                // Only create if it doesn't exist
+                if (!this.audioContext) {
+                    console.log("[Audio Engine] Creating new AudioContext...");
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 }
 
-                this.audioStatusMsg = "Loading WASM Processor...";
-                await this.audioContext.audioWorklet.addModule('worklet.js');
-                this.workletNode = new AudioWorkletNode(this.audioContext, 'sound-bubbles-worklet');
+                console.log("[Audio Engine] Context state before resume:", this.audioContext.state);
+                if (this.audioContext.state === 'suspended') {
+                    await this.audioContext.resume();
+                    console.log("[Audio Engine] Context resumed. New state:", this.audioContext.state);
+                }
 
-                this.audioInitialized = true;
+                this.audioStatusMsg = "Carregando WASM Processor...";
+                console.log("[Audio Engine] Loading worklet module...");
+
+                try {
+                    await this.audioContext.audioWorklet.addModule('worklet.js');
+                    console.log("[Audio Engine] Worklet module loaded.");
+                } catch (moduleErr) {
+                    console.error("[Audio Engine] Error loading worklet module:", moduleErr);
+                    throw moduleErr;
+                }
+
+                console.log("[Audio Engine] Creating AudioWorkletNode...");
+                this.workletNode = new AudioWorkletNode(this.audioContext, 'sound-bubbles-worklet');
 
                 this.workletNode.port.onmessage = (e) => {
                     if (e.data.type === 'ready') {
-                        this.audioStatusMsg = "DSP Engine Ready";
+                        console.log("[Audio Engine] DSP Engine is ready.");
+                        this.audioInitialized = true;
+                        this.audioStatusMsg = "Pronto";
                         this.pushAllParamsToAudio();
                         this.startMetricsPolling();
 
@@ -361,16 +385,21 @@ document.addEventListener('alpine:init', () => {
                         this.metrics.envelope = e.data.envelope;
                         this.metrics.state = e.data.state;
                         this.metrics.voices = e.data.voices;
+                    } else if (e.data.type === 'error' || e.data.type === 'init-failed' || e.data.type === 'wasm-error') {
+                        console.error("[Audio Engine] Worklet error:", e.data.message);
+                        this.audioError = true;
+                        this.audioStatusMsg = "Erro no Engine";
                     }
                 };
 
+                console.log("[Audio Engine] Connecting worklet to destination...");
                 this.workletNode.connect(this.audioContext.destination);
 
             } catch (err) {
-                console.error("Audio initialization failed:", err);
+                console.error("[Audio Engine] Initialization failed:", err);
                 this.audioError = true;
-                this.audioStatusMsg = "Engine failed to initialize";
-                this.showToast("Audio engine failed to start. Check console.", "error");
+                this.audioStatusMsg = "Erro ao inicializar";
+                this.showToast("Falha ao iniciar áudio. Verifique o console.", "error");
             }
         },
 
@@ -392,6 +421,9 @@ document.addEventListener('alpine:init', () => {
 
         handleModeSwitch() {
             this.stopPlay();
+            if (this.previewMode === 'file' && !this.audioBuffer) {
+                this.audioStatusMsg = "Pronto";
+            }
         },
 
         togglePlay() {
@@ -405,8 +437,10 @@ document.addEventListener('alpine:init', () => {
         },
 
         startPlay() {
+            console.log("[Transport] Starting playback...");
             if (this.audioContext.state === 'suspended') {
                 this.audioContext.resume();
+                console.log("[Transport] AudioContext resumed.");
             }
 
             // Clean up any old node
@@ -427,32 +461,39 @@ document.addEventListener('alpine:init', () => {
         },
 
         pausePlay() {
+            console.log("[Transport] Pausing playback...");
             if (this.previewMode === 'file' && this.sourceNode) {
-                this.sourceNode.stop();
+                try { this.sourceNode.stop(); } catch(e) {}
                 this.sourceNode.disconnect();
                 this.sourceNode = null;
                 // Save context time for resuming
                 this.pauseTimeContext += this.audioContext.currentTime - this.startTimeContext;
+                console.log("[Transport] Paused at:", this.pauseTimeContext);
             } else if (this.previewMode === 'synth') {
-                if (this.sourceNode) this.sourceNode.stop();
-                if (this.gainNode) this.gainNode.disconnect();
+                if (this.sourceNode) { try { this.sourceNode.stop(); } catch(e) {} }
+                if (this.gainNode) { try { this.gainNode.disconnect(); } catch(e) {} }
                 this.sourceNode = null;
                 this.gainNode = null;
             }
 
             this.isPlaying = false;
-            this.audioStatusMsg = "Paused";
+            this.audioStatusMsg = "Pausado";
+            if (this.synthPluckTimer) {
+                clearTimeout(this.synthPluckTimer);
+                this.synthPluckTimer = null;
+            }
             this.stopProgressAnimation();
         },
 
         stopPlay() {
+            console.log("[Transport] Stopping playback...");
             if (this.sourceNode) {
                 try { this.sourceNode.stop(); } catch(e) {}
                 this.sourceNode.disconnect();
                 this.sourceNode = null;
             }
             if (this.gainNode) {
-                this.gainNode.disconnect();
+                try { this.gainNode.disconnect(); } catch(e) {}
                 this.gainNode = null;
             }
 
@@ -461,13 +502,17 @@ document.addEventListener('alpine:init', () => {
             this.seekTime = 0;
             this.pauseTimeContext = 0;
             this.startTimeContext = 0;
-            this.audioStatusMsg = "Stopped";
+            this.audioStatusMsg = "Parado";
+            if (this.synthPluckTimer) {
+                clearTimeout(this.synthPluckTimer);
+                this.synthPluckTimer = null;
+            }
             this.stopProgressAnimation();
         },
 
         // --- Pluck Synth ---
         startSynthPlucks() {
-            this.audioStatusMsg = "Playing Synth Plucks";
+            this.audioStatusMsg = "Tocando Synth Plucks";
             this.currentTime = 0;
 
             const schedulePluck = () => {
@@ -495,7 +540,7 @@ document.addEventListener('alpine:init', () => {
                 this.sourceNode = osc;
                 this.gainNode = gain;
 
-                setTimeout(schedulePluck, 1000); // Trigger every second
+                this.synthPluckTimer = setTimeout(schedulePluck, 1000); // Trigger every second
             };
 
             schedulePluck();
@@ -503,7 +548,7 @@ document.addEventListener('alpine:init', () => {
 
         // --- File Playback ---
         startFilePlayback() {
-            this.audioStatusMsg = "Playing Audio File";
+            this.audioStatusMsg = "Tocando arquivo";
 
             // Re-create node (WebAudio nodes are single-use)
             this.sourceNode = this.audioContext.createBufferSource();
@@ -567,13 +612,14 @@ document.addEventListener('alpine:init', () => {
         },
 
         handleSeekChange() {
+            console.log("[Transport] Seeking to:", this.seekTime);
             this.isDraggingSeek = false;
             this.currentTime = this.seekTime;
             this.pauseTimeContext = this.currentTime;
 
             if (this.isPlaying) {
                 // Restart node at new position
-                this.sourceNode.stop();
+                try { this.sourceNode.stop(); } catch(e) {}
                 this.sourceNode.disconnect();
                 this.startTimeContext = this.audioContext.currentTime;
 
@@ -608,9 +654,9 @@ document.addEventListener('alpine:init', () => {
                 "density_burst": 9, "density_sustain": 10, "density_decay": 11,
                 "sustain_read_center_offset_samples": 12,
                 "micro_duration_ms_min": 13, "micro_duration_ms_max": 14, "micro_offset_samples": 15, "micro_jitter_samples": 16,
-                "short_duration_ms_min": 17, "short_duration_ms_max": 18, "short_offset_samples": 19, "short_jitter_samples": 20,
-                "body_duration_ms_min": 21, "body_duration_ms_max": 22, "body_offset_samples": 23, "body_jitter_samples": 24,
-                "master_dry_gain": 25, "master_wet_gain": 26
+                "short_duration_ms_min": 18, "short_duration_ms_max": 19, "short_offset_samples": 20, "short_jitter_samples": 21,
+                "body_duration_ms_min": 23, "body_duration_ms_max": 24, "body_offset_samples": 25, "body_jitter_samples": 26,
+                "master_dry_gain": 28, "master_wet_gain": 29
             };
             if (key in paramMap) {
                 this.workletNode.port.postMessage({ type: 'param', id: paramMap[key], value: val });

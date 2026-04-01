@@ -38,7 +38,7 @@ html, body {
   padding: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
@@ -194,8 +194,8 @@ a:hover { color: var(--primary-dark); text-decoration: underline; }
 
 /* Layout */
 .app-layout {
-  display: grid;
-  grid-template-columns: 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 1.5rem;
   padding: 1.5rem;
   max-width: 1400px;
@@ -204,8 +204,25 @@ a:hover { color: var(--primary-dark); text-decoration: underline; }
   flex: 1;
 }
 
+.panel-top {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.panel-bottom {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.5rem;
+}
+
 @media (min-width: 992px) {
-  .app-layout {
+  .panel-top {
+    display: grid;
+    grid-template-columns: minmax(350px, 4fr) minmax(400px, 5fr);
+    align-items: start;
+  }
+  .panel-bottom {
     grid-template-columns: minmax(400px, 5fr) minmax(350px, 4fr);
     align-items: start;
   }
@@ -378,6 +395,38 @@ a:hover { color: var(--primary-dark); text-decoration: underline; }
   top: calc(80px + 1.5rem);
 }
 
+.audio-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-sm);
+  margin-top: 0.5rem;
+  background: var(--secondary);
+}
+.audio-badge.ready {
+  color: var(--success);
+  background: #d1fae5;
+}
+.audio-badge.not-ready {
+  color: #b45309; /* Darker, higher-contrast orange/warning color */
+  font-weight: 700;
+}
+
+.play-help-text {
+  font-size: 0.85rem;
+  color: var(--primary);
+  text-align: center;
+  margin-top: 0.5rem;
+}
+.file-duration {
+  font-size: 0.85rem;
+  color: var(--muted);
+  font-family: monospace;
+}
+
 .card {
   background: var(--surface);
   border: 1px solid var(--border-light);
@@ -388,6 +437,23 @@ a:hover { color: var(--primary-dark); text-decoration: underline; }
 
 .card-header {
   margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.card-header h3 {
+  margin: 0;
+}
+.card-header-left {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.app-logo {
+  height: 48px;
+  width: auto;
+  border-radius: 8px;
+  box-shadow: var(--shadow-sm);
 }
 
 /* How to use */
