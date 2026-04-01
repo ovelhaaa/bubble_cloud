@@ -359,7 +359,7 @@ document.addEventListener('alpine:init', () => {
                 console.log("[Audio Engine] Loading worklet module...");
 
                 try {
-                    await this.audioContext.audioWorklet.addModule('worklet.js');
+                    await this.audioContext.audioWorklet.addModule('worklet.js', { type: 'module' });
                     console.log("[Audio Engine] Worklet module loaded.");
                 } catch (moduleErr) {
                     console.error("[Audio Engine] Error loading worklet module:", moduleErr);
