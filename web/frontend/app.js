@@ -339,6 +339,7 @@ document.addEventListener('alpine:init', () => {
 
         // --- Web Audio Initialization ---
         async initAudio() {
+            if (this.audioInitialized) return;
             try {
                 console.log("[Audio Engine] Starting initAudio()...");
                 this.audioStatusMsg = "Inicializando AudioContext...";
