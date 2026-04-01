@@ -339,7 +339,6 @@ document.addEventListener('alpine:init', () => {
 
         // --- Web Audio Initialization ---
         async initAudio() {
-            if (this.audioInitialized) return;
             try {
                 console.log("[Audio Engine] Starting initAudio()...");
                 this.audioStatusMsg = "Inicializando AudioContext...";
@@ -386,7 +385,7 @@ document.addEventListener('alpine:init', () => {
                         this.metrics.envelope = e.data.envelope;
                         this.metrics.state = e.data.state;
                         this.metrics.voices = e.data.voices;
-                    } else if (e.data.type === 'error') {
+                    } else if (e.data.type === 'error' || e.data.type === 'init-failed' || e.data.type === 'wasm-error') {
                         console.error("[Audio Engine] Worklet error:", e.data.message);
                         this.audioError = true;
                         this.audioStatusMsg = "Erro no Engine";
@@ -479,6 +478,10 @@ document.addEventListener('alpine:init', () => {
 
             this.isPlaying = false;
             this.audioStatusMsg = "Pausado";
+            if (this.synthPluckTimer) {
+                clearTimeout(this.synthPluckTimer);
+                this.synthPluckTimer = null;
+            }
             this.stopProgressAnimation();
         },
 
@@ -500,6 +503,10 @@ document.addEventListener('alpine:init', () => {
             this.pauseTimeContext = 0;
             this.startTimeContext = 0;
             this.audioStatusMsg = "Parado";
+            if (this.synthPluckTimer) {
+                clearTimeout(this.synthPluckTimer);
+                this.synthPluckTimer = null;
+            }
             this.stopProgressAnimation();
         },
 
@@ -533,7 +540,7 @@ document.addEventListener('alpine:init', () => {
                 this.sourceNode = osc;
                 this.gainNode = gain;
 
-                setTimeout(schedulePluck, 1000); // Trigger every second
+                this.synthPluckTimer = setTimeout(schedulePluck, 1000); // Trigger every second
             };
 
             schedulePluck();
@@ -647,9 +654,9 @@ document.addEventListener('alpine:init', () => {
                 "density_burst": 9, "density_sustain": 10, "density_decay": 11,
                 "sustain_read_center_offset_samples": 12,
                 "micro_duration_ms_min": 13, "micro_duration_ms_max": 14, "micro_offset_samples": 15, "micro_jitter_samples": 16,
-                "short_duration_ms_min": 17, "short_duration_ms_max": 18, "short_offset_samples": 19, "short_jitter_samples": 20,
-                "body_duration_ms_min": 21, "body_duration_ms_max": 22, "body_offset_samples": 23, "body_jitter_samples": 24,
-                "master_dry_gain": 25, "master_wet_gain": 26
+                "short_duration_ms_min": 18, "short_duration_ms_max": 19, "short_offset_samples": 20, "short_jitter_samples": 21,
+                "body_duration_ms_min": 23, "body_duration_ms_max": 24, "body_offset_samples": 25, "body_jitter_samples": 26,
+                "master_dry_gain": 28, "master_wet_gain": 29
             };
             if (key in paramMap) {
                 this.workletNode.port.postMessage({ type: 'param', id: paramMap[key], value: val });

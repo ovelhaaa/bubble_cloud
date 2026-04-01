@@ -49,6 +49,16 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
     };
   }
 
+  updateViews() {
+    if (this.wasmLoaded && this.wasm.HEAPF32.buffer.byteLength > 0) {
+      if (!this.inView || this.inView.buffer !== this.wasm.HEAPF32.buffer) {
+        this.inView = new Float32Array(this.wasm.HEAPF32.buffer, this.inPtr, this.bufferSize);
+        this.outLView = new Float32Array(this.wasm.HEAPF32.buffer, this.outLPtr, this.bufferSize);
+        this.outRView = new Float32Array(this.wasm.HEAPF32.buffer, this.outRPtr, this.bufferSize);
+      }
+    }
+  }
+
   process(inputs, outputs, parameters) {
     if (!this.wasmLoaded) return true;
 
@@ -61,26 +71,31 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
       return true;
     }
 
-    const inputChannel = input[0];
+    this.updateViews();
+    if (!this.inView) return true;
+
+    const inputL = input[0];
+    const inputR = input.length > 1 ? input[1] : undefined;
+
     const outputL = output[0];
     const outputR = output.length > 1 ? output[1] : output[0]; // fallback if output is mono
 
-    // 1. Copy JS input buffer to WASM memory
-    const wasmInputArray = new Float32Array(this.wasm.HEAPF32.buffer, this.inPtr, this.bufferSize);
-
-    // If input is stereo, we could mix it down to mono here. For now, just take left channel.
-    wasmInputArray.set(inputChannel);
+    // 1. Mix down to Mono and copy JS input buffer to WASM memory
+    if (inputR) {
+        for (let i = 0; i < this.bufferSize; i++) {
+            this.inView[i] = (inputL[i] + inputR[i]) * 0.5;
+        }
+    } else {
+        this.inView.set(inputL);
+    }
 
     // 2. Process
     this.wasm._wasm_process(this.inPtr, this.outLPtr, this.outRPtr, this.bufferSize);
 
     // 3. Copy WASM output memory back to JS output buffers
-    const wasmOutputLArray = new Float32Array(this.wasm.HEAPF32.buffer, this.outLPtr, this.bufferSize);
-    const wasmOutputRArray = new Float32Array(this.wasm.HEAPF32.buffer, this.outRPtr, this.bufferSize);
-
-    outputL.set(wasmOutputLArray);
+    outputL.set(this.outLView);
     if (output.length > 1) {
-       outputR.set(wasmOutputRArray);
+       outputR.set(this.outRView);
     }
 
     return true;

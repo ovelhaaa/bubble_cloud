@@ -14,7 +14,6 @@
     <!-- Header -->
     <header class="app-header">
         <div class="header-brand">
-            <img src="logo.png" alt="Sound Bubbles Logo" class="app-logo">
             <div class="brand-text">
                 <h1>Sound Bubbles</h1>
                 <p class="subtitle">Granular Performance Engine</p>
@@ -41,11 +40,14 @@
             <!-- Audio Preview Card -->
             <div class="card audio-preview">
                 <div class="card-header">
-                    <h3>Audio Preview</h3>
-                    <div class="audio-badge" :class="audioInitialized ? 'ready' : 'not-ready'">
-                        <span class="dot" :class="audioInitialized ? 'exported' : 'unexported'"></span>
-                        <span x-text="audioInitialized ? 'Áudio pronto' : 'Áudio não ativado'"></span>
+                    <div class="card-header-left">
+                        <h3>Audio Preview</h3>
+                        <div class="audio-badge" :class="audioInitialized ? 'ready' : 'not-ready'">
+                            <span class="dot" :class="audioInitialized ? 'exported' : 'unexported'"></span>
+                            <span x-text="audioInitialized ? 'Áudio pronto' : 'Áudio não ativado'"></span>
+                        </div>
                     </div>
+                    <img src="logo.png" alt="Sound Bubbles Logo" class="app-logo">
                 </div>
 
                 <div x-show="!audioInitialized" class="audio-init-overlay">
@@ -144,7 +146,7 @@
                     <button @click="copyJson()" class="btn btn-secondary">Copiar JSON</button>
                     <button @click="downloadJson()" class="btn btn-primary">Baixar JSON</button>
                 </div>
-                <a class="github-link" href="https://github.com/REPLACE_ME_ORG/REPLACE_ME_REPO/actions" target="_blank" rel="noreferrer">
+                <a class="github-link" href="https://github.com/{{GITHUB_ORG}}/{{GITHUB_REPO}}/actions" target="_blank" rel="noreferrer">
                     Abrir GitHub Actions
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>
                 </a>

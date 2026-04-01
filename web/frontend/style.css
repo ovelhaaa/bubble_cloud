@@ -38,7 +38,7 @@ html, body {
   padding: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
@@ -411,7 +411,8 @@ a:hover { color: var(--primary-dark); text-decoration: underline; }
   background: #d1fae5;
 }
 .audio-badge.not-ready {
-  color: var(--warning);
+  color: #b45309; /* Darker, higher-contrast orange/warning color */
+  font-weight: 700;
 }
 
 .play-help-text {
@@ -436,6 +437,23 @@ a:hover { color: var(--primary-dark); text-decoration: underline; }
 
 .card-header {
   margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.card-header h3 {
+  margin: 0;
+}
+.card-header-left {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.app-logo {
+  height: 48px;
+  width: auto;
+  border-radius: 8px;
+  box-shadow: var(--shadow-sm);
 }
 
 /* How to use */
