@@ -17,12 +17,27 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
       .then((module) => {
         console.log("Worklet: WASM loaded!");
         this.wasm = module;
+
+        console.log("Worklet Module Keys:", Object.keys(module));
+        console.log("Worklet Module properties check:", {
+          hasHEAPF32: !!module.HEAPF32,
+          hasHEAPU8: !!module.HEAPU8,
+          hasWasmMemory: !!module.wasmMemory,
+          hasMemory: !!module.memory
+        });
+
         this.wasm._wasm_init();
 
         const byteSize = this.bufferSize * 4; // float32
         this.inPtr = this.wasm._wasm_alloc(byteSize);
         this.outLPtr = this.wasm._wasm_alloc(byteSize);
         this.outRPtr = this.wasm._wasm_alloc(byteSize);
+
+        console.log("Worklet Pointers allocated:", {
+          inPtr: this.inPtr,
+          outLPtr: this.outLPtr,
+          outRPtr: this.outRPtr
+        });
 
         this.wasmLoaded = true;
         this.port.postMessage({ type: 'ready' });
@@ -53,14 +68,36 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
     };
   }
 
+  getHeapBuffer() {
+    if (!this.wasm) return null;
+    if (this.wasm.HEAPF32 && this.wasm.HEAPF32.buffer) return this.wasm.HEAPF32.buffer;
+    if (this.wasm.HEAPU8 && this.wasm.HEAPU8.buffer) return this.wasm.HEAPU8.buffer;
+    if (this.wasm.wasmMemory && this.wasm.wasmMemory.buffer) return this.wasm.wasmMemory.buffer;
+    if (this.wasm.memory && this.wasm.memory.buffer) return this.wasm.memory.buffer;
+    return null;
+  }
+
   updateViews() {
-    if (this.wasmLoaded && this.wasm.HEAPF32.buffer.byteLength > 0) {
-      if (!this.inView || this.inView.buffer !== this.wasm.HEAPF32.buffer) {
-        this.inView = new Float32Array(this.wasm.HEAPF32.buffer, this.inPtr, this.bufferSize);
-        this.outLView = new Float32Array(this.wasm.HEAPF32.buffer, this.outLPtr, this.bufferSize);
-        this.outRView = new Float32Array(this.wasm.HEAPF32.buffer, this.outRPtr, this.bufferSize);
+    if (!this.wasmLoaded) return false;
+
+    const buffer = this.getHeapBuffer();
+    if (!buffer || buffer.byteLength === 0) {
+      return false; // Not available yet
+    }
+
+    if (!this.inView || this.inView.buffer !== buffer) {
+      try {
+        this.inView = new Float32Array(buffer, this.inPtr, this.bufferSize);
+        this.outLView = new Float32Array(buffer, this.outLPtr, this.bufferSize);
+        this.outRView = new Float32Array(buffer, this.outRPtr, this.bufferSize);
+        return true;
+      } catch (e) {
+        console.error("Worklet: Failed to create views", e);
+        return false;
       }
     }
+
+    return true; // Views are already valid
   }
 
   process(inputs, outputs) {
@@ -71,14 +108,22 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
 
     if (!output || output.length === 0) return true;
 
-    this.updateViews();
+    const outputL = output[0];
+    const outputR = output.length > 1 ? output[1] : output[0];
+
+    if (!this.updateViews()) {
+      // Memory not accessible yet; fill outputs with silence to avoid crashes
+      outputL.fill(0);
+      if (output.length > 1) {
+        outputR.fill(0);
+      }
+      return true;
+    }
+
     if (!this.inView) return true;
 
     // Handle empty inputs (e.g. source disconnected, but reverb tails might still be active)
     let hasInput = input && input.length > 0 && input[0] && input[0].length > 0;
-
-    const outputL = output[0];
-    const outputR = output.length > 1 ? output[1] : output[0];
 
     // 1) Mix down para mono e copia o input JS para a memória WASM
     if (hasInput) {
