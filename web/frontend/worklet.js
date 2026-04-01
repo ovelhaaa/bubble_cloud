@@ -3,34 +3,38 @@ importScripts('bubble_cloud_wasm.js');
 class SoundBubblesWorklet extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.wasmLoaded = false;
-    this.bufferSize = 128; // Usually 128 in AudioWorklet
 
-    // Pointers for WASM memory
+    this.wasmLoaded = false;
+    this.bufferSize = 128;
+
     this.inPtr = 0;
     this.outLPtr = 0;
     this.outRPtr = 0;
 
-    // We need to wait for the WASM module to be ready
     console.log("Worklet: Starting WASM load...", typeof BubbleCloudModule);
-    BubbleCloudModule().then(module => {
-      console.log("Worklet: WASM loaded!");
-      this.wasm = module;
-      this.wasm._wasm_init();
 
-      // Allocate memory for I/O buffers in WASM heap
-      const byteSize = this.bufferSize * 4; // 32-bit floats
-      this.inPtr = this.wasm._wasm_alloc(byteSize);
-      this.outLPtr = this.wasm._wasm_alloc(byteSize);
-      this.outRPtr = this.wasm._wasm_alloc(byteSize);
+    BubbleCloudModule()
+      .then((module) => {
+        console.log("Worklet: WASM loaded!");
+        this.wasm = module;
+        this.wasm._wasm_init();
 
-      this.wasmLoaded = true;
-      this.port.postMessage({ type: 'ready' });
-    }).catch(e => {
-      console.error("Worklet: WASM load failed", e);
-    });
+        const byteSize = this.bufferSize * 4; // float32
+        this.inPtr = this.wasm._wasm_alloc(byteSize);
+        this.outLPtr = this.wasm._wasm_alloc(byteSize);
+        this.outRPtr = this.wasm._wasm_alloc(byteSize);
 
-    // Handle parameter changes from main thread
+        this.wasmLoaded = true;
+        this.port.postMessage({ type: 'ready' });
+      })
+      .catch((e) => {
+        console.error("Worklet: WASM load failed", e);
+        this.port.postMessage({
+          type: 'wasm-error',
+          message: e?.message || String(e),
+        });
+      });
+
     this.port.onmessage = (event) => {
       if (event.data.type === 'param') {
         if (this.wasmLoaded) {
@@ -38,12 +42,12 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
         }
       } else if (event.data.type === 'poll') {
         if (this.wasmLoaded) {
-           this.port.postMessage({
-              type: 'state',
-              envelope: this.wasm._wasm_get_envelope(),
-              state: this.wasm._wasm_get_state(),
-              voices: this.wasm._wasm_get_active_voices()
-           });
+          this.port.postMessage({
+            type: 'state',
+            envelope: this.wasm._wasm_get_envelope(),
+            state: this.wasm._wasm_get_state(),
+            voices: this.wasm._wasm_get_active_voices(),
+          });
         }
       }
     };
@@ -59,17 +63,14 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
     }
   }
 
-  process(inputs, outputs, parameters) {
+  process(inputs, outputs) {
     if (!this.wasmLoaded) return true;
 
     const input = inputs[0];
     const output = outputs[0];
 
-    // We assume 1 channel in (or we mix down), 2 channels out
-    if (!input || input.length === 0 || !input[0]) {
-      // Silence if no input connected
-      return true;
-    }
+    if (!output || output.length === 0) return true;
+    if (!input || input.length === 0 || !input[0]) return true;
 
     this.updateViews();
     if (!this.inView) return true;
@@ -78,24 +79,24 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
     const inputR = input.length > 1 ? input[1] : undefined;
 
     const outputL = output[0];
-    const outputR = output.length > 1 ? output[1] : output[0]; // fallback if output is mono
+    const outputR = output.length > 1 ? output[1] : output[0];
 
-    // 1. Mix down to Mono and copy JS input buffer to WASM memory
+    // 1) Mix down para mono e copia o input JS para a memória WASM
     if (inputR) {
-        for (let i = 0; i < this.bufferSize; i++) {
-            this.inView[i] = (inputL[i] + inputR[i]) * 0.5;
-        }
+      for (let i = 0; i < this.bufferSize; i++) {
+        this.inView[i] = (inputL[i] + inputR[i]) * 0.5;
+      }
     } else {
-        this.inView.set(inputL);
+      this.inView.set(inputL);
     }
 
-    // 2. Process
+    // 2) Processa no WASM
     this.wasm._wasm_process(this.inPtr, this.outLPtr, this.outRPtr, this.bufferSize);
 
-    // 3. Copy WASM output memory back to JS output buffers
+    // 3) Copia a saída WASM de volta para os buffers JS
     outputL.set(this.outLView);
     if (output.length > 1) {
-       outputR.set(this.outRView);
+      outputR.set(this.outRView);
     }
 
     return true;
