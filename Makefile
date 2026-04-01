@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -O2 -Wall -Wextra -std=c11 -lm -Icore
 
 EMCC = emcc
-EMCC_FLAGS = -O3 -Wall -s WASM=1 -s EXPORTED_RUNTIME_METHODS='["cwrap"]' -s EXPORTED_FUNCTIONS='["_wasm_init", "_wasm_reset", "_wasm_process", "_wasm_set_param", "_wasm_alloc", "_wasm_free", "_wasm_get_envelope", "_wasm_get_state", "_wasm_get_active_voices"]' -s ALLOW_MEMORY_GROWTH=1 -s NO_EXIT_RUNTIME=1 -s MODULARIZE=1 -s EXPORT_NAME="BubbleCloudModule" -s SINGLE_FILE=1 -s ENVIRONMENT='web,worker,worklet' -s EXPORT_ES6=0 -Icore
+EMCC_FLAGS = -O3 -Wall -s WASM=1 -s EXPORTED_RUNTIME_METHODS='["cwrap"]' -s EXPORTED_FUNCTIONS='["_wasm_init", "_wasm_reset", "_wasm_process", "_wasm_set_param", "_wasm_alloc", "_wasm_free", "_wasm_get_envelope", "_wasm_get_state", "_wasm_get_active_voices"]' -s ALLOW_MEMORY_GROWTH=1 -s NO_EXIT_RUNTIME=1 -s MODULARIZE=1 -s SINGLE_FILE=1 -s ENVIRONMENT='web,worker,worklet' -s EXPORT_ES6=1 -Icore
 
 all: offline wasm
 

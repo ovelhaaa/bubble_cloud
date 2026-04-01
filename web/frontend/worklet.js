@@ -1,4 +1,4 @@
-importScripts('bubble_cloud_wasm.js');
+import BubbleCloudModule from './bubble_cloud_wasm.js';
 
 class SoundBubblesWorklet extends AudioWorkletProcessor {
   constructor() {
