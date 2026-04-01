@@ -429,21 +429,23 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
-        togglePlay() {
+        async togglePlay() {
             if (!this.canPlay()) return;
 
             if (this.isPlaying) {
                 this.pausePlay();
             } else {
-                this.startPlay();
+                await this.startPlay();
             }
         },
 
-        startPlay() {
+        async startPlay() {
             console.log("[Transport] Starting playback...");
             if (this.audioContext.state === 'suspended') {
-                this.audioContext.resume();
+                await this.audioContext.resume();
                 console.log("[Transport] AudioContext resumed.");
+            } else {
+                console.log("[Transport] AudioContext already running.");
             }
 
             // Clean up any old node
@@ -453,14 +455,18 @@ document.addEventListener('alpine:init', () => {
                 this.sourceNode = null;
             }
 
-            if (this.previewMode === 'synth') {
-                this.startSynthPlucks();
-            } else if (this.previewMode === 'file' && this.audioBuffer) {
-                this.startFilePlayback();
-            }
-
             this.isPlaying = true;
             this.audioError = false;
+
+            if (this.previewMode === 'synth') {
+                console.log("[Transport] Mode: Synth Plucks");
+                this.startSynthPlucks();
+            } else if (this.previewMode === 'file' && this.audioBuffer) {
+                console.log("[Transport] Mode: Custom File");
+                this.startFilePlayback();
+            } else {
+                console.log("[Transport] Playback aborted. Missing source buffer or invalid mode.");
+            }
         },
 
         pausePlay() {
@@ -657,9 +663,9 @@ document.addEventListener('alpine:init', () => {
                 "density_burst": 9, "density_sustain": 10, "density_decay": 11,
                 "sustain_read_center_offset_samples": 12,
                 "micro_duration_ms_min": 13, "micro_duration_ms_max": 14, "micro_offset_samples": 15, "micro_jitter_samples": 16,
-                "short_duration_ms_min": 18, "short_duration_ms_max": 19, "short_offset_samples": 20, "short_jitter_samples": 21,
-                "body_duration_ms_min": 23, "body_duration_ms_max": 24, "body_offset_samples": 25, "body_jitter_samples": 26,
-                "master_dry_gain": 28, "master_wet_gain": 29
+                "short_duration_ms_min": 17, "short_duration_ms_max": 18, "short_offset_samples": 19, "short_jitter_samples": 20,
+                "body_duration_ms_min": 21, "body_duration_ms_max": 22, "body_offset_samples": 23, "body_jitter_samples": 24,
+                "master_dry_gain": 25, "master_wet_gain": 26
             };
             if (key in paramMap) {
                 this.workletNode.port.postMessage({ type: 'param', id: paramMap[key], value: val });

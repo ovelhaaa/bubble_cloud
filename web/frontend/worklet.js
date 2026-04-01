@@ -70,24 +70,31 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
     const output = outputs[0];
 
     if (!output || output.length === 0) return true;
-    if (!input || input.length === 0 || !input[0]) return true;
 
     this.updateViews();
     if (!this.inView) return true;
 
-    const inputL = input[0];
-    const inputR = input.length > 1 ? input[1] : undefined;
+    // Handle empty inputs (e.g. source disconnected, but reverb tails might still be active)
+    let hasInput = input && input.length > 0 && input[0] && input[0].length > 0;
 
     const outputL = output[0];
     const outputR = output.length > 1 ? output[1] : output[0];
 
     // 1) Mix down para mono e copia o input JS para a memória WASM
-    if (inputR) {
-      for (let i = 0; i < this.bufferSize; i++) {
-        this.inView[i] = (inputL[i] + inputR[i]) * 0.5;
+    if (hasInput) {
+      const inputL = input[0];
+      const inputR = input.length > 1 ? input[1] : undefined;
+
+      if (inputR) {
+        for (let i = 0; i < this.bufferSize; i++) {
+          this.inView[i] = (inputL[i] + inputR[i]) * 0.5;
+        }
+      } else {
+        this.inView.set(inputL);
       }
     } else {
-      this.inView.set(inputL);
+      // Input is silent/disconnected, fill with zeros
+      this.inView.fill(0);
     }
 
     // 2) Processa no WASM
@@ -97,6 +104,16 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
     outputL.set(this.outLView);
     if (output.length > 1) {
       outputR.set(this.outRView);
+    }
+
+    // Debug helper once every roughly 1 second (1 second at 44.1kHz / 128 buffer size = ~344)
+    if (!this._logCounter) this._logCounter = 0;
+    this._logCounter++;
+    if (this._logCounter > 344) {
+      this._logCounter = 0;
+      let inSample = hasInput ? input[0][0] : 0;
+      let outSample = outputL[0];
+      console.log(`[Worklet Debug] Input Active: ${hasInput}, SampleIn[0]: ${inSample.toFixed(4)}, SampleOutL[0]: ${outSample.toFixed(4)}`);
     }
 
     return true;
