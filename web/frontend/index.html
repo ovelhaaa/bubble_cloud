@@ -21,13 +21,13 @@
             </div>
         </div>
         <div class="header-status">
-            <div class="save-status" x-show="hasUnexportedChanges" x-transition x-cloak title="You have changes that haven't been exported">
-                <span class="dot unexported"></span> Unexported changes
+            <div class="save-status" x-show="hasUnexportedChanges" x-transition x-cloak title="Você tem alterações não exportadas">
+                <span class="dot unexported"></span> Alterações não salvas
             </div>
-            <div class="save-status" x-show="!hasUnexportedChanges && isDraft" x-transition x-cloak title="All changes exported">
-                <span class="dot exported"></span> Saved
+            <div class="save-status" x-show="!hasUnexportedChanges && isDraft" x-transition x-cloak title="Todas as alterações foram exportadas">
+                <span class="dot exported"></span> Salvo
             </div>
-            <span class="status-pill" :class="isDraft ? 'draft' : 'baseline'" x-text="isDraft ? 'Local Draft' : 'Baseline Defaults'"></span>
+            <span class="status-pill" :class="isDraft ? 'draft' : 'baseline'" x-text="isDraft ? 'Rascunho Local' : 'Padrões Ativos'"></span>
             <button @click="showResetModal = true" class="btn-reset">Reset</button>
         </div>
     </header>
@@ -35,14 +35,133 @@
     <!-- Main Layout -->
     <main class="app-layout">
 
-        <!-- Left Column: Parameters -->
-        <section class="panel-left">
-            <div class="section-header">
-                <h2 class="section-title">Engine Parameters</h2>
-                <p class="helper-text">Adjust properties. The audio preview updates in real-time.</p>
+        <!-- Top Row: Audio Preview and Actions -->
+        <section class="panel-top">
+
+            <!-- Audio Preview Card -->
+            <div class="card audio-preview">
+                <div class="card-header">
+                    <h3>Audio Preview</h3>
+                    <div class="audio-badge" :class="audioInitialized ? 'ready' : 'not-ready'">
+                        <span class="dot" :class="audioInitialized ? 'exported' : 'unexported'"></span>
+                        <span x-text="audioInitialized ? 'Áudio pronto' : 'Áudio não ativado'"></span>
+                    </div>
+                </div>
+
+                <div x-show="!audioInitialized" class="audio-init-overlay">
+                    <button class="btn btn-primary btn-large" @click="initAudio()">Ativar Áudio</button>
+                    <p class="disclaimer">Clique para iniciar o Web Audio API</p>
+                </div>
+
+                <div x-show="audioInitialized" class="audio-player-container" x-cloak>
+
+                    <!-- Transport Mode switch -->
+                    <div class="track-switch">
+                        <label class="radio-label">
+                            <input type="radio" x-model="previewMode" value="file" @change="handleModeSwitch()">
+                            <span class="radio-text">Custom File</span>
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" x-model="previewMode" value="synth" @change="handleModeSwitch()">
+                            <span class="radio-text">Synth Pluck</span>
+                        </label>
+                    </div>
+
+                    <!-- File Upload / Drop Zone -->
+                    <div class="drop-zone"
+                         x-show="previewMode === 'file'"
+                         @dragover.prevent="dragOver = true"
+                         @dragleave.prevent="dragOver = false"
+                         @drop.prevent="handleFileDrop($event)"
+                         :class="{ 'drag-active': dragOver, 'has-file': audioFile }">
+                        <input type="file" id="audio-upload" accept="audio/*" class="file-input" @change="handleFileSelect($event)" :disabled="!audioInitialized">
+
+                        <label for="audio-upload" class="drop-label" x-show="!audioFile && !isDecoding">
+                            <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+                            <span x-show="audioInitialized">Arraste um arquivo de áudio ou clique para fazer upload</span>
+                            <span x-show="!audioInitialized">Ative o áudio primeiro para enviar um arquivo</span>
+                            <span class="supported-formats">.wav, .mp3, .ogg</span>
+                        </label>
+
+                        <div class="decoding-status" x-show="isDecoding">
+                            <div class="spinner"></div>
+                            <span>Decodificando áudio...</span>
+                        </div>
+
+                        <div class="file-info" x-show="audioFile && !isDecoding">
+                            <svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+                            <span class="file-name" x-text="audioFile ? audioFile.name : ''"></span>
+                            <span class="file-duration" x-text="formatTime(duration)"></span>
+                            <button @click="clearAudioFile()" class="btn-clear-file" title="Remover arquivo">✕</button>
+                        </div>
+                    </div>
+
+                    <!-- Transport Controls -->
+                    <div class="transport-controls">
+
+                        <!-- Player UI -->
+                        <div class="player-ui" :class="{'disabled-ui': !canPlay()}">
+                            <div class="player-buttons">
+                                <button class="btn-transport play-pause" @click="togglePlay()" :disabled="!canPlay()" :title="isPlaying ? 'Pause' : 'Play'">
+                                    <svg x-show="!isPlaying" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                                    <svg x-show="isPlaying" x-cloak viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                                </button>
+                                <button class="btn-transport stop" @click="stopPlay()" :disabled="!isPlaying && currentTime === 0" title="Stop">
+                                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>
+                                </button>
+                            </div>
+
+                            <!-- Progress Bar -->
+                            <div class="progress-container" :class="{ 'disabled': previewMode === 'synth' || !audioBuffer }">
+                                <span class="time-display" x-text="formatTime(currentTime)">0:00</span>
+                                <div class="progress-wrapper">
+                                    <input type="range" class="progress-bar-audio"
+                                           min="0" :max="duration || 100" step="0.01"
+                                           x-model.number="seekTime"
+                                           @input="handleSeekInput()"
+                                           @change="handleSeekChange()"
+                                           :disabled="previewMode === 'synth' || !audioBuffer"
+                                           x-ref="progressBar">
+                                </div>
+                                <span class="time-display" x-text="formatTime(duration)">0:00</span>
+                            </div>
+                        </div>
+
+                        <div class="audio-status-text">
+                            Status: <span x-text="audioStatusMsg" :class="{'text-error': audioError}"></span>
+                        </div>
+                        <div class="play-help-text" x-show="!canPlay() && audioInitialized && previewMode === 'file'">
+                            Envie um arquivo para testar o efeito.
+                        </div>
+                    </div>
+                </div>
             </div>
 
-            <div class="accordions-container">
+            <!-- Export Actions -->
+            <div class="card export-actions">
+                <h3>Exportar Preset</h3>
+                <div class="action-buttons">
+                    <button @click="copyJson()" class="btn btn-secondary">Copiar JSON</button>
+                    <button @click="downloadJson()" class="btn btn-primary">Baixar JSON</button>
+                </div>
+                <a class="github-link" href="https://github.com/REPLACE_ME_ORG/REPLACE_ME_REPO/actions" target="_blank" rel="noreferrer">
+                    Abrir GitHub Actions
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>
+                </a>
+            </div>
+
+        </section>
+
+        <!-- Bottom Row: Parameters and DSP Metrics -->
+        <section class="panel-bottom">
+            <!-- Left Column: Parameters -->
+            <div class="panel-left">
+                <div class="section-header">
+                    <h2 class="section-title">Engine Parameters</h2>
+                    <p class="helper-text">Adjust properties. The audio preview updates in real-time.</p>
+                </div>
+
+                <div class="accordions-container">
                 <!-- Dynamic Accordion Groups -->
                 <template x-for="group in parameterGroups" :key="group.name">
                     <div class="accordion" :class="{ 'open': openAccordion === group.name }">
@@ -118,157 +237,54 @@
                     </div>
                 </template>
             </div>
-            <!-- Spacer to ensure bottom accordions aren't hidden on mobile -->
-            <div class="bottom-spacer"></div>
-        </section>
-
-        <!-- Right Column: Info, Transport, Metrics, Actions -->
-        <section class="panel-right">
-
-            <!-- How to use -->
-            <div class="card how-to-use">
-                <h3>How to Use</h3>
-                <ol>
-                    <li><strong>Load an audio file</strong> or use the synth signal below.</li>
-                    <li><strong>Adjust parameters</strong> on the left to shape the bubbles.</li>
-                    <li><strong>Listen</strong> to the real-time DSP preview in your browser.</li>
-                    <li><strong>Export</strong> the preset JSON when you are satisfied.</li>
-                </ol>
+                <!-- Spacer to ensure bottom accordions aren't hidden on mobile -->
+                <div class="bottom-spacer"></div>
             </div>
 
-            <!-- Audio Preview Card -->
-            <div class="card audio-preview">
-                <div class="card-header">
-                    <h3>Audio Preview</h3>
-                </div>
-
-                <div x-show="!audioInitialized" class="audio-init-overlay">
-                    <button class="btn btn-primary btn-large" @click="initAudio()">Start Audio Engine</button>
-                    <p class="disclaimer">Click to allow Web Audio playback</p>
-                </div>
-
-                <div x-show="audioInitialized" class="audio-player-container" x-cloak>
-
-                    <!-- Transport Mode switch -->
-                    <div class="track-switch">
-                        <label class="radio-label">
-                            <input type="radio" x-model="previewMode" value="synth" @change="handleModeSwitch()">
-                            <span class="radio-text">Synth Pluck</span>
-                        </label>
-                        <label class="radio-label">
-                            <input type="radio" x-model="previewMode" value="file" @change="handleModeSwitch()">
-                            <span class="radio-text">Custom File</span>
-                        </label>
-                    </div>
-
-                    <!-- File Upload / Drop Zone -->
-                    <div class="drop-zone"
-                         x-show="previewMode === 'file'"
-                         @dragover.prevent="dragOver = true"
-                         @dragleave.prevent="dragOver = false"
-                         @drop.prevent="handleFileDrop($event)"
-                         :class="{ 'drag-active': dragOver, 'has-file': audioFile }">
-                        <input type="file" id="audio-upload" accept="audio/*" class="file-input" @change="handleFileSelect($event)">
-
-                        <label for="audio-upload" class="drop-label" x-show="!audioFile && !isDecoding">
-                            <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
-                            <span>Drop an audio file here or click to upload</span>
-                            <span class="supported-formats">.wav, .mp3, .ogg</span>
-                        </label>
-
-                        <div class="decoding-status" x-show="isDecoding">
-                            <div class="spinner"></div>
-                            <span>Decoding audio...</span>
+            <!-- Right Column: Metrics -->
+            <div class="panel-right">
+                <!-- DSP Metrics -->
+                <div class="card dsp-metrics" x-show="audioInitialized" x-cloak>
+                    <h3>DSP Internal Metrics</h3>
+                    <div class="metrics-grid">
+                        <div class="metric-box">
+                            <span class="metric-label">Envelope</span>
+                            <span class="metric-value" x-text="metrics.envelope.toFixed(4)"></span>
                         </div>
-
-                        <div class="file-info" x-show="audioFile && !isDecoding">
-                            <svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-                            <span class="file-name" x-text="audioFile ? audioFile.name : ''"></span>
-                            <button @click="clearAudioFile()" class="btn-clear-file" title="Remove file">✕</button>
+                        <div class="metric-box">
+                            <span class="metric-label">State</span>
+                            <span class="metric-value" x-text="getEngineStateName(metrics.state)"></span>
                         </div>
-                    </div>
-
-                    <!-- Transport Controls -->
-                    <div class="transport-controls">
-
-                        <!-- Player UI -->
-                        <div class="player-ui" :class="{'disabled-ui': !canPlay()}">
-                            <div class="player-buttons">
-                                <button class="btn-transport play-pause" @click="togglePlay()" :disabled="!canPlay()" :title="isPlaying ? 'Pause' : 'Play'">
-                                    <svg x-show="!isPlaying" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-                                    <svg x-show="isPlaying" x-cloak viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
-                                </button>
-                                <button class="btn-transport stop" @click="stopPlay()" :disabled="!isPlaying && currentTime === 0" title="Stop">
-                                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>
-                                </button>
-                            </div>
-
-                            <!-- Progress Bar -->
-                            <div class="progress-container" :class="{ 'disabled': previewMode === 'synth' || !audioBuffer }">
-                                <span class="time-display" x-text="formatTime(currentTime)">0:00</span>
-                                <div class="progress-wrapper">
-                                    <input type="range" class="progress-bar-audio"
-                                           min="0" :max="duration || 100" step="0.01"
-                                           x-model.number="seekTime"
-                                           @input="handleSeekInput()"
-                                           @change="handleSeekChange()"
-                                           :disabled="previewMode === 'synth' || !audioBuffer"
-                                           x-ref="progressBar">
-                                </div>
-                                <span class="time-display" x-text="formatTime(duration)">0:00</span>
-                            </div>
-                        </div>
-
-                        <div class="audio-status-text">
-                            Status: <span x-text="audioStatusMsg" :class="{'text-error': audioError}"></span>
+                        <div class="metric-box">
+                            <span class="metric-label">Voices</span>
+                            <span class="metric-value"><strong x-text="metrics.voices"></strong> / 12</span>
                         </div>
                     </div>
                 </div>
-            </div>
 
-            <!-- DSP Metrics -->
-            <div class="card dsp-metrics" x-show="audioInitialized" x-cloak>
-                <h3>DSP Internal Metrics</h3>
-                <div class="metrics-grid">
-                    <div class="metric-box">
-                        <span class="metric-label">Envelope</span>
-                        <span class="metric-value" x-text="metrics.envelope.toFixed(4)"></span>
-                    </div>
-                    <div class="metric-box">
-                        <span class="metric-label">State</span>
-                        <span class="metric-value" x-text="getEngineStateName(metrics.state)"></span>
-                    </div>
-                    <div class="metric-box">
-                        <span class="metric-label">Voices</span>
-                        <span class="metric-value"><strong x-text="metrics.voices"></strong> / 12</span>
-                    </div>
+                <!-- How to use -->
+                <div class="card how-to-use">
+                    <h3>Workflow / Instruções</h3>
+                    <ol>
+                        <li><strong>1. Ative o engine de áudio</strong> no topo da página.</li>
+                        <li><strong>2. Envie um arquivo para testar o efeito</strong> ou use o synth.</li>
+                        <li><strong>3. Use Play para ouvir o resultado processado</strong>.</li>
+                        <li><strong>4. Ajuste os parâmetros</strong> para moldar as bolhas.</li>
+                        <li><strong>5. Exporte</strong> seu preset JSON quando terminar.</li>
+                    </ol>
                 </div>
             </div>
-
-            <!-- Export Actions -->
-            <div class="card export-actions">
-                <h3>Export Preset</h3>
-                <div class="action-buttons">
-                    <button @click="copyJson()" class="btn btn-secondary">Copy JSON</button>
-                    <button @click="downloadJson()" class="btn btn-primary">Download JSON</button>
-                </div>
-                <a class="github-link" href="https://github.com/REPLACE_ME_ORG/REPLACE_ME_REPO/actions" target="_blank" rel="noreferrer">
-                    Open GitHub Actions
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>
-                </a>
-            </div>
-
         </section>
     </main>
 
     <!-- Reset Modal -->
     <div class="modal-backdrop" x-show="showResetModal" x-transition.opacity x-cloak>
         <div class="modal" @click.away="showResetModal = false">
-            <h3 class="modal-title">Reset to Baseline?</h3>
-            <p class="modal-body">Are you sure you want to reset all parameters to default? This will clear your unsaved edits. This action cannot be undone.</p>
+            <h3 class="modal-title">Voltar ao padrão?</h3>
+            <p class="modal-body">Tem certeza de que deseja redefinir todos os parâmetros para o padrão? Isso limpará suas edições não salvas. Esta ação não pode ser desfeita.</p>
             <div class="modal-actions">
-                <button class="btn btn-secondary" @click="showResetModal = false">Cancel</button>
-                <button class="btn btn-danger" @click="confirmReset()">Reset Default</button>
+                <button class="btn btn-secondary" @click="showResetModal = false">Cancelar</button>
+                <button class="btn btn-danger" @click="confirmReset()">Restaurar</button>
             </div>
         </div>
     </div>
