@@ -56,6 +56,13 @@ The write head constantly records the mono input. Bubble read positions ($R$) ar
 * **Sustain Bubbles**: $R$ is placed further back (e.g., $W - 50\text{ms}$ to $W - 500\text{ms}$). The position drifts slowly backward over time to scan the decaying note, preventing the static "machine gun" artifact of looping a single waveform cycle.
 Read pointers are clamped to prevent crossing the write pointer. If $R$ approaches $W$ too closely during playback, the bubble's window is forced into an early zero-crossing taper.
 
+Current implementation codifies this strategy with semantic preset regions:
+* **attack_region**: 10–80ms
+* **body_region**: 80–250ms
+* **memory_region**: 250–900ms
+
+Regions are stored as sample ranges behind the write head and selected deterministically per spawn via the core PRNG, so presets remain musically interpretable and reproducible.
+
 ## 10. Dry/wet interaction philosophy
 The granular effect operates purely in parallel to the dry signal. The wet path is dynamically ducked by new transients. When a strong attack is detected, the global mix of the granular engine is temporarily suppressed (e.g., a rapid 10ms fade down) and then smoothly ramps back up (e.g., 50–100ms fade up). This guarantees the dry pick attack is always the psychoacoustic focal point, and the granular texture is perceived as a resultant reaction (a bloom or tail) rather than a masking layer.
 

@@ -38,6 +38,8 @@ static void Scheduler_RunTick(SoundBubblesEngine_t* engine);
 static int Voice_Allocate(SoundBubblesEngine_t* engine);
 static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleClass_t b_class);
 static float LookupWindow(float phase, WindowType_t type);
+static const ReadRegionConfig_t* ResolveReadRegion(const SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state);
+static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state);
 
 // --- Initialization & Config ---
 
@@ -379,15 +381,55 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     }
     v->phase_inc = 1.0f / duration_samples;
 
-    int32_t base_offset = class_cfg->offset_samples;
-    if (b_class == BUBBLE_CLASS_SUSTAIN_BODY) {
-        base_offset += engine->config.sustain_read_center_offset_samples;
+    int32_t read_offset_samples = ChooseReadOffsetSamples(engine, b_class, engine->engine_state);
+    v->read_ptr_float = (float)WrapIntIndex(engine->write_ptr - read_offset_samples, BUBBLES_BUFFER_SIZE_SAMPLES);
+}
+
+static const ReadRegionConfig_t* ResolveReadRegion(const SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state) {
+    // Deterministic map from "what bubble" + "what phrase phase" => temporal memory slice.
+    // Attack-oriented contexts read from attack/body. Tail-oriented contexts read from memory.
+    switch (bubble_class) {
+        case BUBBLE_CLASS_MICRO_ATTACK:
+            return &engine->config.attack_region;
+        case BUBBLE_CLASS_SHORT_INTERMEDIATE:
+            if (engine_state == ENGINE_STATE_SUSTAIN_BODY || engine_state == ENGINE_STATE_SPARSE_DECAY) {
+                return &engine->config.memory_region;
+            }
+            return &engine->config.body_region;
+        case BUBBLE_CLASS_SUSTAIN_BODY:
+        default:
+            if (engine_state == ENGINE_STATE_TRANSIENT_BURST || engine_state == ENGINE_STATE_ATTACK_ONGOING) {
+                return &engine->config.body_region;
+            }
+            return &engine->config.memory_region;
+    }
+}
+
+static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state) {
+    const ReadRegionConfig_t* region = ResolveReadRegion(engine, bubble_class, engine_state);
+
+    // Clamp and normalize range so presets stay ring-buffer safe.
+    const int32_t min_safe = BUBBLES_GUARD_ZONE_SAMPLES;
+    const int32_t max_safe = BUBBLES_BUFFER_SIZE_SAMPLES - BUBBLES_GUARD_ZONE_SAMPLES - 1;
+
+    int32_t min_offset = region->min_offset_samples;
+    int32_t max_offset = region->max_offset_samples;
+
+    if (min_offset < min_safe) min_offset = min_safe;
+    if (max_offset < min_safe) max_offset = min_safe;
+    if (min_offset > max_safe) min_offset = max_safe;
+    if (max_offset > max_safe) max_offset = max_safe;
+    if (max_offset < min_offset) max_offset = min_offset;
+
+    int32_t span = max_offset - min_offset;
+    if (span == 0) {
+        return min_offset;
     }
 
-    int32_t half_jitter = class_cfg->jitter_samples / 2;
-    int32_t jitter_val = (int32_t)(RandomFloat01(engine) * (float)class_cfg->jitter_samples) - half_jitter;
-
-    v->read_ptr_float = (float)WrapIntIndex(engine->write_ptr - base_offset + jitter_val, BUBBLES_BUFFER_SIZE_SAMPLES);
+    // Deterministic uniform selection over [min_offset, max_offset].
+    uint32_t rnd = NextRandomU32(engine);
+    uint32_t bucket = (uint32_t)(span + 1);
+    return min_offset + (int32_t)(rnd % bucket);
 }
 
 // --- Mathematics and Filter Helpers ---

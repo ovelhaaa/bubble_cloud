@@ -25,5 +25,11 @@
   "body_offset_samples": 35280,
   "body_jitter_samples": 8820,
   "master_dry_gain": 1.0,
-  "master_wet_gain": 0.8
+  "master_wet_gain": 0.8,
+  "attack_region_min_offset_samples": 4410,
+  "attack_region_max_offset_samples": 5512,
+  "body_region_min_offset_samples": 17640,
+  "body_region_max_offset_samples": 22050,
+  "memory_region_min_offset_samples": 35280,
+  "memory_region_max_offset_samples": 44100
 }
