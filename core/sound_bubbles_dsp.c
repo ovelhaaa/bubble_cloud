@@ -1,7 +1,5 @@
 #include "sound_bubbles_dsp.h"
 #include <math.h>
-#include <stdlib.h>
-#include <time.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f
@@ -18,10 +16,12 @@
 static float WindowLUT_Hann[1024];
 static float WindowLUT_Tukey[1024];
 static bool luts_initialized = false;
+static const uint32_t RNG_STATE_FALLBACK = 0x6D2B79F5u;
 
 // --- Static Helper Prototypes ---
 static void InitWindowLUTs(void);
-static float RandomFloat(void);
+static uint32_t NextRandomU32(SoundBubblesEngine_t* engine);
+static float RandomFloat01(SoundBubblesEngine_t* engine);
 static inline int32_t WrapIntIndex(int32_t index, int32_t size);
 static inline float WrapFloatIndex(float index, float size);
 static inline float LinearInterpolate(const int16_t* buffer, float index_float);
@@ -43,10 +43,10 @@ static float LookupWindow(float phase, WindowType_t type);
 
 void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memory, const EngineConfig_t* initial_config) {
     InitWindowLUTs();
-    srand((unsigned int)time(NULL));
 
     engine->delay_buffer = delay_buffer_memory;
     engine->config = *initial_config;
+    SoundBubbles_SetRngSeed(engine, engine->config.rng_seed);
 
     engine->write_ptr = 0;
     engine->block_counter = 0;
@@ -84,7 +84,16 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
 }
 
 void SoundBubbles_UpdateConfig(SoundBubblesEngine_t* engine, const EngineConfig_t* new_config) {
+    bool rng_seed_changed = (engine->config.rng_seed != new_config->rng_seed);
     engine->config = *new_config;
+    if (rng_seed_changed) {
+        SoundBubbles_SetRngSeed(engine, engine->config.rng_seed);
+    }
+}
+
+void SoundBubbles_SetRngSeed(SoundBubblesEngine_t* engine, uint32_t seed) {
+    engine->config.rng_seed = seed;
+    engine->rng_state = (seed == 0u) ? RNG_STATE_FALLBACK : seed;
 }
 
 // --- Audio-Rate Processing Loop ---
@@ -280,7 +289,7 @@ static void Scheduler_RunTick(SoundBubblesEngine_t* engine) {
     int spawns_this_tick = 0;
     while (engine->spawn_accumulator >= 1.0f && spawns_this_tick < SCHED_MAX_SPAWNS_PER_TICK) {
         BubbleClass_t selected_class;
-        float r = RandomFloat();
+        float r = RandomFloat01(engine);
 
         switch (engine->engine_state) {
             case ENGINE_STATE_TRANSIENT_BURST:
@@ -361,7 +370,7 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     v->phase = 0.0f;
     v->amp = 1.0f;
 
-    float duration_ms = class_cfg->duration_ms_min + (RandomFloat() * (class_cfg->duration_ms_max - class_cfg->duration_ms_min));
+    float duration_ms = class_cfg->duration_ms_min + (RandomFloat01(engine) * (class_cfg->duration_ms_max - class_cfg->duration_ms_min));
     float duration_samples = duration_ms * ((float)BUBBLES_SAMPLE_RATE / 1000.0f);
 
     // Defensively clamp duration_samples to avoid div-by-zero or extremely rapid phase_inc
@@ -376,7 +385,7 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     }
 
     int32_t half_jitter = class_cfg->jitter_samples / 2;
-    int32_t jitter_val = (int32_t)(RandomFloat() * (float)class_cfg->jitter_samples) - half_jitter;
+    int32_t jitter_val = (int32_t)(RandomFloat01(engine) * (float)class_cfg->jitter_samples) - half_jitter;
 
     v->read_ptr_float = (float)WrapIntIndex(engine->write_ptr - base_offset + jitter_val, BUBBLES_BUFFER_SIZE_SAMPLES);
 }
@@ -404,11 +413,21 @@ static void InitWindowLUTs(void) {
     luts_initialized = true;
 }
 
-// Note: rand() is only a placeholder-quality RNG for the baseline implementation.
-// In a final embedded platform, this should be replaced with a fast PRNG (e.g. xorshift32).
-// Ensure srand() is called once at initialization to seed the generator.
-static float RandomFloat(void) {
-    return (float)rand() / (float)RAND_MAX;
+// Tiny deterministic xorshift32 PRNG.
+static uint32_t NextRandomU32(SoundBubblesEngine_t* engine) {
+    uint32_t x = engine->rng_state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    engine->rng_state = x;
+    return x;
+}
+
+// Convert to deterministic float in [0, 1) by mapping top 24 bits into mantissa range.
+static float RandomFloat01(SoundBubblesEngine_t* engine) {
+    const float kInv24Bit = 1.0f / 16777216.0f; // 2^24
+    uint32_t rnd = NextRandomU32(engine);
+    return (float)(rnd >> 8) * kInv24Bit;
 }
 
 static inline int32_t WrapIntIndex(int32_t index, int32_t size) {
