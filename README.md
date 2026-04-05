@@ -40,6 +40,17 @@ A standard `Makefile` is provided to compile both the offline tools and the WASM
 
 **Important Note for WASM:** We compile using `-s SINGLE_FILE=1` to embed the `.wasm` data directly into the `.js` glue code. This significantly simplifies loading inside the `AudioWorklet` scope since we don't have to battle relative path issues for fetching `.wasm` files.
 
+## Read-region semantics (core preset model)
+
+The core engine now models granular read positions using three semantic regions (distance behind the write head), rather than per-class ad-hoc offset+jitter pairs:
+
+- **`attack_region`**: ~10–80 ms behind write head (captures pick/edge detail).
+- **`body_region`**: ~80–250 ms behind write head (captures note core and early bloom).
+- **`memory_region`**: ~250–900 ms behind write head (captures trailing texture and phrase memory).
+
+Each region is represented as `min_offset_samples` / `max_offset_samples` in `EngineConfig_t`.
+Spawned voices map from `(bubble class, engine state)` to one of these regions, then choose a deterministic PRNG position inside that range. This keeps presets musically meaningful while preserving exact repeatability for a fixed RNG seed.
+
 ## GitHub Actions & Workflows
 
 The project contains several GitHub Actions workflows with separated responsibilities:

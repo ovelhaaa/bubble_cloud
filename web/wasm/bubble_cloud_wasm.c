@@ -30,28 +30,28 @@ void wasm_init() {
     current_config.density_burst = 50.0f;
     current_config.density_sustain = 15.0f;
     current_config.density_decay = 5.0f;
-    current_config.sustain_read_center_offset_samples = 22050;
+    // Semantic read regions: attack(10-80ms), body(80-250ms), memory(250-900ms).
+    current_config.attack_region.min_offset_samples = 441;
+    current_config.attack_region.max_offset_samples = 3528;
+    current_config.body_region.min_offset_samples = 3528;
+    current_config.body_region.max_offset_samples = 11025;
+    current_config.memory_region.min_offset_samples = 11025;
+    current_config.memory_region.max_offset_samples = 39690;
     current_config.rng_seed = 1u;
 
     // Micro
     current_config.class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_min = 5.0f;
     current_config.class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_max = 15.0f;
-    current_config.class_configs[BUBBLE_CLASS_MICRO_ATTACK].offset_samples = 441;
-    current_config.class_configs[BUBBLE_CLASS_MICRO_ATTACK].jitter_samples = 100;
     current_config.class_configs[BUBBLE_CLASS_MICRO_ATTACK].window_type = WINDOW_TYPE_HANN;
 
     // Short
     current_config.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].duration_ms_min = 20.0f;
     current_config.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].duration_ms_max = 50.0f;
-    current_config.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].offset_samples = 4410;
-    current_config.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].jitter_samples = 500;
     current_config.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].window_type = WINDOW_TYPE_HANN;
 
     // Body
     current_config.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_min = 80.0f;
     current_config.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_max = 200.0f;
-    current_config.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].offset_samples = 0;
-    current_config.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].jitter_samples = 4410;
     current_config.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].window_type = WINDOW_TYPE_TUKEY_LIKE;
 
     SoundBubbles_Init(&engine, delay_buffer, &current_config);
@@ -90,25 +90,25 @@ void wasm_set_param(int param_id, float value) {
         case 9: current_config.density_burst = value; break;
         case 10: current_config.density_sustain = value; break;
         case 11: current_config.density_decay = value; break;
-        case 12: current_config.sustain_read_center_offset_samples = (int32_t)value; break;
+        case 12: current_config.memory_region.min_offset_samples = (int32_t)value; break;
 
         // Micro
         case 13: current_config.class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_min = value; break;
         case 14: current_config.class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_max = value; break;
-        case 15: current_config.class_configs[BUBBLE_CLASS_MICRO_ATTACK].offset_samples = (int32_t)value; break;
-        case 16: current_config.class_configs[BUBBLE_CLASS_MICRO_ATTACK].jitter_samples = (int32_t)value; break;
+        case 15: current_config.attack_region.min_offset_samples = (int32_t)value; break;
+        case 16: current_config.attack_region.max_offset_samples = (int32_t)value; break;
 
         // Short
         case 17: current_config.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].duration_ms_min = value; break;
         case 18: current_config.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].duration_ms_max = value; break;
-        case 19: current_config.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].offset_samples = (int32_t)value; break;
-        case 20: current_config.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].jitter_samples = (int32_t)value; break;
+        case 19: current_config.body_region.min_offset_samples = (int32_t)value; break;
+        case 20: current_config.body_region.max_offset_samples = (int32_t)value; break;
 
         // Body
         case 21: current_config.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_min = value; break;
         case 22: current_config.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_max = value; break;
-        case 23: current_config.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].offset_samples = (int32_t)value; break;
-        case 24: current_config.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].jitter_samples = (int32_t)value; break;
+        case 23: current_config.memory_region.min_offset_samples = (int32_t)value; break;
+        case 24: current_config.memory_region.max_offset_samples = (int32_t)value; break;
 
         // Mix
         case 25: master_dry_gain = value; break;

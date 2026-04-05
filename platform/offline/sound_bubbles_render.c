@@ -116,8 +116,10 @@ static void ValidateConfig(const EngineConfig_t* config, float master_dry, float
     if (config->burst_duration_ticks < 0 || config->burst_immediate_count < 0) {
         ErrorExit("Preset validation failed: burst_duration_ticks and burst_immediate_count must be >= 0.");
     }
-    if (config->sustain_read_center_offset_samples < 0) {
-        ErrorExit("Preset validation failed: sustain_read_center_offset_samples must be >= 0.");
+    if (config->attack_region.min_offset_samples < 0 || config->attack_region.max_offset_samples < 0 ||
+        config->body_region.min_offset_samples < 0 || config->body_region.max_offset_samples < 0 ||
+        config->memory_region.min_offset_samples < 0 || config->memory_region.max_offset_samples < 0) {
+        ErrorExit("Preset validation failed: region offsets must be >= 0.");
     }
 
     if (!isfinite(config->duck_burst_level) || config->duck_burst_level < 0.0f || config->duck_burst_level > 1.0f) {
@@ -138,9 +140,6 @@ static void ValidateConfig(const EngineConfig_t* config, float master_dry, float
         const BubbleClassConfig_t* c = &config->class_configs[i];
         if (c->duration_ms_min <= 0.0f || c->duration_ms_max <= 0.0f) {
             ErrorExit("Preset validation failed: class durations must be > 0.");
-        }
-        if (c->offset_samples < 0 || c->jitter_samples < 0) {
-            ErrorExit("Preset validation failed: class offsets and jitters must be >= 0.");
         }
     }
 }
@@ -381,28 +380,37 @@ static void LoadPreset(const char* filename, EngineConfig_t* config, float* mast
     config->density_sustain = GetJsonFloat(json_str, "density_sustain", 15.0f);
     config->density_decay = GetJsonFloat(json_str, "density_decay", 5.0f);
 
-    config->sustain_read_center_offset_samples = GetJsonInt(json_str, "sustain_read_center_offset_samples", 22050);
+    // Semantic read regions (samples behind write head). New keys first, with
+    // fallback to legacy offset+jitter fields for backward-compatible presets.
+    int32_t micro_offset = GetJsonInt(json_str, "micro_offset_samples", 441);
+    int32_t micro_jitter = GetJsonInt(json_str, "micro_jitter_samples", 3087);
+    int32_t short_offset = GetJsonInt(json_str, "short_offset_samples", 3528);
+    int32_t short_jitter = GetJsonInt(json_str, "short_jitter_samples", 7497);
+    int32_t body_offset = GetJsonInt(json_str, "body_offset_samples", 11025);
+    int32_t body_jitter = GetJsonInt(json_str, "body_jitter_samples", 28665);
+
+    config->attack_region.min_offset_samples = GetJsonInt(json_str, "attack_region_min_offset_samples", micro_offset);
+    config->attack_region.max_offset_samples = GetJsonInt(json_str, "attack_region_max_offset_samples", micro_offset + micro_jitter);
+    config->body_region.min_offset_samples = GetJsonInt(json_str, "body_region_min_offset_samples", short_offset);
+    config->body_region.max_offset_samples = GetJsonInt(json_str, "body_region_max_offset_samples", short_offset + short_jitter);
+    config->memory_region.min_offset_samples = GetJsonInt(json_str, "memory_region_min_offset_samples", body_offset);
+    config->memory_region.max_offset_samples = GetJsonInt(json_str, "memory_region_max_offset_samples", body_offset + body_jitter);
+
     config->rng_seed = (uint32_t)GetJsonInt(json_str, "rng_seed", 1);
 
     // Micro Attack
     config->class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_min = GetJsonFloat(json_str, "micro_duration_ms_min", 5.0f);
     config->class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_max = GetJsonFloat(json_str, "micro_duration_ms_max", 15.0f);
-    config->class_configs[BUBBLE_CLASS_MICRO_ATTACK].offset_samples = GetJsonInt(json_str, "micro_offset_samples", 441);
-    config->class_configs[BUBBLE_CLASS_MICRO_ATTACK].jitter_samples = GetJsonInt(json_str, "micro_jitter_samples", 100);
     config->class_configs[BUBBLE_CLASS_MICRO_ATTACK].window_type = WINDOW_TYPE_HANN;
 
     // Short Intermediate
     config->class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].duration_ms_min = GetJsonFloat(json_str, "short_duration_ms_min", 20.0f);
     config->class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].duration_ms_max = GetJsonFloat(json_str, "short_duration_ms_max", 50.0f);
-    config->class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].offset_samples = GetJsonInt(json_str, "short_offset_samples", 4410);
-    config->class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].jitter_samples = GetJsonInt(json_str, "short_jitter_samples", 500);
     config->class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].window_type = WINDOW_TYPE_HANN;
 
-    // Sustain Body - Fixed PR Feedback 2: Default body_offset_samples to 0
+    // Sustain Body
     config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_min = GetJsonFloat(json_str, "body_duration_ms_min", 80.0f);
     config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_max = GetJsonFloat(json_str, "body_duration_ms_max", 200.0f);
-    config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].offset_samples = GetJsonInt(json_str, "body_offset_samples", 0);
-    config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].jitter_samples = GetJsonInt(json_str, "body_jitter_samples", 4410);
     config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].window_type = WINDOW_TYPE_TUKEY_LIKE;
 
     // Output Mix Macros

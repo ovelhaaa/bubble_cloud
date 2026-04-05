@@ -46,10 +46,16 @@ typedef enum {
 typedef struct {
     float duration_ms_min;
     float duration_ms_max;
-    int32_t offset_samples; // Base read offset from write head
-    int32_t jitter_samples; // Randomization applied to read offset
     WindowType_t window_type;
 } BubbleClassConfig_t;
+
+// Semantic read region (distance behind write head). Values are in samples.
+// Defaults target musically meaningful temporal zones:
+//   Attack: 10-80ms, Body: 80-250ms, Memory: 250-900ms.
+typedef struct {
+    int32_t min_offset_samples;
+    int32_t max_offset_samples;
+} ReadRegionConfig_t;
 
 // Pure DSP Engine configuration (Strictly baseline approved fields)
 typedef struct {
@@ -69,7 +75,10 @@ typedef struct {
     float density_sustain;  // Spawns per second
     float density_decay;    // Spawns per second
 
-    int32_t sustain_read_center_offset_samples;
+    // Shared semantic read regions used by all bubble classes.
+    ReadRegionConfig_t attack_region;
+    ReadRegionConfig_t body_region;
+    ReadRegionConfig_t memory_region;
     uint32_t rng_seed;      // Deterministic PRNG seed for all sound-affecting random decisions
 
     BubbleClassConfig_t class_configs[BUBBLE_CLASS_COUNT];

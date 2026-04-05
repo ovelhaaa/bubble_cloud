@@ -88,26 +88,25 @@ static EngineConfig_t GetBaselineConfig() {
     cfg.density_decay = 5.0f;
     cfg.rng_seed = 42u;
 
-    // Positive distance behind write head
-    cfg.sustain_read_center_offset_samples = 22050; // 0.5s
+    // Semantic read regions (distance behind write head in samples).
+    cfg.attack_region.min_offset_samples = 441;   // 10ms
+    cfg.attack_region.max_offset_samples = 3528;  // 80ms
+    cfg.body_region.min_offset_samples = 3528;    // 80ms
+    cfg.body_region.max_offset_samples = 11025;   // 250ms
+    cfg.memory_region.min_offset_samples = 11025; // 250ms
+    cfg.memory_region.max_offset_samples = 39690; // 900ms
 
-    // Class Configs (Positive offsets)
+    // Class Configs
     cfg.class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_min = 5.0f;
     cfg.class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_max = 15.0f;
-    cfg.class_configs[BUBBLE_CLASS_MICRO_ATTACK].offset_samples = 441; // 10ms
-    cfg.class_configs[BUBBLE_CLASS_MICRO_ATTACK].jitter_samples = 100;
     cfg.class_configs[BUBBLE_CLASS_MICRO_ATTACK].window_type = WINDOW_TYPE_HANN;
 
     cfg.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].duration_ms_min = 20.0f;
     cfg.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].duration_ms_max = 50.0f;
-    cfg.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].offset_samples = 4410; // 100ms
-    cfg.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].jitter_samples = 500;
     cfg.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].window_type = WINDOW_TYPE_HANN;
 
     cfg.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_min = 80.0f;
     cfg.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_max = 200.0f;
-    cfg.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].offset_samples = 22050; // 500ms
-    cfg.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].jitter_samples = 4410;
     cfg.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].window_type = WINDOW_TYPE_TUKEY_LIKE;
 
     return cfg;
