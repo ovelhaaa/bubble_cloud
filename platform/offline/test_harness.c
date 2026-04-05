@@ -86,6 +86,7 @@ static EngineConfig_t GetBaselineConfig() {
     cfg.density_burst = 50.0f;
     cfg.density_sustain = 15.0f;
     cfg.density_decay = 5.0f;
+    cfg.rng_seed = 42u;
 
     // Positive distance behind write head
     cfg.sustain_read_center_offset_samples = 22050; // 0.5s
@@ -156,7 +157,6 @@ static void WriteRawFile(const char* filename, const float* out_l, const float* 
 
 static void RunTest(TestVectorType_t type, const char* out_filename) {
     printf("Running fixed-block test vector %d...\n", type);
-    srand(42);
 
     EngineConfig_t config = GetBaselineConfig();
     SoundBubbles_Init(&engine, delay_buffer_memory, &config);
@@ -218,7 +218,6 @@ static void RunTest(TestVectorType_t type, const char* out_filename) {
 
 static void RunTestIrregularChunks(TestVectorType_t type, const char* out_filename) {
     printf("Running irregular-chunk test vector %d...\n", type);
-    srand(42);
 
     EngineConfig_t config = GetBaselineConfig();
     SoundBubbles_Init(&engine, delay_buffer_memory, &config);

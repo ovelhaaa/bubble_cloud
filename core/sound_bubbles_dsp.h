@@ -70,6 +70,7 @@ typedef struct {
     float density_decay;    // Spawns per second
 
     int32_t sustain_read_center_offset_samples;
+    uint32_t rng_seed;      // Deterministic PRNG seed for all sound-affecting random decisions
 
     BubbleClassConfig_t class_configs[BUBBLE_CLASS_COUNT];
 } EngineConfig_t;
@@ -127,6 +128,7 @@ typedef struct {
     // Global Config & Block tracking
     EngineConfig_t config;
     int32_t block_counter;         // Triggers control ticks every 32 samples
+    uint32_t rng_state;            // Internal deterministic PRNG state
 
     // Final output mix gains of the DSP module (not product-layer macro controls)
     float master_dry_gain;
@@ -135,11 +137,15 @@ typedef struct {
 
 // --- Function Prototypes ---
 
-// Initialization: Caller provides pre-allocated delay_buffer (88,200 elements) and initial config
+// Initialization: Caller provides pre-allocated delay_buffer (88,200 elements) and initial config.
+// Determinism contract: same rng_seed + same input samples + same config/params => identical class/read/duration random decisions.
 void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memory, const EngineConfig_t* initial_config);
 
 // Config Update: Safely copy new core engine parameters
 void SoundBubbles_UpdateConfig(SoundBubblesEngine_t* engine, const EngineConfig_t* new_config);
+
+// Explicitly reset the deterministic PRNG state (0 maps to a fixed non-zero internal state).
+void SoundBubbles_SetRngSeed(SoundBubblesEngine_t* engine, uint32_t seed);
 
 // Audio Processing: Processes num_samples. DSP core owns final dry/wet output policy.
 void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mono, float* out_left, float* out_right, int num_samples);

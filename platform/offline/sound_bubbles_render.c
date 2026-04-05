@@ -382,6 +382,7 @@ static void LoadPreset(const char* filename, EngineConfig_t* config, float* mast
     config->density_decay = GetJsonFloat(json_str, "density_decay", 5.0f);
 
     config->sustain_read_center_offset_samples = GetJsonInt(json_str, "sustain_read_center_offset_samples", 22050);
+    config->rng_seed = (uint32_t)GetJsonInt(json_str, "rng_seed", 1);
 
     // Micro Attack
     config->class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_min = GetJsonFloat(json_str, "micro_duration_ms_min", 5.0f);

@@ -31,6 +31,7 @@ void wasm_init() {
     current_config.density_sustain = 15.0f;
     current_config.density_decay = 5.0f;
     current_config.sustain_read_center_offset_samples = 22050;
+    current_config.rng_seed = 1u;
 
     // Micro
     current_config.class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_min = 5.0f;
