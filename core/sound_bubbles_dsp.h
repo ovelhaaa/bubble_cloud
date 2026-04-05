@@ -108,6 +108,13 @@ typedef struct {
     float z1; // State delay
 } Filter1Pole_t;
 
+typedef struct {
+    int32_t spawn_count;
+    int32_t active_voices;
+} SoundBubblesBlockMetrics_t;
+
+typedef void (*SoundBubblesMetricsCallback_t)(const SoundBubblesBlockMetrics_t* metrics, void* user_data);
+
 // Full DSP Engine State (Memory is caller-owned)
 typedef struct {
     // Buffers (Pointer passed in by caller)
@@ -142,6 +149,12 @@ typedef struct {
     // Final output mix gains of the DSP module (not product-layer macro controls)
     float master_dry_gain;
     float master_wet_gain;
+
+    // Optional per-control-block metrics hook (for offline validation/telemetry)
+    SoundBubblesMetricsCallback_t metrics_callback;
+    void* metrics_user_data;
+    SoundBubblesBlockMetrics_t metrics_last_block;
+    int32_t metrics_tick_spawn_count;
 } SoundBubblesEngine_t;
 
 // --- Function Prototypes ---
@@ -158,5 +171,8 @@ void SoundBubbles_SetRngSeed(SoundBubblesEngine_t* engine, uint32_t seed);
 
 // Audio Processing: Processes num_samples. DSP core owns final dry/wet output policy.
 void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mono, float* out_left, float* out_right, int num_samples);
+
+// Optional metrics callback registration. Pass NULL callback to disable export.
+void SoundBubbles_SetMetricsCallback(SoundBubblesEngine_t* engine, SoundBubblesMetricsCallback_t callback, void* user_data);
 
 #endif // SOUND_BUBBLES_DSP_H

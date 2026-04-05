@@ -1,5 +1,6 @@
 #include "sound_bubbles_dsp.h"
 #include <math.h>
+#include <stddef.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f
@@ -40,6 +41,10 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
 static float LookupWindow(float phase, WindowType_t type);
 static const ReadRegionConfig_t* ResolveReadRegion(const SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state);
 static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state);
+static inline float Clamp01(float x);
+static inline float Clamp(float x, float lo, float hi);
+static inline float Lerp(float a, float b, float t);
+static int32_t CountActiveVoices(const SoundBubblesEngine_t* engine);
 
 // --- Initialization & Config ---
 
@@ -66,6 +71,11 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
 
     engine->master_dry_gain = 1.0f;
     engine->master_wet_gain = 1.0f;
+    engine->metrics_callback = NULL;
+    engine->metrics_user_data = NULL;
+    engine->metrics_last_block.spawn_count = 0;
+    engine->metrics_last_block.active_voices = 0;
+    engine->metrics_tick_spawn_count = 0;
 
     for (int i = 0; i < BUBBLES_BUFFER_SIZE_SAMPLES; i++) {
         engine->delay_buffer[i] = 0;
@@ -96,6 +106,11 @@ void SoundBubbles_UpdateConfig(SoundBubblesEngine_t* engine, const EngineConfig_
 void SoundBubbles_SetRngSeed(SoundBubblesEngine_t* engine, uint32_t seed) {
     engine->config.rng_seed = seed;
     engine->rng_state = (seed == 0u) ? RNG_STATE_FALLBACK : seed;
+}
+
+void SoundBubbles_SetMetricsCallback(SoundBubblesEngine_t* engine, SoundBubblesMetricsCallback_t callback, void* user_data) {
+    engine->metrics_callback = callback;
+    engine->metrics_user_data = user_data;
 }
 
 // --- Audio-Rate Processing Loop ---
@@ -187,8 +202,16 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
         // Execute Control-Rate Tick
         if (++engine->block_counter >= BUBBLES_BLOCK_SIZE) {
             engine->block_counter = 0;
+            engine->metrics_tick_spawn_count = 0;
             UpdateStateAndDensity(engine, block_peak);
             Scheduler_RunTick(engine);
+
+            engine->metrics_last_block.spawn_count = engine->metrics_tick_spawn_count;
+            engine->metrics_last_block.active_voices = CountActiveVoices(engine);
+            if (engine->metrics_callback != NULL) {
+                engine->metrics_callback(&engine->metrics_last_block, engine->metrics_user_data);
+            }
+
             block_peak = 0.0f;
         }
     }
@@ -245,18 +268,61 @@ static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_
     // Control-rate ducking smoothing
     engine->smoothed_ducking_gain = Filter1Pole_ProcessLPF(&engine->ducking_lpf, engine->internal_ducking_target);
 
-    // Target Density updates (Spawns per second)
+    // Target Density updates (Spawns per second), modulated by envelope and derivative within bounded state ranges.
+    float env_norm = 0.0f;
+    if (engine->config.sustain_thresh > engine->config.noise_floor) {
+        env_norm = (engine->env_follower_state - engine->config.noise_floor) / (engine->config.sustain_thresh - engine->config.noise_floor);
+    }
+    env_norm = Clamp01(env_norm);
+
+    float d_norm = 0.0f;
+    if (engine->config.transient_delta > 1.0e-6f) {
+        d_norm = engine->env_derivative / engine->config.transient_delta;
+    }
+    d_norm = Clamp(d_norm, -1.0f, 1.0f);
+
     switch (engine->engine_state) {
         case ENGINE_STATE_TRANSIENT_BURST:
+        {
+            float burst_max = engine->config.density_burst;
+            float burst_min = burst_max * 0.7f;
+            float burst_progress = 0.0f;
+            if (engine->config.burst_duration_ticks > 0) {
+                burst_progress = 1.0f - (float)engine->burst_timer_ticks / (float)engine->config.burst_duration_ticks;
+            }
+            burst_progress = Clamp01(burst_progress);
+            float accent = Clamp01((1.0f - burst_progress) * 0.7f + Clamp01(d_norm) * 0.3f);
+            engine->target_density = Lerp(burst_min, burst_max, accent);
+            break;
+        }
         case ENGINE_STATE_ATTACK_ONGOING:
-            engine->target_density = engine->config.density_burst;
+        {
+            float attack_max = engine->config.density_burst;
+            float attack_min = attack_max * 0.55f;
+            float attack_shape = Clamp01(0.65f * env_norm + 0.35f * Clamp01(d_norm));
+            engine->target_density = Lerp(attack_min, attack_max, attack_shape);
             break;
+        }
         case ENGINE_STATE_SUSTAIN_BODY:
-            engine->target_density = engine->config.density_sustain;
+        {
+            float sustain_min = engine->config.density_sustain * 0.85f;
+            float sustain_max = engine->config.density_sustain * 1.1f;
+            float sustain_shape = Clamp01((env_norm - 0.4f) / 0.6f);
+            float derivative_damp = 1.0f - 0.25f * fabsf(d_norm);
+            sustain_shape *= Clamp01(derivative_damp);
+            engine->target_density = Lerp(sustain_min, sustain_max, sustain_shape);
             break;
+        }
         case ENGINE_STATE_SPARSE_DECAY:
-            engine->target_density = engine->config.density_decay;
+        {
+            float decay_max = engine->config.density_decay;
+            float decay_min = decay_max * 0.1f;
+            float tail = Clamp01((engine->env_follower_state - engine->config.tracking_thresh) /
+                                 fmaxf(1.0e-6f, (engine->config.sustain_thresh - engine->config.tracking_thresh)));
+            float release_emphasis = Clamp01(0.5f - 0.5f * d_norm);
+            engine->target_density = Lerp(decay_min, decay_max, tail * release_emphasis);
             break;
+        }
         case ENGINE_STATE_SILENCE:
         default:
             engine->target_density = 0.0f;
@@ -274,6 +340,7 @@ static void Scheduler_SpawnImmediateBurst(SoundBubblesEngine_t* engine) {
         int v_idx = Voice_Allocate(engine);
         if (v_idx >= 0) {
             Voice_SpawnInit(engine, v_idx, BUBBLE_CLASS_MICRO_ATTACK);
+            engine->metrics_tick_spawn_count++;
         }
     }
 }
@@ -314,6 +381,7 @@ static void Scheduler_RunTick(SoundBubblesEngine_t* engine) {
         int voice_idx = Voice_Allocate(engine);
         if (voice_idx >= 0) {
             Voice_SpawnInit(engine, voice_idx, selected_class);
+            engine->metrics_tick_spawn_count++;
         }
 
         engine->spawn_accumulator -= 1.0f;
@@ -470,6 +538,28 @@ static float RandomFloat01(SoundBubblesEngine_t* engine) {
     const float kInv24Bit = 1.0f / 16777216.0f; // 2^24
     uint32_t rnd = NextRandomU32(engine);
     return (float)(rnd >> 8) * kInv24Bit;
+}
+
+static inline float Clamp01(float x) {
+    return Clamp(x, 0.0f, 1.0f);
+}
+
+static inline float Clamp(float x, float lo, float hi) {
+    return fmaxf(lo, fminf(hi, x));
+}
+
+static inline float Lerp(float a, float b, float t) {
+    return a + (b - a) * t;
+}
+
+static int32_t CountActiveVoices(const SoundBubblesEngine_t* engine) {
+    int32_t count = 0;
+    for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
+        if (engine->voices[i].state != VOICE_STATE_INACTIVE) {
+            count++;
+        }
+    }
+    return count;
 }
 
 static inline int32_t WrapIntIndex(int32_t index, int32_t size) {
