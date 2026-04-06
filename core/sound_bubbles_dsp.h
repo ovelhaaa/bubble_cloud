@@ -111,6 +111,9 @@ typedef struct {
 typedef struct {
     int32_t spawn_count;
     int32_t active_voices;
+    int32_t engine_state;
+    float ducking_gain;
+    float envelope;
 } SoundBubblesBlockMetrics_t;
 
 typedef void (*SoundBubblesMetricsCallback_t)(const SoundBubblesBlockMetrics_t* metrics, void* user_data);

@@ -75,6 +75,9 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     engine->metrics_user_data = NULL;
     engine->metrics_last_block.spawn_count = 0;
     engine->metrics_last_block.active_voices = 0;
+    engine->metrics_last_block.engine_state = ENGINE_STATE_SILENCE;
+    engine->metrics_last_block.ducking_gain = 1.0f;
+    engine->metrics_last_block.envelope = 0.0f;
     engine->metrics_tick_spawn_count = 0;
 
     for (int i = 0; i < BUBBLES_BUFFER_SIZE_SAMPLES; i++) {
@@ -208,6 +211,9 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
 
             engine->metrics_last_block.spawn_count = engine->metrics_tick_spawn_count;
             engine->metrics_last_block.active_voices = CountActiveVoices(engine);
+            engine->metrics_last_block.engine_state = (int32_t)engine->engine_state;
+            engine->metrics_last_block.ducking_gain = engine->smoothed_ducking_gain;
+            engine->metrics_last_block.envelope = engine->env_follower_state;
             if (engine->metrics_callback != NULL) {
                 engine->metrics_callback(&engine->metrics_last_block, engine->metrics_user_data);
             }
