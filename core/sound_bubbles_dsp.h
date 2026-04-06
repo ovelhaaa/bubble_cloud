@@ -139,10 +139,21 @@ typedef struct {
     float internal_ducking_target; // Maintained internally by DSP core
     float smoothed_ducking_gain;   // Evaluated/smoothed exclusively in control-rate
 
+    // Internal (non-UI) class bus gain defaults for micro/short/sustain contrast shaping.
+    float class_gain_micro;
+    float class_gain_short;
+    float class_gain_sustain;
+
+    // Internal (non-UI) wet presence state shaping: smoothed multiplier applied post bus-sum.
+    float wet_presence_target;
+    float wet_presence_smoothed;
+    int32_t bloom_timer_ticks;
+
     // Bus & Control Filters
     Filter1Pole_t attack_hpf;
     Filter1Pole_t sustain_lpf;
     Filter1Pole_t ducking_lpf;     // Smoothing filter for ducking gain
+    Filter1Pole_t wet_presence_lpf;// Control-rate smoothing for wet presence target
 
     // Global Config & Block tracking
     EngineConfig_t config;
