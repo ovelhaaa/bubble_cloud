@@ -11,21 +11,21 @@ const BASELINE = {
     density_burst: 50.0,
     density_sustain: 15.0,
     density_decay: 5.0,
-    sustain_read_center_offset_samples: 22050,
+    attack_region_min_offset_samples: 441,
+    attack_region_max_offset_samples: 3528,
+    body_region_min_offset_samples: 3528,
+    body_region_max_offset_samples: 11025,
+    memory_region_min_offset_samples: 11025,
+    memory_region_max_offset_samples: 39690,
     micro_duration_ms_min: 5.0,
     micro_duration_ms_max: 15.0,
-    micro_offset_samples: 441,
-    micro_jitter_samples: 100,
     short_duration_ms_min: 20.0,
     short_duration_ms_max: 50.0,
-    short_offset_samples: 4410,
-    short_jitter_samples: 500,
     body_duration_ms_min: 80.0,
     body_duration_ms_max: 200.0,
-    body_offset_samples: 0,
-    body_jitter_samples: 4410,
-    master_dry_gain: 0.5,
-    master_wet_gain: 0.5
+    rng_seed: 1,
+    mix_dry_gain: 0.5,
+    mix_wet_gain: 0.5
 };
 
 const PARAM_HELP = {
@@ -41,21 +41,21 @@ const PARAM_HELP = {
   density_burst: { musical: "Controls how busy and explosive the effect feels right after an attack.", technical: "Spawn rate in spawns per second while the engine is in burst/attack-oriented behavior." },
   density_sustain: { musical: "Controls how thick the effect feels while the note is stably ringing.", technical: "Spawn rate in spawns per second while the engine is in sustain-body behavior." },
   density_decay: { musical: "Controls how many bubbles remain as the sound falls away.", technical: "Spawn rate in spawns per second while the engine is in sparse decay behavior." },
-  sustain_read_center_offset_samples: { musical: "Pushes the sustain/body material farther back in time, making the texture feel more delayed or more immediate.", technical: "Global read-position offset behind the write head used as the main center for body-oriented grain reading." },
+  attack_region_min_offset_samples: { musical: "Sets the nearest read point for attack grains, controlling how immediate the edge texture feels.", technical: "Minimum circular-buffer read offset behind the write head for the attack semantic region." },
+  attack_region_max_offset_samples: { musical: "Sets the farthest read point for attack grains, widening or tightening attack-region spread.", technical: "Maximum circular-buffer read offset behind the write head for the attack semantic region." },
+  body_region_min_offset_samples: { musical: "Sets the nearest read point for body grains, controlling how quickly sustain texture appears.", technical: "Minimum circular-buffer read offset behind the write head for the body semantic region." },
+  body_region_max_offset_samples: { musical: "Sets the farthest read point for body grains, changing sustain depth and timing spread.", technical: "Maximum circular-buffer read offset behind the write head for the body semantic region." },
+  memory_region_min_offset_samples: { musical: "Sets the nearest read point for long-memory texture, from recent tail to more delayed echoes.", technical: "Minimum circular-buffer read offset behind the write head for the memory semantic region." },
+  memory_region_max_offset_samples: { musical: "Sets the farthest read point for memory texture, controlling how far back the cloud can reach.", technical: "Maximum circular-buffer read offset behind the write head for the memory semantic region." },
   micro_duration_ms_min: { musical: "Sets the shortest possible length of the smallest attack-oriented grains.", technical: "Minimum grain duration in milliseconds for the micro class." },
   micro_duration_ms_max: { musical: "Sets the longest possible length of the smallest attack-oriented grains.", technical: "Maximum grain duration in milliseconds for the micro class." },
-  micro_offset_samples: { musical: "Moves micro grains closer to or farther from the present input, affecting how immediate the attack texture feels.", technical: "Base circular-buffer read offset behind the write head for the micro class." },
-  micro_jitter_samples: { musical: "Adds randomness to micro grain placement, making attacks feel either tighter or more scattered.", technical: "Random variation range applied to micro-class read offset." },
   short_duration_ms_min: { musical: "Sets the shortest possible length of the middle-sized grains.", technical: "Minimum grain duration in milliseconds for the short class." },
   short_duration_ms_max: { musical: "Sets the longest possible length of the middle-sized grains.", technical: "Maximum grain duration in milliseconds for the short class." },
-  short_offset_samples: { musical: "Moves short grains earlier or later in the recent buffer, affecting how connected or delayed the mid-layer feels.", technical: "Base circular-buffer read offset behind the write head for the short class." },
-  short_jitter_samples: { musical: "Adds looseness or spread to the short-grain layer.", technical: "Random variation range applied to short-class read offset." },
   body_duration_ms_min: { musical: "Sets the shortest possible length of the body/sustain grains.", technical: "Minimum grain duration in milliseconds for the body class." },
   body_duration_ms_max: { musical: "Sets the longest possible length of the body/sustain grains.", technical: "Maximum grain duration in milliseconds for the body class." },
-  body_offset_samples: { musical: "Fine-tunes where the body grains read from relative to the global sustain position.", technical: "Additional base read offset for the body class, applied alongside the sustain read center offset in the current implementation model." },
-  body_jitter_samples: { musical: "Adds spread and variation to the body layer so it feels either tighter or more cloud-like.", technical: "Random variation range applied to body-class read offset." },
-  master_dry_gain: { musical: "Sets how much direct unaffected signal stays in front of the bubbles.", technical: "Final gain multiplier applied to the dry signal path before output summing." },
-  master_wet_gain: { musical: "Sets how prominent the bubbles are compared with the direct signal.", technical: "Final gain multiplier applied to the summed wet buses before output summing." }
+  rng_seed: { musical: "Locks the random pattern so presets feel repeatable across renders and sessions.", technical: "Initial PRNG seed used by deterministic voice spawn/read-position sampling." },
+  mix_dry_gain: { musical: "Sets how much direct unaffected signal stays in front of the bubbles.", technical: "Final gain multiplier applied to the dry signal path before output summing." },
+  mix_wet_gain: { musical: "Sets how prominent the bubbles are compared with the direct signal.", technical: "Final gain multiplier applied to the summed wet buses before output summing." }
 };
 
 const PARAMETER_GROUPS = [
@@ -63,11 +63,12 @@ const PARAMETER_GROUPS = [
   { name: "Ducking", params: ["duck_burst_level", "duck_attack_coef", "duck_release_coef"] },
   { name: "Burst", params: ["burst_duration_ticks", "burst_immediate_count"] },
   { name: "Density", params: ["density_burst", "density_sustain", "density_decay"] },
-  { name: "Sustain Read Position", params: ["sustain_read_center_offset_samples"] },
-  { name: "Micro Class", params: ["micro_duration_ms_min", "micro_duration_ms_max", "micro_offset_samples", "micro_jitter_samples"] },
-  { name: "Short Class", params: ["short_duration_ms_min", "short_duration_ms_max", "short_offset_samples", "short_jitter_samples"] },
-  { name: "Body Class", params: ["body_duration_ms_min", "body_duration_ms_max", "body_offset_samples", "body_jitter_samples"] },
-  { name: "Output Mix", params: ["master_dry_gain", "master_wet_gain"] },
+  { name: "Read Regions", params: ["attack_region_min_offset_samples", "attack_region_max_offset_samples", "body_region_min_offset_samples", "body_region_max_offset_samples", "memory_region_min_offset_samples", "memory_region_max_offset_samples"] },
+  { name: "Micro Class", params: ["micro_duration_ms_min", "micro_duration_ms_max"] },
+  { name: "Short Class", params: ["short_duration_ms_min", "short_duration_ms_max"] },
+  { name: "Body Class", params: ["body_duration_ms_min", "body_duration_ms_max"] },
+  { name: "Randomness", params: ["rng_seed"] },
+  { name: "Output Mix", params: ["mix_dry_gain", "mix_wet_gain"] },
 ];
 
 const PARAM_CONFIGS = {
@@ -83,21 +84,21 @@ const PARAM_CONFIGS = {
     density_burst: { min: 0.0, max: 100.0, step: 1.0 },
     density_sustain: { min: 0.0, max: 40.0, step: 1.0 },
     density_decay: { min: 0.0, max: 20.0, step: 1.0 },
-    sustain_read_center_offset_samples: { min: 0, max: 88200, step: 100 },
+    attack_region_min_offset_samples: { min: 0, max: 88200, step: 1 },
+    attack_region_max_offset_samples: { min: 0, max: 88200, step: 1 },
+    body_region_min_offset_samples: { min: 0, max: 88200, step: 1 },
+    body_region_max_offset_samples: { min: 0, max: 88200, step: 1 },
+    memory_region_min_offset_samples: { min: 0, max: 88200, step: 1 },
+    memory_region_max_offset_samples: { min: 0, max: 88200, step: 1 },
     micro_duration_ms_min: { min: 1.0, max: 50.0, step: 0.5 },
     micro_duration_ms_max: { min: 1.0, max: 100.0, step: 0.5 },
-    micro_offset_samples: { min: 0, max: 88200, step: 10 },
-    micro_jitter_samples: { min: 0, max: 44100, step: 10 },
     short_duration_ms_min: { min: 10.0, max: 100.0, step: 1.0 },
     short_duration_ms_max: { min: 10.0, max: 200.0, step: 1.0 },
-    short_offset_samples: { min: 0, max: 88200, step: 100 },
-    short_jitter_samples: { min: 0, max: 44100, step: 100 },
     body_duration_ms_min: { min: 50.0, max: 500.0, step: 5.0 },
     body_duration_ms_max: { min: 50.0, max: 1000.0, step: 5.0 },
-    body_offset_samples: { min: 0, max: 88200, step: 100 },
-    body_jitter_samples: { min: 0, max: 88200, step: 100 },
-    master_dry_gain: { min: 0.0, max: 2.0, step: 0.01 },
-    master_wet_gain: { min: 0.0, max: 2.0, step: 0.01 },
+    rng_seed: { min: 1, max: 2147483647, step: 1 },
+    mix_dry_gain: { min: 0.0, max: 2.0, step: 0.01 },
+    mix_wet_gain: { min: 0.0, max: 2.0, step: 0.01 },
 };
 
 document.addEventListener('alpine:init', () => {
@@ -146,6 +147,33 @@ document.addEventListener('alpine:init', () => {
         metrics: { envelope: 0, state: 0, voices: 0 },
         pollInterval: null,
 
+        migrateLegacyPreset(rawParams) {
+            const migrated = { ...rawParams };
+
+            const attackMin = migrated.attack_region_min_offset_samples ?? migrated.micro_offset_samples;
+            const attackMax = migrated.attack_region_max_offset_samples ??
+                ((migrated.micro_offset_samples ?? 441) + (migrated.micro_jitter_samples ?? 3087));
+            const bodyMin = migrated.body_region_min_offset_samples ?? migrated.short_offset_samples;
+            const bodyMax = migrated.body_region_max_offset_samples ??
+                ((migrated.short_offset_samples ?? 3528) + (migrated.short_jitter_samples ?? 7497));
+            const memoryMin = migrated.memory_region_min_offset_samples ?? migrated.body_offset_samples;
+            const memoryMax = migrated.memory_region_max_offset_samples ??
+                ((migrated.body_offset_samples ?? 11025) + (migrated.body_jitter_samples ?? 28665));
+
+            return {
+                ...migrated,
+                attack_region_min_offset_samples: attackMin ?? BASELINE.attack_region_min_offset_samples,
+                attack_region_max_offset_samples: attackMax ?? BASELINE.attack_region_max_offset_samples,
+                body_region_min_offset_samples: bodyMin ?? BASELINE.body_region_min_offset_samples,
+                body_region_max_offset_samples: bodyMax ?? BASELINE.body_region_max_offset_samples,
+                memory_region_min_offset_samples: memoryMin ?? BASELINE.memory_region_min_offset_samples,
+                memory_region_max_offset_samples: memoryMax ?? BASELINE.memory_region_max_offset_samples,
+                mix_dry_gain: migrated.mix_dry_gain ?? migrated.master_dry_gain ?? BASELINE.mix_dry_gain,
+                mix_wet_gain: migrated.mix_wet_gain ?? migrated.master_wet_gain ?? BASELINE.mix_wet_gain,
+                rng_seed: migrated.rng_seed ?? BASELINE.rng_seed
+            };
+        },
+
         init() {
             this.loadState();
         },
@@ -154,7 +182,7 @@ document.addEventListener('alpine:init', () => {
             const saved = localStorage.getItem('sb_draft');
             if (saved) {
                 try {
-                    this.params = { ...BASELINE, ...JSON.parse(saved) };
+                    this.params = { ...BASELINE, ...this.migrateLegacyPreset(JSON.parse(saved)) };
                     this.isDraft = true;
                     this.hasUnexportedChanges = true;
                     return;
@@ -661,11 +689,14 @@ document.addEventListener('alpine:init', () => {
                 "duck_burst_level": 4, "duck_attack_coef": 5, "duck_release_coef": 6,
                 "burst_duration_ticks": 7, "burst_immediate_count": 8,
                 "density_burst": 9, "density_sustain": 10, "density_decay": 11,
-                "sustain_read_center_offset_samples": 12,
-                "micro_duration_ms_min": 13, "micro_duration_ms_max": 14, "micro_offset_samples": 15, "micro_jitter_samples": 16,
-                "short_duration_ms_min": 17, "short_duration_ms_max": 18, "short_offset_samples": 19, "short_jitter_samples": 20,
-                "body_duration_ms_min": 21, "body_duration_ms_max": 22, "body_offset_samples": 23, "body_jitter_samples": 24,
-                "master_dry_gain": 25, "master_wet_gain": 26
+                "attack_region_min_offset_samples": 12, "attack_region_max_offset_samples": 13,
+                "body_region_min_offset_samples": 14, "body_region_max_offset_samples": 15,
+                "memory_region_min_offset_samples": 16, "memory_region_max_offset_samples": 17,
+                "micro_duration_ms_min": 18, "micro_duration_ms_max": 19,
+                "short_duration_ms_min": 20, "short_duration_ms_max": 21,
+                "body_duration_ms_min": 22, "body_duration_ms_max": 23,
+                "rng_seed": 24,
+                "mix_dry_gain": 25, "mix_wet_gain": 26
             };
             if (key in paramMap) {
                 this.workletNode.port.postMessage({ type: 'param', id: paramMap[key], value: val });

@@ -114,6 +114,17 @@ static int32_t GetJsonInt(const char* json_str, const char* key, int32_t default
     return default_val;
 }
 
+static float GetJsonFloatLegacyFallback(const char* json_str, const char* canonical_key, const char* legacy_key, float default_val) {
+    const char* canonical_pos = FindJsonKey(json_str, canonical_key);
+    if (canonical_pos) {
+        float val = default_val;
+        if (sscanf(canonical_pos, " %f", &val) == 1) {
+            return val;
+        }
+    }
+    return GetJsonFloat(json_str, legacy_key, default_val);
+}
+
 // --- Validation Functions ---
 static void ValidateConfig(const EngineConfig_t* config, float master_dry, float master_wet) {
     if (config->density_burst < 0.0f || config->density_sustain < 0.0f || config->density_decay < 0.0f) {
@@ -481,8 +492,32 @@ static void LoadPreset(const char* filename, EngineConfig_t* config, float* mast
     config->density_sustain = GetJsonFloat(json_str, "density_sustain", 15.0f);
     config->density_decay = GetJsonFloat(json_str, "density_decay", 5.0f);
 
-    // Semantic read regions (samples behind write head). New keys first, with
-    // fallback to legacy offset+jitter fields for backward-compatible presets.
+    // Canonical schema (v2):
+    //  - attack/body/memory semantic regions:
+    //      attack_region_min_offset_samples
+    //      attack_region_max_offset_samples
+    //      body_region_min_offset_samples
+    //      body_region_max_offset_samples
+    //      memory_region_min_offset_samples
+    //      memory_region_max_offset_samples
+    //  - class durations:
+    //      micro_duration_ms_min/max
+    //      short_duration_ms_min/max
+    //      body_duration_ms_min/max
+    //  - dynamics/shaping:
+    //      density_*, duck_*, burst_*
+    //  - randomness/mix:
+    //      rng_seed, mix_dry_gain, mix_wet_gain
+    //
+    // Backward compatibility layer:
+    //  - legacy offset+jitter keys are still accepted and translated to regions:
+    //      micro_offset_samples + micro_jitter_samples        -> attack_region_[min/max]
+    //      short_offset_samples + short_jitter_samples        -> body_region_[min/max]
+    //      body_offset_samples + body_jitter_samples          -> memory_region_[min/max]
+    //  - legacy output mix keys remain accepted:
+    //      master_dry_gain / master_wet_gain
+    //
+    // Canonical keys always take precedence when both forms are present.
     int32_t micro_offset = GetJsonInt(json_str, "micro_offset_samples", 441);
     int32_t micro_jitter = GetJsonInt(json_str, "micro_jitter_samples", 3087);
     int32_t short_offset = GetJsonInt(json_str, "short_offset_samples", 3528);
@@ -514,9 +549,9 @@ static void LoadPreset(const char* filename, EngineConfig_t* config, float* mast
     config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_max = GetJsonFloat(json_str, "body_duration_ms_max", 200.0f);
     config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].window_type = WINDOW_TYPE_TUKEY_LIKE;
 
-    // Output Mix Macros
-    *master_dry = GetJsonFloat(json_str, "master_dry_gain", 1.0f);
-    *master_wet = GetJsonFloat(json_str, "master_wet_gain", 1.0f);
+    // Canonical mix keys with legacy fallback.
+    *master_dry = GetJsonFloatLegacyFallback(json_str, "mix_dry_gain", "master_dry_gain", 1.0f);
+    *master_wet = GetJsonFloatLegacyFallback(json_str, "mix_wet_gain", "master_wet_gain", 1.0f);
 
     free(json_str);
 }
