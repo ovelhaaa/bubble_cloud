@@ -399,36 +399,72 @@ static int Voice_Allocate(SoundBubblesEngine_t* engine) {
         if (engine->voices[i].state == VOICE_STATE_INACTIVE) return i;
     }
 
-    // 2. Stealing required. Priority: Sustain > Short > Micro.
-    // Must avoid stealing voices that are too young.
-    int victim_idx = -1;
-    float max_phase = -1.0f;
-    int current_priority = -1; // 2=Sustain, 1=Short, 0=Micro
+    // 2. Stealing policy when fully occupied (deterministic, bounded, musically protective):
+    //    - Class priority is MICRO first, then SHORT, then SUSTAIN/BODY.
+    //    - Inside a class, steal the "least useful" voice: older phase and lower remaining contribution
+    //      are preferred (score = phase + (1 - amp) + (1 - phase) for PREEMPT_FADING voices).
+    //    - Young-voice protection threshold is respected first. If every voice is still young,
+    //      deterministically fall back to the best global candidate so a spawn never stalls.
+    //    - Tie-breaks are resolved by lower voice index for fixed-seed reproducibility.
+    int best_protected_idx = -1;
+    int best_fallback_idx = -1;
+    int best_protected_rank = 99;
+    int best_fallback_rank = 99;
+    float best_protected_score = -1.0f;
+    float best_fallback_score = -1.0f;
 
     for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
         BubbleVoice_t* v = &engine->voices[i];
+        if (v->state == VOICE_STATE_INACTIVE) {
+            continue;
+        }
 
-        if (v->state == VOICE_STATE_PLAYING && v->phase > STEAL_MIN_PHASE_THRESHOLD) {
-            int v_priority = 0;
-            if (v->bubble_class == BUBBLE_CLASS_SUSTAIN_BODY) v_priority = 2;
-            else if (v->bubble_class == BUBBLE_CLASS_SHORT_INTERMEDIATE) v_priority = 1;
+        int class_rank = 2; // lowest steal priority by default (Sustain/Body)
+        if (v->bubble_class == BUBBLE_CLASS_MICRO_ATTACK) {
+            class_rank = 0;
+        } else if (v->bubble_class == BUBBLE_CLASS_SHORT_INTERMEDIATE) {
+            class_rank = 1;
+        }
 
-            // If we found a higher priority class, or an older voice of same priority
-            if (v_priority > current_priority || (v_priority == current_priority && v->phase > max_phase)) {
-                current_priority = v_priority;
-                max_phase = v->phase;
-                victim_idx = i;
-            }
+        float remaining_contrib = (1.0f - Clamp01(v->phase)) * Clamp01(v->amp);
+        float fade_bonus = (v->state == VOICE_STATE_PREEMPT_FADING) ? (1.0f - Clamp01(v->phase)) : 0.0f;
+        float usefulness_score = Clamp01(v->phase) + (1.0f - Clamp01(remaining_contrib)) + fade_bonus;
+        bool old_enough = (v->phase > STEAL_MIN_PHASE_THRESHOLD);
+
+        bool better_than_best_protected =
+            (class_rank < best_protected_rank) ||
+            (class_rank == best_protected_rank &&
+             (usefulness_score > best_protected_score ||
+              (usefulness_score == best_protected_score &&
+               i < best_protected_idx)));
+
+        if (old_enough && better_than_best_protected) {
+            best_protected_rank = class_rank;
+            best_protected_score = usefulness_score;
+            best_protected_idx = i;
+        }
+
+        bool better_than_best_fallback =
+            (class_rank < best_fallback_rank) ||
+            (class_rank == best_fallback_rank &&
+             (usefulness_score > best_fallback_score ||
+              (usefulness_score == best_fallback_score &&
+               i < best_fallback_idx)));
+
+        if (better_than_best_fallback) {
+            best_fallback_rank = class_rank;
+            best_fallback_score = usefulness_score;
+            best_fallback_idx = i;
         }
     }
 
-    // Initiate preemption fade on victim
+    int victim_idx = (best_protected_idx >= 0) ? best_protected_idx : best_fallback_idx;
     if (victim_idx >= 0) {
-        engine->voices[victim_idx].state = VOICE_STATE_PREEMPT_FADING;
-        engine->voices[victim_idx].fade_counter = BUBBLES_FADE_SAMPLES;
+        // Deterministic immediate replacement path: return a slot now rather than stalling spawn.
+        return victim_idx;
     }
 
-    return -1; // Wait for fade out
+    return -1;
 }
 
 static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleClass_t b_class) {
