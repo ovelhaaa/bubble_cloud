@@ -63,13 +63,62 @@ const PARAMETER_GROUPS = [
   { name: "Ducking", params: ["duck_burst_level", "duck_attack_coef", "duck_release_coef"] },
   { name: "Burst", params: ["burst_duration_ticks", "burst_immediate_count"] },
   { name: "Density", params: ["density_burst", "density_sustain", "density_decay"] },
-  { name: "Read Regions", params: ["attack_region_min_offset_samples", "attack_region_max_offset_samples", "body_region_min_offset_samples", "body_region_max_offset_samples", "memory_region_min_offset_samples", "memory_region_max_offset_samples"] },
-  { name: "Micro Class", params: ["micro_duration_ms_min", "micro_duration_ms_max"] },
-  { name: "Short Class", params: ["short_duration_ms_min", "short_duration_ms_max"] },
-  { name: "Body Class", params: ["body_duration_ms_min", "body_duration_ms_max"] },
+  { name: "Attack Region (Offsets)", params: ["attack_region_min_offset_samples", "attack_region_max_offset_samples"] },
+  { name: "Body Region (Offsets)", params: ["body_region_min_offset_samples", "body_region_max_offset_samples"] },
+  { name: "Memory Region (Offsets)", params: ["memory_region_min_offset_samples", "memory_region_max_offset_samples"] },
+  { name: "Attack Region (Durations)", params: ["micro_duration_ms_min", "micro_duration_ms_max"] },
+  { name: "Body Region (Durations)", params: ["short_duration_ms_min", "short_duration_ms_max"] },
+  { name: "Memory Region (Durations)", params: ["body_duration_ms_min", "body_duration_ms_max"] },
   { name: "Randomness", params: ["rng_seed"] },
   { name: "Output Mix", params: ["mix_dry_gain", "mix_wet_gain"] },
 ];
+
+const PARAM_LABELS = {
+    attack_region_min_offset_samples: "Attack Region Min Offset (samples)",
+    attack_region_max_offset_samples: "Attack Region Max Offset (samples)",
+    body_region_min_offset_samples: "Body Region Min Offset (samples)",
+    body_region_max_offset_samples: "Body Region Max Offset (samples)",
+    memory_region_min_offset_samples: "Memory Region Min Offset (samples)",
+    memory_region_max_offset_samples: "Memory Region Max Offset (samples)",
+    micro_duration_ms_min: "Attack Region Min Duration (ms)",
+    micro_duration_ms_max: "Attack Region Max Duration (ms)",
+    short_duration_ms_min: "Body Region Min Duration (ms)",
+    short_duration_ms_max: "Body Region Max Duration (ms)",
+    body_duration_ms_min: "Memory Region Min Duration (ms)",
+    body_duration_ms_max: "Memory Region Max Duration (ms)",
+};
+
+const WASM_PARAM_ID_MAP = {
+    noise_floor: 0,
+    tracking_thresh: 1,
+    sustain_thresh: 2,
+    transient_delta: 3,
+    duck_burst_level: 4,
+    duck_attack_coef: 5,
+    duck_release_coef: 6,
+    burst_duration_ticks: 7,
+    burst_immediate_count: 8,
+    density_burst: 9,
+    density_sustain: 10,
+    density_decay: 11,
+    attack_region_min_offset_samples: 12,
+    attack_region_max_offset_samples: 13,
+    body_region_min_offset_samples: 14,
+    body_region_max_offset_samples: 15,
+    memory_region_min_offset_samples: 16,
+    memory_region_max_offset_samples: 17,
+    micro_duration_ms_min: 18,
+    micro_duration_ms_max: 19,
+    short_duration_ms_min: 20,
+    short_duration_ms_max: 21,
+    body_duration_ms_min: 22,
+    body_duration_ms_max: 23,
+    rng_seed: 24,
+    mix_dry_gain: 25,
+    mix_wet_gain: 26
+};
+
+const PARITY_NOTE = "WASM preview is inspection/demo only; sonic behavior must stay in the shared core per docs/SONIC_PARITY_CONTRACT.md.";
 
 const PARAM_CONFIGS = {
     noise_floor: { min: 0.0, max: 0.1, step: 0.001 },
@@ -109,6 +158,7 @@ document.addEventListener('alpine:init', () => {
         hasUnexportedChanges: false,
         parameterGroups: PARAMETER_GROUPS,
         paramHelp: PARAM_HELP,
+        parityNote: PARITY_NOTE,
         openAccordion: "Analysis / Detection",
         openHelp: {},
         showResetModal: false,
@@ -250,6 +300,7 @@ document.addEventListener('alpine:init', () => {
         },
 
         formatLabel(key) {
+            if (key in PARAM_LABELS) return PARAM_LABELS[key];
             return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
         },
 
@@ -684,22 +735,8 @@ document.addEventListener('alpine:init', () => {
         // --- DSP Communication ---
         pushParamToAudio(key, val) {
             if (!this.audioInitialized || !this.workletNode) return;
-            const paramMap = {
-                "noise_floor": 0, "tracking_thresh": 1, "sustain_thresh": 2, "transient_delta": 3,
-                "duck_burst_level": 4, "duck_attack_coef": 5, "duck_release_coef": 6,
-                "burst_duration_ticks": 7, "burst_immediate_count": 8,
-                "density_burst": 9, "density_sustain": 10, "density_decay": 11,
-                "attack_region_min_offset_samples": 12, "attack_region_max_offset_samples": 13,
-                "body_region_min_offset_samples": 14, "body_region_max_offset_samples": 15,
-                "memory_region_min_offset_samples": 16, "memory_region_max_offset_samples": 17,
-                "micro_duration_ms_min": 18, "micro_duration_ms_max": 19,
-                "short_duration_ms_min": 20, "short_duration_ms_max": 21,
-                "body_duration_ms_min": 22, "body_duration_ms_max": 23,
-                "rng_seed": 24,
-                "mix_dry_gain": 25, "mix_wet_gain": 26
-            };
-            if (key in paramMap) {
-                this.workletNode.port.postMessage({ type: 'param', id: paramMap[key], value: val });
+            if (key in WASM_PARAM_ID_MAP) {
+                this.workletNode.port.postMessage({ type: 'param', id: WASM_PARAM_ID_MAP[key], value: val });
             }
         },
 
