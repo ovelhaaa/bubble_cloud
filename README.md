@@ -51,6 +51,18 @@ The core engine now models granular read positions using three semantic regions 
 Each region is represented as `min_offset_samples` / `max_offset_samples` in `EngineConfig_t`.
 Spawned voices map from `(bubble class, engine state)` to one of these regions, then choose a deterministic PRNG position inside that range. This keeps presets musically meaningful while preserving exact repeatability for a fixed RNG seed.
 
+## Preset schema notes (canonical v2)
+
+Presets in `presets/` now use a canonical flat schema centered on:
+
+- semantic region ranges (`attack_region_*`, `body_region_*`, `memory_region_*`)
+- class duration bounds (`micro_*`, `short_*`, `body_*`)
+- burst/density/ducking controls
+- deterministic seed (`rng_seed`)
+- output mix (`mix_dry_gain`, `mix_wet_gain`)
+
+For backward compatibility, the offline renderer still translates legacy keys (offset/jitter and `master_*_gain`) to canonical fields when loading older files. Canonical keys take precedence when both are present. See `docs/IMPLEMENTATION_PLAN_V2.md` for the full schema and translation contract.
+
 ## GitHub Actions & Workflows
 
 The project contains several GitHub Actions workflows with separated responsibilities:
