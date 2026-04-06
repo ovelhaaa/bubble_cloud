@@ -12,6 +12,12 @@
 
 // Minimum phase (age) before a voice is considered "stealable" to avoid dropping very young clicks
 #define STEAL_MIN_PHASE_THRESHOLD 0.05f
+#define PRESENCE_BLOOM_TICKS 32
+
+// Internal non-UI defaults for bus and presence shaping (musical tuning constants).
+#define CLASS_GAIN_MICRO_DEFAULT   1.15f
+#define CLASS_GAIN_SHORT_DEFAULT   0.96f
+#define CLASS_GAIN_SUSTAIN_DEFAULT 0.78f
 
 // --- Internal LUTs ---
 static float WindowLUT_Hann[1024];
@@ -68,6 +74,12 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
 
     engine->internal_ducking_target = 1.0f;
     engine->smoothed_ducking_gain = 1.0f;
+    engine->class_gain_micro = CLASS_GAIN_MICRO_DEFAULT;
+    engine->class_gain_short = CLASS_GAIN_SHORT_DEFAULT;
+    engine->class_gain_sustain = CLASS_GAIN_SUSTAIN_DEFAULT;
+    engine->wet_presence_target = 0.0f;
+    engine->wet_presence_smoothed = 0.0f;
+    engine->bloom_timer_ticks = 0;
 
     engine->master_dry_gain = 1.0f;
     engine->master_wet_gain = 1.0f;
@@ -96,6 +108,11 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     engine->ducking_lpf.b0 = engine->config.duck_attack_coef;
     engine->ducking_lpf.a1 = 1.0f - engine->config.duck_attack_coef;
     engine->ducking_lpf.z1 = 1.0f;
+
+    // Faster response when presence rises, slower response when it relaxes.
+    engine->wet_presence_lpf.b0 = 0.2f;
+    engine->wet_presence_lpf.a1 = 0.8f;
+    engine->wet_presence_lpf.z1 = 0.0f;
 }
 
 void SoundBubbles_UpdateConfig(SoundBubblesEngine_t* engine, const EngineConfig_t* new_config) {
@@ -193,7 +210,23 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
         float sustain_filtered = Filter1Pole_ProcessLPF(&engine->sustain_lpf, bus_sustain);
 
         // Final Output Mix (DSP core owns dry/wet policy)
-        float wet_mix = (attack_filtered + bus_flat + sustain_filtered) * engine->smoothed_ducking_gain * engine->master_wet_gain;
+        float attack_tilt = 1.0f;
+        float sustain_tilt = 1.0f;
+        if (engine->engine_state == ENGINE_STATE_TRANSIENT_BURST || engine->engine_state == ENGINE_STATE_ATTACK_ONGOING) {
+            // Brighter onsets: emphasize HPF micro bus and slightly trim darker sustain bus.
+            attack_tilt = 1.08f;
+            sustain_tilt = 0.92f;
+        } else if (engine->engine_state == ENGINE_STATE_SUSTAIN_BODY || engine->engine_state == ENGINE_STATE_SPARSE_DECAY) {
+            // Later phrase stages: keep darker halo and avoid clicky forwardness.
+            attack_tilt = 0.95f;
+            sustain_tilt = 1.06f;
+        }
+
+        float wet_sum =
+            (attack_filtered * attack_tilt * engine->class_gain_micro) +
+            (bus_flat * engine->class_gain_short) +
+            (sustain_filtered * sustain_tilt * engine->class_gain_sustain);
+        float wet_mix = wet_sum * engine->smoothed_ducking_gain * engine->wet_presence_smoothed * engine->master_wet_gain;
         float dry_mix = dry_sample * engine->master_dry_gain;
 
         out_left[i] = dry_mix + wet_mix;
@@ -242,6 +275,7 @@ static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_
     if (engine->env_derivative > engine->config.transient_delta) {
         engine->engine_state = ENGINE_STATE_TRANSIENT_BURST;
         engine->burst_timer_ticks = engine->config.burst_duration_ticks;
+        engine->bloom_timer_ticks = PRESENCE_BLOOM_TICKS;
         Scheduler_SpawnImmediateBurst(engine);
 
     } else if (engine->burst_timer_ticks > 0) {
@@ -259,6 +293,10 @@ static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_
         }
     }
 
+    if (engine->bloom_timer_ticks > 0) {
+        engine->bloom_timer_ticks--;
+    }
+
     // Ducking target logic (driven primarily by transient/burst, recovers on sustain/decay)
     if (engine->engine_state == ENGINE_STATE_TRANSIENT_BURST || engine->engine_state == ENGINE_STATE_ATTACK_ONGOING) {
         engine->internal_ducking_target = engine->config.duck_burst_level;
@@ -273,6 +311,47 @@ static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_
 
     // Control-rate ducking smoothing
     engine->smoothed_ducking_gain = Filter1Pole_ProcessLPF(&engine->ducking_lpf, engine->internal_ducking_target);
+
+    // Wet presence macro-shape across phrase phases:
+    // - transient: preserve dry attack clarity
+    // - post-attack bloom: brief intentional rise in wet audibility
+    // - sustain: stable perceptible halo
+    // - decay/silence: thinner but still audible tail
+    switch (engine->engine_state) {
+        case ENGINE_STATE_TRANSIENT_BURST:
+            engine->wet_presence_target = 0.58f;
+            break;
+        case ENGINE_STATE_ATTACK_ONGOING:
+        {
+            float bloom_progress = 1.0f;
+            if (PRESENCE_BLOOM_TICKS > 0) {
+                bloom_progress = 1.0f - ((float)engine->bloom_timer_ticks / (float)PRESENCE_BLOOM_TICKS);
+            }
+            bloom_progress = Clamp01(bloom_progress);
+            engine->wet_presence_target = Lerp(1.28f, 1.02f, bloom_progress);
+            break;
+        }
+        case ENGINE_STATE_SUSTAIN_BODY:
+            engine->wet_presence_target = 0.88f;
+            break;
+        case ENGINE_STATE_SPARSE_DECAY:
+            engine->wet_presence_target = 0.54f;
+            break;
+        case ENGINE_STATE_SILENCE:
+        default:
+            engine->wet_presence_target = 0.32f;
+            break;
+    }
+
+    // Asymmetric smoothing keeps bloom responsive but avoids pumping on release.
+    if (engine->wet_presence_target > engine->wet_presence_smoothed) {
+        engine->wet_presence_lpf.b0 = 0.25f;
+        engine->wet_presence_lpf.a1 = 0.75f;
+    } else {
+        engine->wet_presence_lpf.b0 = 0.08f;
+        engine->wet_presence_lpf.a1 = 0.92f;
+    }
+    engine->wet_presence_smoothed = Filter1Pole_ProcessLPF(&engine->wet_presence_lpf, engine->wet_presence_target);
 
     // Target Density updates (Spawns per second), modulated by envelope and derivative within bounded state ranges.
     float env_norm = 0.0f;
