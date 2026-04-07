@@ -27,8 +27,21 @@ class BubbleCloudProcessor extends AudioWorkletProcessor {
 
   async initWasm() {
     try {
-      importScripts('bubble_cloud_wasm.js');
-      const factory = self.Module;
+      let factory = null;
+      try {
+        const wasmModule = await import('./bubble_cloud_wasm.js');
+        factory =
+          wasmModule?.default ||
+          wasmModule?.Module ||
+          wasmModule?.createModule ||
+          null;
+      } catch (importError) {
+        factory = globalThis.Module;
+        if (typeof factory !== 'function') {
+          throw importError;
+        }
+      }
+
       if (typeof factory !== 'function') {
         throw new Error('WASM module factory not found');
       }
