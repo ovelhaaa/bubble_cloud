@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Bubble Cloud</title>
+</head>
+<body>
+  <button id="start">Start Audio</button>
+  <label><input type="checkbox" id="synth"> Synth</label>
+  <label><input type="checkbox" id="bypass"> Bypass</label>
+  <input id="file" type="file" accept="audio/*" />
+
+  <div>
+    <label>Dry <input type="range" min="0" max="1" step="0.01" value="1" data-param-id="0"></label>
+    <label>Wet <input type="range" min="0" max="1" step="0.01" value="1" data-param-id="1"></label>
+    <label>Burst density <input type="range" min="0" max="60" step="0.5" value="36" data-param-id="2"></label>
+  </div>
+
+  <p id="status">idle</p>
+  <p id="metrics"></p>
+  <script src="app.js"></script>
+</body>
+</html>

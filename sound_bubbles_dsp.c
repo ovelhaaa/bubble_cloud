@@ -83,6 +83,32 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     engine->ducking_lpf.z1 = 1.0f;
 }
 
+void SoundBubbles_Reset(SoundBubblesEngine_t* engine) {
+    engine->write_ptr = 0;
+    engine->block_counter = 0;
+    engine->engine_state = ENGINE_STATE_SILENCE;
+    engine->env_follower_state = 0.0f;
+    engine->env_derivative = 0.0f;
+    engine->burst_timer_ticks = 0;
+    engine->target_density = 0.0f;
+    engine->spawn_accumulator = 0.0f;
+    engine->internal_ducking_target = 1.0f;
+    engine->smoothed_ducking_gain = 1.0f;
+
+    for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
+        engine->voices[i].state = VOICE_STATE_INACTIVE;
+        engine->voices[i].phase = 0.0f;
+        engine->voices[i].phase_inc = 0.0f;
+        engine->voices[i].read_ptr_float = 0.0f;
+        engine->voices[i].amp = 0.0f;
+        engine->voices[i].fade_counter = 0;
+    }
+
+    engine->attack_hpf.z1 = 0.0f;
+    engine->sustain_lpf.z1 = 0.0f;
+    engine->ducking_lpf.z1 = 1.0f;
+}
+
 void SoundBubbles_UpdateConfig(SoundBubblesEngine_t* engine, const EngineConfig_t* new_config) {
     engine->config = *new_config;
 
