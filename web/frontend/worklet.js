@@ -9,7 +9,7 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
     this.wasm = null;
     this.api = null;
 
-    this.bufferSize = 128;
+    this.bufferSize = 0;
     this.inPtr = 0;
     this.outLPtr = 0;
     this.outRPtr = 0;
@@ -66,20 +66,12 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
       const wasmProcess = this.wasm.cwrap('wasm_process', null, ['number', 'number', 'number', 'number']);
       const wasmSetParam = this.wasm.cwrap('wasm_set_param', null, ['number', 'number']);
       const wasmAlloc = this.wasm.cwrap('wasm_alloc', 'number', ['number']);
+      const wasmFree = this.wasm.cwrap('wasm_free', null, ['number']);
       const wasmGetEnvelope = this.wasm.cwrap('wasm_get_envelope', 'number', []);
       const wasmGetState = this.wasm.cwrap('wasm_get_state', 'number', []);
       const wasmGetActiveVoices = this.wasm.cwrap('wasm_get_active_voices', 'number', []);
 
       wasmInit();
-
-      const byteSize = this.bufferSize * Float32Array.BYTES_PER_ELEMENT;
-      this.inPtr = wasmAlloc(byteSize);
-      this.outLPtr = wasmAlloc(byteSize);
-      this.outRPtr = wasmAlloc(byteSize);
-
-      if (!this.inPtr || !this.outLPtr || !this.outRPtr) {
-        throw new Error('Failed to allocate WASM audio buffers');
-      }
 
       this.api = {
         setParam: (id, value) => wasmSetParam(id | 0, Number(value)),
@@ -87,6 +79,39 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
           const inL = input[0];
           const outL = output[0];
           const outR = output[1];
+          const blockSize = outL.length;
+
+          if (!Number.isInteger(blockSize) || blockSize <= 0) {
+            return;
+          }
+
+          if (
+            this.bufferSize !== blockSize ||
+            !this.inPtr ||
+            !this.outLPtr ||
+            !this.outRPtr
+          ) {
+            if (this.inPtr) wasmFree(this.inPtr);
+            if (this.outLPtr) wasmFree(this.outLPtr);
+            if (this.outRPtr) wasmFree(this.outRPtr);
+
+            const byteSize = blockSize * Float32Array.BYTES_PER_ELEMENT;
+            const inPtr = wasmAlloc(byteSize);
+            const outLPtr = wasmAlloc(byteSize);
+            const outRPtr = wasmAlloc(byteSize);
+
+            if (!inPtr || !outLPtr || !outRPtr) {
+              throw new Error(`Failed to allocate WASM audio buffers for block size ${blockSize}`);
+            }
+
+            this.inPtr = inPtr;
+            this.outLPtr = outLPtr;
+            this.outRPtr = outRPtr;
+            this.bufferSize = blockSize;
+            this._inHeap = null;
+            this._outLHeap = null;
+            this._outRHeap = null;
+          }
 
           if (!this._inHeap || this._inHeap.buffer !== this.wasm.HEAPF32.buffer) {
             const buffer = this.wasm.HEAPF32.buffer;
@@ -99,10 +124,9 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
             this._outRHeap = outRHeap;
           }
 
+          this._inHeap.fill(0);
           if (inL) {
-            this._inHeap.set(inL);
-          } else {
-            this._inHeap.fill(0);
+            this._inHeap.set(inL.subarray(0, this.bufferSize));
           }
 
           wasmProcess(this.inPtr, this.outLPtr, this.outRPtr, this.bufferSize);
