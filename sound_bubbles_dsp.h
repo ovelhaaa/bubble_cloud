@@ -137,6 +137,7 @@ typedef struct {
 
 // Initialization: Caller provides pre-allocated delay_buffer (88,200 elements) and initial config
 void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memory, const EngineConfig_t* initial_config);
+void SoundBubbles_Reset(SoundBubblesEngine_t* engine);
 
 // Config Update: Safely copy new core engine parameters
 void SoundBubbles_UpdateConfig(SoundBubblesEngine_t* engine, const EngineConfig_t* new_config);

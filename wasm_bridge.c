@@ -47,19 +47,22 @@ void wasm_init(void) {
 }
 
 void wasm_reset(void) {
-    wasm_init();
+    if (!g_initialized) {
+        abort();
+    }
+    SoundBubbles_Reset(&g_engine);
 }
 
 void wasm_process(float* input, float* output_l, float* output_r, int32_t frames) {
     if (!g_initialized) {
-        wasm_init();
+        abort();
     }
     SoundBubbles_ProcessBlock(&g_engine, input, output_l, output_r, frames);
 }
 
 void wasm_set_param(int32_t param_id, float value) {
     if (!g_initialized) {
-        wasm_init();
+        abort();
     }
 
     switch (param_id) {
@@ -93,7 +96,11 @@ int32_t wasm_get_active_voices(void) {
 }
 
 void* wasm_alloc(int32_t size) {
-    return malloc((size_t)size);
+    void* ptr = malloc((size_t)size);
+    if (!ptr) {
+        abort();
+    }
+    return ptr;
 }
 
 void wasm_free(void* ptr) {
