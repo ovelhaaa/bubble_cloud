@@ -1,26 +1,40 @@
 class SoundBubblesWorklet extends AudioWorkletProcessor {
   constructor() {
     super();
+
     this.ready = false;
     this.bypass = false;
     this.metrics = { envelope: 0, state: 0, voices: 0 };
+
     this.wasm = null;
+    this.api = null;
+
+    this.bufferSize = 0;
+    this.inPtr = 0;
+    this.outLPtr = 0;
+    this.outRPtr = 0;
+    this._inHeap = null;
+    this._outLHeap = null;
+    this._outRHeap = null;
 
     this.port.onmessage = (event) => {
-      // Message bridge from UI/main thread.
-
       const data = event.data || {};
+
       if (data.type === 'set-bypass') {
         this.bypass = !!data.enabled;
-      } else if (data.type === 'poll') {
+        return;
+      }
+
+      if (data.type === 'poll') {
         this.port.postMessage({ type: 'state', ...this.metrics });
-      } else if (data.type === 'param') {
-        if (this.wasm && typeof this.wasm.setParam === 'function') {
-          try {
-            this.wasm.setParam(data.id, data.value);
-          } catch (err) {
-            this.postProcessorError('setParam failed', err);
-          }
+        return;
+      }
+
+      if (data.type === 'param' && this.api) {
+        try {
+          this.api.setParam(data.id, data.value);
+        } catch (err) {
+          this.postProcessorError('setParam failed', err);
         }
       }
     };
@@ -28,28 +42,105 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
     this.initialize();
   }
 
+  postProcessorError(prefix, err) {
+    this.port.postMessage({
+      type: 'processor-error',
+      message: `${prefix}: ${err?.stack || err?.message || String(err)}`,
+    });
+  }
+
   async initialize() {
     this.port.postMessage({ type: 'loading' });
+
     try {
       const wasmUrl = new URL('bubble_cloud_wasm.js', self.location.href).toString();
       importScripts(wasmUrl);
-    } catch (err) {
-      this.port.postMessage({
-        type: 'wasm-error',
-        message: err?.stack || err?.message || String(err),
-      });
-      return;
-    }
 
-    try {
-      // Supports both module factory and global module patterns.
-      if (typeof Module === 'function') {
-        this.wasm = await Module();
-      } else if (self.Module && typeof self.Module.then === 'function') {
-        this.wasm = await self.Module;
-      } else {
-        this.wasm = self.Module || null;
+      if (typeof BubbleCloudModule !== 'function') {
+        throw new Error('BubbleCloudModule factory not found after importScripts');
       }
+
+      this.wasm = await BubbleCloudModule();
+
+      const wasmInit = this.wasm.cwrap('wasm_init', null, []);
+      const wasmProcess = this.wasm.cwrap('wasm_process', null, ['number', 'number', 'number', 'number']);
+      const wasmSetParam = this.wasm.cwrap('wasm_set_param', null, ['number', 'number']);
+      const wasmAlloc = this.wasm.cwrap('wasm_alloc', 'number', ['number']);
+      const wasmFree = this.wasm.cwrap('wasm_free', null, ['number']);
+      const wasmGetEnvelope = this.wasm.cwrap('wasm_get_envelope', 'number', []);
+      const wasmGetState = this.wasm.cwrap('wasm_get_state', 'number', []);
+      const wasmGetActiveVoices = this.wasm.cwrap('wasm_get_active_voices', 'number', []);
+
+      wasmInit();
+
+      this.api = {
+        setParam: (id, value) => wasmSetParam(id | 0, Number(value)),
+        processBlock: (input, output, metrics) => {
+          const inL = input[0];
+          const outL = output[0];
+          const outR = output[1];
+          const blockSize = outL.length;
+
+          if (!Number.isInteger(blockSize) || blockSize <= 0) {
+            return;
+          }
+
+          if (
+            this.bufferSize !== blockSize ||
+            !this.inPtr ||
+            !this.outLPtr ||
+            !this.outRPtr
+          ) {
+            if (this.inPtr) wasmFree(this.inPtr);
+            if (this.outLPtr) wasmFree(this.outLPtr);
+            if (this.outRPtr) wasmFree(this.outRPtr);
+
+            const byteSize = blockSize * Float32Array.BYTES_PER_ELEMENT;
+            const inPtr = wasmAlloc(byteSize);
+            const outLPtr = wasmAlloc(byteSize);
+            const outRPtr = wasmAlloc(byteSize);
+
+            if (!inPtr || !outLPtr || !outRPtr) {
+              throw new Error(`Failed to allocate WASM audio buffers for block size ${blockSize}`);
+            }
+
+            this.inPtr = inPtr;
+            this.outLPtr = outLPtr;
+            this.outRPtr = outRPtr;
+            this.bufferSize = blockSize;
+            this._inHeap = null;
+            this._outLHeap = null;
+            this._outRHeap = null;
+          }
+
+          if (!this._inHeap || this._inHeap.buffer !== this.wasm.HEAPF32.buffer) {
+            const buffer = this.wasm.HEAPF32.buffer;
+            const inHeap = new Float32Array(buffer, this.inPtr, this.bufferSize);
+            const outLHeap = new Float32Array(buffer, this.outLPtr, this.bufferSize);
+            const outRHeap = new Float32Array(buffer, this.outRPtr, this.bufferSize);
+
+            this._inHeap = inHeap;
+            this._outLHeap = outLHeap;
+            this._outRHeap = outRHeap;
+          }
+
+          this._inHeap.fill(0);
+          if (inL) {
+            this._inHeap.set(inL.subarray(0, this.bufferSize));
+          }
+
+          wasmProcess(this.inPtr, this.outLPtr, this.outRPtr, this.bufferSize);
+
+          outL.set(this._outLHeap);
+          if (outR) {
+            outR.set(this._outRHeap);
+          }
+
+          metrics.envelope = wasmGetEnvelope();
+          metrics.state = wasmGetState();
+          metrics.voices = wasmGetActiveVoices();
+        },
+      };
 
       this.ready = true;
       this.port.postMessage({ type: 'ready' });
@@ -61,13 +152,6 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
     }
   }
 
-  postProcessorError(prefix, err) {
-    this.port.postMessage({
-      type: 'processor-error',
-      message: `${prefix}: ${err?.stack || err?.message || String(err)}`,
-    });
-  }
-
   process(inputs, outputs) {
     try {
       const input = inputs[0] || [];
@@ -76,9 +160,10 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
       const outL = output[0];
       const outR = output[1] || output[0];
 
-      if (!outL || !outR) return true;
+      if (!outL || !outR) {
+        return true;
+      }
 
-      // Debug bypass: direct monitor path to validate audio graph independently from WASM DSP.
       if (this.bypass) {
         if (inL) {
           for (let i = 0; i < outL.length; i++) {
@@ -93,28 +178,13 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
         return true;
       }
 
-      if (!this.ready) {
+      if (!this.ready || !this.api) {
         outL.fill(0);
         outR.fill(0);
         return true;
       }
 
-      // Fallback behavior if WASM binding is unavailable.
-      if (!this.wasm || typeof this.wasm.processBlock !== 'function') {
-        if (inL) {
-          for (let i = 0; i < outL.length; i++) {
-            const sample = inL[i] || 0;
-            outL[i] = sample;
-            outR[i] = sample;
-          }
-        } else {
-          outL.fill(0);
-          outR.fill(0);
-        }
-        return true;
-      }
-
-      this.wasm.processBlock(input, output, this.metrics);
+      this.api.processBlock(input, output, this.metrics);
       return true;
     } catch (err) {
       this.postProcessorError('process() failed', err);
