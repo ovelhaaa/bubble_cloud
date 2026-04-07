@@ -661,5 +661,34 @@ document.addEventListener('alpine:init', () => {
       const sec = Math.floor(safe % 60);
       return `${min}:${String(sec).padStart(2, '0')}`;
     },
+
+    clearAudioFile() {
+      this.stopPlay();
+      this.audioFile = null;
+      this.audioBuffer = null;
+      this.duration = 0;
+      this.currentTime = 0;
+      this.seekTime = 0;
+      const input = document.getElementById('audio-upload');
+      if (input) input.value = '';
+      this.setAudioStatus('Arquivo removido.');
+    },
+
+    getEngineStateName(state) {
+      const names = {
+        0: 'Idle',
+        1: 'Tracking',
+        2: 'Sustain',
+        3: 'Transient',
+      };
+      return names[state] || `State ${state}`;
+    },
+
+    formatTime(seconds) {
+      const safe = Math.max(0, Number(seconds) || 0);
+      const min = Math.floor(safe / 60);
+      const sec = Math.floor(safe % 60);
+      return `${min}:${String(sec).padStart(2, '0')}`;
+    },
   }));
 });
