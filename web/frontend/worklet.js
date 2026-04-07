@@ -91,14 +91,16 @@ class BubbleCloudProcessor extends AudioWorkletProcessor {
     const lIndex = this.ptrL >> 2;
     const rIndex = this.ptrR >> 2;
 
-    for (let i = 0; i < frames; i++) this.heap[inIndex + i] = in0 ? in0[i] : 0;
+    if (in0) {
+      this.heap.set(in0, inIndex);
+    } else {
+      this.heap.fill(0, inIndex, inIndex + frames);
+    }
 
     this.wasm.process(this.ptrIn, this.ptrL, this.ptrR, frames);
 
-    for (let i = 0; i < frames; i++) {
-      outL[i] = this.heap[lIndex + i];
-      outR[i] = this.heap[rIndex + i];
-    }
+    outL.set(this.heap.subarray(lIndex, lIndex + frames));
+    outR.set(this.heap.subarray(rIndex, rIndex + frames));
 
     this.lastMetricsFrame += frames;
     if (this.lastMetricsFrame >= 2048) {
