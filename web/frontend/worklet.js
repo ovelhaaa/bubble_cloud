@@ -55,6 +55,14 @@ class BubbleCloudProcessor extends AudioWorkletProcessor {
     }
   }
 
+
+  getHeapF32() {
+    if (!this.mod || !this.mod.HEAPF32 || !this.mod.HEAPF32.buffer) {
+      throw new Error('WASM HEAPF32 unavailable');
+    }
+    return this.mod.HEAPF32;
+  }
+
   ensureBuffers(frames) {
     if (this.capacity >= frames) return;
     if (this.ptrIn) this.wasm.free(this.ptrIn);
@@ -91,16 +99,19 @@ class BubbleCloudProcessor extends AudioWorkletProcessor {
     const lIndex = this.ptrL >> 2;
     const rIndex = this.ptrR >> 2;
 
+    const heapBefore = this.getHeapF32();
     if (in0) {
-      this.mod.HEAPF32.set(in0, inIndex);
+      heapBefore.set(in0, inIndex);
     } else {
-      this.mod.HEAPF32.fill(0, inIndex, inIndex + frames);
+      heapBefore.fill(0, inIndex, inIndex + frames);
     }
 
     this.wasm.process(this.ptrIn, this.ptrL, this.ptrR, frames);
 
-    outL.set(this.mod.HEAPF32.subarray(lIndex, lIndex + frames));
-    outR.set(this.mod.HEAPF32.subarray(rIndex, rIndex + frames));
+    // ALLOW_MEMORY_GROWTH can swap backing buffers; always re-read HEAPF32 after processing.
+    const heapAfter = this.getHeapF32();
+    outL.set(heapAfter.subarray(lIndex, lIndex + frames));
+    outR.set(heapAfter.subarray(rIndex, rIndex + frames));
 
     this.lastMetricsFrame += frames;
     if (this.lastMetricsFrame >= 2048) {

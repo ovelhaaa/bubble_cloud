@@ -66,14 +66,28 @@ void wasm_set_param(int32_t param_id, float value) {
     }
 
     switch (param_id) {
-        case 0: g_engine.master_dry_gain = value; break;
-        case 1: g_engine.master_wet_gain = value; break;
-        case 2: g_engine.config.density_burst = value; break;
-        case 3: g_engine.config.density_sustain = value; break;
-        case 4: g_engine.config.density_decay = value; break;
-        case 5: g_engine.config.duck_burst_level = value; break;
-        case 6: g_engine.config.transient_delta = value; break;
-        default: break;
+        case 0:
+            g_engine.master_dry_gain = value;
+            break;
+        case 1:
+            g_engine.master_wet_gain = value;
+            break;
+        case 2:
+        case 3:
+        case 4:
+        case 5:
+        case 6: {
+            EngineConfig_t cfg = g_engine.config;
+            if (param_id == 2) cfg.density_burst = value;
+            else if (param_id == 3) cfg.density_sustain = value;
+            else if (param_id == 4) cfg.density_decay = value;
+            else if (param_id == 5) cfg.duck_burst_level = value;
+            else if (param_id == 6) cfg.transient_delta = value;
+            SoundBubbles_UpdateConfig(&g_engine, &cfg);
+            break;
+        }
+        default:
+            break;
     }
 }
 

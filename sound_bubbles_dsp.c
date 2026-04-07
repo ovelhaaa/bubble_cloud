@@ -95,6 +95,10 @@ void SoundBubbles_Reset(SoundBubblesEngine_t* engine) {
     engine->internal_ducking_target = 1.0f;
     engine->smoothed_ducking_gain = 1.0f;
 
+    for (int i = 0; i < BUBBLES_BUFFER_SIZE_SAMPLES; i++) {
+        engine->delay_buffer[i] = 0;
+    }
+
     for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
         engine->voices[i].state = VOICE_STATE_INACTIVE;
         engine->voices[i].phase = 0.0f;
