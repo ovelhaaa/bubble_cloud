@@ -182,6 +182,8 @@ document.addEventListener('alpine:init', () => {
     transportTimer: null,
 
     saveQueued: false,
+    draftPersistTimer: null,
+    draftPersistDelayMs: 180,
 
     init() {
       this.restoreDraft();
@@ -227,9 +229,24 @@ document.addEventListener('alpine:init', () => {
       });
     },
 
-    saveDraft() {
+    persistDraftNow() {
       this.validateParamRanges();
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ params: this.params, savedAt: Date.now() }));
+    },
+
+    scheduleDraftPersist() {
+      if (this.draftPersistTimer) {
+        clearTimeout(this.draftPersistTimer);
+      }
+      this.draftPersistTimer = setTimeout(() => {
+        this.draftPersistTimer = null;
+        this.persistDraftNow();
+      }, this.draftPersistDelayMs);
+    },
+
+    saveDraft() {
+      this.validateParamRanges();
+      this.scheduleDraftPersist();
       this.isDraft = true;
       this.hasUnexportedChanges = true;
       this.queueParamFlush();
@@ -251,6 +268,10 @@ document.addEventListener('alpine:init', () => {
     },
 
     clearDraft() {
+      if (this.draftPersistTimer) {
+        clearTimeout(this.draftPersistTimer);
+        this.draftPersistTimer = null;
+      }
       localStorage.removeItem(STORAGE_KEY);
       this.isDraft = false;
       this.hasUnexportedChanges = false;
@@ -592,7 +613,7 @@ document.addEventListener('alpine:init', () => {
         this.stopPlay();
         this.audioFile = file;
         const arrayBuffer = await file.arrayBuffer();
-        this.audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer.slice(0));
+        this.audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
         this.duration = this.audioBuffer.duration;
         this.currentTime = 0;
         this.seekTime = 0;
@@ -610,6 +631,35 @@ document.addEventListener('alpine:init', () => {
       } finally {
         this.isDecoding = false;
       }
+    },
+
+    clearAudioFile() {
+      this.stopPlay();
+      this.audioFile = null;
+      this.audioBuffer = null;
+      this.duration = 0;
+      this.currentTime = 0;
+      this.seekTime = 0;
+      const input = document.getElementById('audio-upload');
+      if (input) input.value = '';
+      this.setAudioStatus('Arquivo removido.');
+    },
+
+    getEngineStateName(state) {
+      const names = {
+        0: 'Idle',
+        1: 'Tracking',
+        2: 'Sustain',
+        3: 'Transient',
+      };
+      return names[state] || `State ${state}`;
+    },
+
+    formatTime(seconds) {
+      const safe = Math.max(0, Number(seconds) || 0);
+      const min = Math.floor(safe / 60);
+      const sec = Math.floor(safe % 60);
+      return `${min}:${String(sec).padStart(2, '0')}`;
     },
 
     clearAudioFile() {
