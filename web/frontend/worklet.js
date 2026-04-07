@@ -13,6 +13,9 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
     this.inPtr = 0;
     this.outLPtr = 0;
     this.outRPtr = 0;
+    this._inHeap = null;
+    this._outLHeap = null;
+    this._outRHeap = null;
 
     this.port.onmessage = (event) => {
       const data = event.data || {};
@@ -83,22 +86,31 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
         processBlock: (input, output, metrics) => {
           const inL = input[0];
           const outL = output[0];
-          const outR = output[1] || output[0];
+          const outR = output[1];
 
-          const inHeap = new Float32Array(this.wasm.HEAPF32.buffer, this.inPtr, this.bufferSize);
-          const outLHeap = new Float32Array(this.wasm.HEAPF32.buffer, this.outLPtr, this.bufferSize);
-          const outRHeap = new Float32Array(this.wasm.HEAPF32.buffer, this.outRPtr, this.bufferSize);
+          if (!this._inHeap || this._inHeap.buffer !== this.wasm.HEAPF32.buffer) {
+            const buffer = this.wasm.HEAPF32.buffer;
+            const inHeap = new Float32Array(buffer, this.inPtr, this.bufferSize);
+            const outLHeap = new Float32Array(buffer, this.outLPtr, this.bufferSize);
+            const outRHeap = new Float32Array(buffer, this.outRPtr, this.bufferSize);
+
+            this._inHeap = inHeap;
+            this._outLHeap = outLHeap;
+            this._outRHeap = outRHeap;
+          }
 
           if (inL) {
-            inHeap.set(inL);
+            this._inHeap.set(inL);
           } else {
-            inHeap.fill(0);
+            this._inHeap.fill(0);
           }
 
           wasmProcess(this.inPtr, this.outLPtr, this.outRPtr, this.bufferSize);
 
-          outL.set(outLHeap);
-          outR.set(outRHeap);
+          outL.set(this._outLHeap);
+          if (outR) {
+            outR.set(this._outRHeap);
+          }
 
           metrics.envelope = wasmGetEnvelope();
           metrics.state = wasmGetState();
