@@ -37,6 +37,9 @@ static EngineConfig_t default_config(void) {
 void wasm_init(void) {
     if (!g_delay) {
         g_delay = (int16_t*)malloc(sizeof(int16_t) * BUBBLES_BUFFER_SIZE_SAMPLES);
+        if (!g_delay) {
+            abort();
+        }
     }
     EngineConfig_t cfg = default_config();
     SoundBubbles_Init(&g_engine, g_delay, &cfg);
