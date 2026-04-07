@@ -182,6 +182,8 @@ document.addEventListener('alpine:init', () => {
     transportTimer: null,
 
     saveQueued: false,
+    draftPersistTimer: null,
+    draftPersistDelayMs: 180,
 
     init() {
       this.restoreDraft();
@@ -227,9 +229,24 @@ document.addEventListener('alpine:init', () => {
       });
     },
 
-    saveDraft() {
+    persistDraftNow() {
       this.validateParamRanges();
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ params: this.params, savedAt: Date.now() }));
+    },
+
+    scheduleDraftPersist() {
+      if (this.draftPersistTimer) {
+        clearTimeout(this.draftPersistTimer);
+      }
+      this.draftPersistTimer = setTimeout(() => {
+        this.draftPersistTimer = null;
+        this.persistDraftNow();
+      }, this.draftPersistDelayMs);
+    },
+
+    saveDraft() {
+      this.validateParamRanges();
+      this.scheduleDraftPersist();
       this.isDraft = true;
       this.hasUnexportedChanges = true;
       this.queueParamFlush();
@@ -251,6 +268,10 @@ document.addEventListener('alpine:init', () => {
     },
 
     clearDraft() {
+      if (this.draftPersistTimer) {
+        clearTimeout(this.draftPersistTimer);
+        this.draftPersistTimer = null;
+      }
       localStorage.removeItem(STORAGE_KEY);
       this.isDraft = false;
       this.hasUnexportedChanges = false;
@@ -592,7 +613,7 @@ document.addEventListener('alpine:init', () => {
         this.stopPlay();
         this.audioFile = file;
         const arrayBuffer = await file.arrayBuffer();
-        this.audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer.slice(0));
+        this.audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
         this.duration = this.audioBuffer.duration;
         this.currentTime = 0;
         this.seekTime = 0;

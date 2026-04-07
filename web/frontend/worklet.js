@@ -20,6 +20,7 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
     this.wasmGetVoices = null;
 
     this.bufferSize = 0;
+    this.defaultBlockSize = 128;
     this.inPtr = 0;
     this.outLPtr = 0;
     this.outRPtr = 0;
@@ -85,23 +86,33 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
   ensureBuffers(blockSize) {
     const pointersReady = this.inPtr && this.outLPtr && this.outRPtr;
     if (this.bufferSize !== blockSize || !pointersReady) {
-      if (this.inPtr) this.wasmFree(this.inPtr);
-      if (this.outLPtr) this.wasmFree(this.outLPtr);
-      if (this.outRPtr) this.wasmFree(this.outRPtr);
-
+      const previousInPtr = this.inPtr;
+      const previousOutLPtr = this.outLPtr;
+      const previousOutRPtr = this.outRPtr;
       const bytes = blockSize * Float32Array.BYTES_PER_ELEMENT;
-      this.inPtr = this.wasmAlloc(bytes);
-      this.outLPtr = this.wasmAlloc(bytes);
-      this.outRPtr = this.wasmAlloc(bytes);
 
-      if (!this.inPtr || !this.outLPtr || !this.outRPtr) {
+      const nextInPtr = this.wasmAlloc(bytes);
+      const nextOutLPtr = this.wasmAlloc(bytes);
+      const nextOutRPtr = this.wasmAlloc(bytes);
+
+      if (!nextInPtr || !nextOutLPtr || !nextOutRPtr) {
+        if (nextInPtr) this.wasmFree(nextInPtr);
+        if (nextOutLPtr) this.wasmFree(nextOutLPtr);
+        if (nextOutRPtr) this.wasmFree(nextOutRPtr);
         throw new Error(`WASM buffer allocation failed for blockSize=${blockSize}`);
       }
 
+      this.inPtr = nextInPtr;
+      this.outLPtr = nextOutLPtr;
+      this.outRPtr = nextOutRPtr;
       this.bufferSize = blockSize;
       this.inHeap = null;
       this.outLHeap = null;
       this.outRHeap = null;
+
+      if (previousInPtr) this.wasmFree(previousInPtr);
+      if (previousOutLPtr) this.wasmFree(previousOutLPtr);
+      if (previousOutRPtr) this.wasmFree(previousOutRPtr);
     }
 
     if (!this.refreshHeapViews()) {
@@ -124,6 +135,7 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
       this.wasmGetVoices = this.wasm.cwrap('wasm_get_active_voices', 'number', []);
 
       this.wasmInit();
+      this.ensureBuffers(this.defaultBlockSize);
       this.ready = true;
       this.port.postMessage({ type: 'ready' });
     } catch (err) {
@@ -162,7 +174,11 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
 
     try {
       const blockSize = outL.length;
-      this.ensureBuffers(blockSize);
+      if (blockSize !== this.bufferSize) {
+        this.ensureBuffers(blockSize);
+      } else if (!this.refreshHeapViews()) {
+        throw new Error('WASM heap views are not available');
+      }
 
       this.inHeap.fill(0);
       if (inL) {
