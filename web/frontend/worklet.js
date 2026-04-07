@@ -3,7 +3,7 @@ class BubbleCloudProcessor extends AudioWorkletProcessor {
     super();
     this.ready = false;
     this.wasm = null;
-    this.heap = null;
+    this.mod = null;
     this.ptrIn = 0;
     this.ptrL = 0;
     this.ptrR = 0;
@@ -46,7 +46,7 @@ class BubbleCloudProcessor extends AudioWorkletProcessor {
         getVoices: mod.cwrap('wasm_get_active_voices', 'number', []),
       };
 
-      this.heap = mod.HEAPF32;
+      this.mod = mod;
       this.wasm.init();
       this.ready = true;
       this.port.postMessage({ type: 'ready' });
@@ -92,15 +92,15 @@ class BubbleCloudProcessor extends AudioWorkletProcessor {
     const rIndex = this.ptrR >> 2;
 
     if (in0) {
-      this.heap.set(in0, inIndex);
+      this.mod.HEAPF32.set(in0, inIndex);
     } else {
-      this.heap.fill(0, inIndex, inIndex + frames);
+      this.mod.HEAPF32.fill(0, inIndex, inIndex + frames);
     }
 
     this.wasm.process(this.ptrIn, this.ptrL, this.ptrR, frames);
 
-    outL.set(this.heap.subarray(lIndex, lIndex + frames));
-    outR.set(this.heap.subarray(rIndex, rIndex + frames));
+    outL.set(this.mod.HEAPF32.subarray(lIndex, lIndex + frames));
+    outR.set(this.mod.HEAPF32.subarray(rIndex, rIndex + frames));
 
     this.lastMetricsFrame += frames;
     if (this.lastMetricsFrame >= 2048) {
