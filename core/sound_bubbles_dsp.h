@@ -215,6 +215,8 @@ typedef struct {
     Filter1Pole_t wet_presence_lpf;// Control-rate smoothing for wet presence target
     float sustain_diffusion_delay_l[BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY];
     float sustain_diffusion_delay_r[BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY];
+    float sustain_diffusion_delay2_l[BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY];
+    float sustain_diffusion_delay2_r[BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY];
     int32_t sustain_diffusion_write_idx;
 
     // Global Config & Block tracking

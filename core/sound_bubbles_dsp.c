@@ -1,4 +1,5 @@
 #include "sound_bubbles_dsp.h"
+#include <float.h>
 #include <math.h>
 #include <stddef.h>
 
@@ -131,6 +132,8 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     for (int i = 0; i < BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY; i++) {
         engine->sustain_diffusion_delay_l[i] = 0.0f;
         engine->sustain_diffusion_delay_r[i] = 0.0f;
+        engine->sustain_diffusion_delay2_l[i] = 0.0f;
+        engine->sustain_diffusion_delay2_r[i] = 0.0f;
     }
 }
 
@@ -247,9 +250,11 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
 
             float d_l = sustain_filtered_l;
             float d_r = sustain_filtered_r;
-            for (int st = 0; st < stages; st++) {
-                d_l = ProcessSustainDiffusionSample(engine, d_l, engine->sustain_diffusion_delay_l, delay_samples);
-                d_r = ProcessSustainDiffusionSample(engine, d_r, engine->sustain_diffusion_delay_r, delay_samples);
+            d_l = ProcessSustainDiffusionSample(engine, d_l, engine->sustain_diffusion_delay_l, delay_samples);
+            d_r = ProcessSustainDiffusionSample(engine, d_r, engine->sustain_diffusion_delay_r, delay_samples);
+            if (stages > 1) {
+                d_l = ProcessSustainDiffusionSample(engine, d_l, engine->sustain_diffusion_delay2_l, delay_samples);
+                d_r = ProcessSustainDiffusionSample(engine, d_r, engine->sustain_diffusion_delay2_r, delay_samples);
             }
             sustain_filtered_l = Lerp(sustain_filtered_l, d_l, Clamp01(engine->config.sustain_diffusion_amount));
             sustain_filtered_r = Lerp(sustain_filtered_r, d_r, Clamp01(engine->config.sustain_diffusion_amount));
@@ -763,7 +768,7 @@ static int32_t RefineReadOffsetSmartStart(const SoundBubblesEngine_t* engine, in
     if (scan < 1) return best;
     if (scan > 64) scan = 64;
 
-    float best_energy = 1.0e9f;
+    float best_energy = FLT_MAX;
     for (int32_t delta = -scan; delta <= scan; delta++) {
         int32_t candidate = read_offset_samples + delta;
         if (candidate < BUBBLES_GUARD_ZONE_SAMPLES) continue;
@@ -913,14 +918,17 @@ static float EnvelopeVariantGain(float phase, uint8_t variant, int family) {
     float p = Clamp01(phase);
     if (variant == 0) return 1.0f;
     if (family == ENVELOPE_FAMILY_SOFT) {
-        return (variant == 1) ? (0.85f + 0.15f * sinf(M_PI * p)) : (0.75f + 0.25f * (1.0f - p));
+        // "Soft" arch without trig in the audio loop: 4p(1-p) in [0, 1].
+        float arch = 4.0f * p * (1.0f - p);
+        return (variant == 1) ? (0.85f + 0.15f * arch) : (0.75f + 0.25f * (1.0f - p));
     }
     return (variant == 1) ? (0.92f + 0.08f * (1.0f - p)) : (0.85f + 0.15f * p);
 }
 
 static float SoftClip(float x, float amount) {
     float a = Clamp01(amount);
-    float cubic = x - 0.3333333f * x * x * x;
+    float x_c = Clamp(x, -1.0f, 1.0f);
+    float cubic = x_c - 0.3333333f * x_c * x_c * x_c;
     return Lerp(x, cubic, a);
 }
 
@@ -935,9 +943,6 @@ static float ProcessSustainDiffusionSample(SoundBubblesEngine_t* engine, float i
 }
 
 static void ApplyQualityTierDefaults(EngineConfig_t* cfg) {
-    if (cfg->stereo_width == 0.0f) cfg->stereo_width = 0.7f;
-    if (cfg->attack_pan_spread == 0.0f) cfg->attack_pan_spread = 0.85f;
-    if (cfg->sustain_pan_spread == 0.0f) cfg->sustain_pan_spread = 0.45f;
     if (cfg->smart_start_range == 0) cfg->smart_start_range = 12;
     if (cfg->wet_drive <= 0.0f) cfg->wet_drive = 1.0f;
     if (cfg->wet_output_trim <= 0.0f) cfg->wet_output_trim = 1.0f;
