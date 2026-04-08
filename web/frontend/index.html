@@ -6,6 +6,11 @@
     <title>Bubbles Editor</title>
     <link rel="stylesheet" href="style.css">
     <!-- Using Alpine.js for lightweight, reactive state management without a build step -->
+    <script defer src="src/presets/presetSchema.js"></script>
+    <script defer src="src/presets/factoryPresets.js"></script>
+    <script defer src="src/presets/presetMigration.js"></script>
+    <script defer src="src/presets/presetValidation.js"></script>
+    <script defer src="src/presets/presetIO.js"></script>
     <script defer src="app.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 </head>
@@ -144,12 +149,41 @@
                 </div>
             </div>
 
-            <!-- Export Actions -->
+            <!-- Presets + Export Actions -->
             <div class="card export-actions">
-                <h3>Exportar Preset</h3>
+                <h3>Presets de fábrica</h3>
+                <div class="preset-filter-row">
+                    <label for="preset-category">Categoria</label>
+                    <select id="preset-category" x-model="selectedPresetCategory" class="preset-category-select">
+                        <template x-for="category in presetCategories" :key="category"><option :value="category" x-text="category"></option></template>
+                    </select>
+                </div>
+                <div class="preset-cards">
+                    <template x-for="preset in filteredFactoryPresets" :key="preset.preset_slug">
+                        <div class="preset-card" :class="{'active': preset.preset_slug === loadedPresetReference.preset_slug}">
+                            <div class="preset-title-row">
+                                <strong x-text="preset.preset_name"></strong>
+                                <span class="esp-badge" x-show="preset.esp32_safe">ESP32-safe</span>
+                            </div>
+                            <p class="preset-description" x-text="preset.description"></p>
+                            <p class="preset-meta"><span x-text="preset.ui_category"></span> • <span x-text="preset.quality_tier"></span></p>
+                            <div class="preset-tags"><template x-for="tag in preset.tags" :key="tag"><span class="preset-tag" x-text="tag"></span></template></div>
+                            <button class="btn btn-secondary" @click="loadFactoryPreset(preset.preset_slug)">Load preset</button>
+                        </div>
+                    </template>
+                </div>
                 <div class="action-buttons">
-                    <button @click="copyJson()" class="btn btn-secondary">Copiar JSON</button>
-                    <button @click="downloadJson()" class="btn btn-primary">Baixar JSON</button>
+                    <button @click="resetToLoadedPresetDefaults()" class="btn btn-secondary">Reset to preset defaults</button>
+                </div>
+                <h3>Importar / Exportar JSON</h3>
+                <div class="action-buttons">
+                    <button @click="copyJson()" class="btn btn-secondary">Copiar Preset JSON</button>
+                    <button @click="downloadPresetJson()" class="btn btn-primary">Export Preset</button>
+                    <button @click="downloadSnapshotJson()" class="btn btn-secondary">Export Current State</button>
+                </div>
+                <div class="action-buttons">
+                    <label for="preset-upload" class="btn btn-secondary">Importar preset JSON</label>
+                    <input id="preset-upload" type="file" accept="application/json" class="file-input" @change="handlePresetImport($event)">
                 </div>
                 <a class="github-link" href="https://github.com/ovelhaaa/bubble_cloud/actions" target="_blank" rel="noreferrer">
                     Abrir GitHub Actions

@@ -243,10 +243,24 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function pickUnknownParams(params, definitions) {
+  const unknown = {};
+  Object.keys(params || {}).forEach((key) => {
+    if (!definitions[key]) unknown[key] = params[key];
+  });
+  return unknown;
+}
+
 document.addEventListener('alpine:init', () => {
   Alpine.data('editorApp', () => ({
     params: { ...BASELINE },
     baseline: { ...BASELINE },
+    factoryPresets: [],
+    selectedPresetCategory: 'All',
+    loadedPresetReference: { preset_name: 'Baseline', preset_slug: 'baseline', params: { ...BASELINE } },
+    currentPresetSource: 'factory',
+    currentPresetInfo: {},
+    presetImportInfo: null,
     parameterGroups: PARAMETER_GROUPS,
     paramDefinitions: PARAM_DEFINITIONS,
     paramHelp: PARAM_HELP,
@@ -297,9 +311,26 @@ document.addEventListener('alpine:init', () => {
     draftPersistDelayMs: 180,
 
     init() {
+      this.factoryPresets = (window.BubbleCloudFactoryPresets?.createFactoryPresets?.(this.baseline) || []).map((preset) =>
+        window.BubbleCloudPresetSchema.createCanonicalPreset(preset)
+      );
+      if (this.factoryPresets.length > 0) {
+        this.loadedPresetReference = window.BubbleCloudPresetSchema.createCanonicalPreset(this.factoryPresets[0]);
+        this.currentPresetInfo = { ...this.loadedPresetReference };
+      }
       this.restoreDraft();
       this.validateParamRanges();
       this.pushAllParamsToAudio();
+    },
+
+    get presetCategories() {
+      const categories = new Set(this.factoryPresets.map((preset) => preset.ui_category));
+      return ['All', ...categories];
+    },
+
+    get filteredFactoryPresets() {
+      if (this.selectedPresetCategory === 'All') return this.factoryPresets;
+      return this.factoryPresets.filter((preset) => preset.ui_category === this.selectedPresetCategory);
     },
 
     setAudioStatus(message, isError = false) {
@@ -400,19 +431,78 @@ document.addEventListener('alpine:init', () => {
       this.toast('Preset restaurado para o baseline.', 'success');
     },
 
-    exportPayload() {
-      return {
-        meta: {
-          app: 'bubble_cloud_web',
-          exportedAt: new Date().toISOString(),
-          mode: this.previewMode,
+    loadFactoryPreset(slug) {
+      const preset = this.factoryPresets.find((item) => item.preset_slug === slug);
+      if (!preset) return;
+      this.params = { ...preset.params };
+      this.validateParamRanges();
+      this.currentPresetSource = 'factory';
+      this.currentPresetInfo = { ...preset };
+      this.loadedPresetReference = window.BubbleCloudPresetSchema.createCanonicalPreset(preset);
+      this.queueParamFlush();
+      this.scheduleDraftPersist();
+      this.isDraft = true;
+      this.hasUnexportedChanges = true;
+      this.toast('Preset importado com sucesso', 'success');
+      if (!preset.esp32_safe) this.toast('Preset com custo maior: verifique uso em ESP32.', 'info');
+    },
+
+    resetToLoadedPresetDefaults() {
+      this.params = { ...this.loadedPresetReference.params };
+      this.validateParamRanges();
+      this.queueParamFlush();
+      this.scheduleDraftPersist();
+      this.hasUnexportedChanges = true;
+      this.toast('Preset restaurado para os defaults carregados.', 'success');
+    },
+
+    serializeCurrentPreset() {
+      const info = this.currentPresetInfo || {};
+      const payload = window.BubbleCloudPresetSchema.createCanonicalPreset({
+        ...info,
+        preset_name: info.preset_name || 'Current Preset',
+        preset_slug: info.preset_slug || window.BubbleCloudPresetSchema.slugify(info.preset_name || 'current-preset'),
+        params: { ...this.params },
+        metadata: {
+          ...(info.metadata || {}),
+          source: this.currentPresetSource,
+          export_context: 'preset',
+          unknown_params: this.presetImportInfo?.unknownParams || {},
         },
-        params: this.params,
+      });
+      return this.normalizeAndValidatePreset(payload).normalized;
+    },
+
+    serializeCurrentStateSnapshot() {
+      return {
+        app: 'bubble_cloud_web',
+        exported_at: new Date().toISOString(),
+        mode: this.previewMode,
+        transport: {
+          is_playing: this.isPlaying,
+          current_time: this.currentTime,
+          duration: this.duration,
+          repeat_continuous: this.repeatContinuous,
+        },
+        preset: this.serializeCurrentPreset(),
       };
     },
 
+    normalizeAndValidatePreset(canonicalPreset) {
+      const { normalized, warnings: normalizeWarnings } = window.BubbleCloudPresetValidation.normalizePreset(
+        canonicalPreset,
+        this.paramDefinitions,
+        this.baseline
+      );
+      const { errors, warnings: validateWarnings } = window.BubbleCloudPresetValidation.validatePreset(
+        normalized,
+        this.paramDefinitions
+      );
+      return { normalized, errors, warnings: [...normalizeWarnings, ...validateWarnings] };
+    },
+
     async copyJson() {
-      const payload = JSON.stringify(this.exportPayload(), null, 2);
+      const payload = JSON.stringify(this.serializeCurrentPreset(), null, 2);
       try {
         await navigator.clipboard.writeText(payload);
         this.hasUnexportedChanges = false;
@@ -422,19 +512,118 @@ document.addEventListener('alpine:init', () => {
       }
     },
 
-    downloadJson() {
+    downloadPresetJson() {
       try {
-        const blob = new Blob([JSON.stringify(this.exportPayload(), null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement('a');
-        anchor.href = url;
-        anchor.download = `bubble-cloud-preset-${new Date().toISOString().replace(/[\W:]/g, '-')}.json`;
-        anchor.click();
-        URL.revokeObjectURL(url);
+        const payload = this.serializeCurrentPreset();
+        window.BubbleCloudPresetIO.downloadObjectAsJson(
+          payload,
+          `bubble-cloud-preset-${new Date().toISOString().replace(/[\W:]/g, '-')}.json`
+        );
         this.hasUnexportedChanges = false;
         this.toast('Preset exportado com sucesso.', 'success');
       } catch (err) {
         this.toast(`Falha ao baixar JSON: ${err.message || err}`, 'error');
+      }
+    },
+
+    downloadSnapshotJson() {
+      try {
+        const snapshot = this.serializeCurrentStateSnapshot();
+        window.BubbleCloudPresetIO.downloadObjectAsJson(
+          snapshot,
+          `bubble-cloud-session-${new Date().toISOString().replace(/[\W:]/g, '-')}.json`
+        );
+        this.toast('Snapshot de sessão exportado com sucesso.', 'success');
+      } catch (err) {
+        this.toast(`Falha ao exportar snapshot: ${err.message || err}`, 'error');
+      }
+    },
+
+    async handlePresetImport(event) {
+      const file = event?.target?.files?.[0];
+      if (!file) return;
+      try {
+        const raw = await window.BubbleCloudPresetIO.readJsonFile(file);
+        const topLevelKnown = new Set([
+          'schema_version',
+          'preset_name',
+          'preset_slug',
+          'engine_version',
+          'created_at',
+          'ui_category',
+          'tags',
+          'esp32_safe',
+          'quality_tier',
+          'description',
+          'params',
+          'metadata',
+          'preset',
+        ]);
+        const schemaVersion = Number(raw?.schema_version) || 0;
+        let candidate = raw?.preset ? raw.preset : raw;
+        let legacyMigrated = false;
+        if (!schemaVersion || !candidate.schema_version) {
+          candidate = window.BubbleCloudPresetMigration.migrateLegacyToCanonical(
+            candidate,
+            window.BubbleCloudPresetSchema.SCHEMA_VERSION,
+            this.baseline,
+            window.BubbleCloudPresetSchema.slugify
+          );
+          legacyMigrated = true;
+        } else {
+          candidate = window.BubbleCloudPresetSchema.createCanonicalPreset(candidate);
+        }
+
+        const unknownParams = pickUnknownParams(candidate.params, this.paramDefinitions);
+        const unknownTopLevel = Object.keys(raw || {}).reduce((acc, key) => {
+          if (!topLevelKnown.has(key)) acc[key] = raw[key];
+          return acc;
+        }, {});
+        if (Object.keys(unknownParams).length > 0) {
+          candidate.metadata = {
+            ...(candidate.metadata || {}),
+            extra: {
+              ...((candidate.metadata || {}).extra || {}),
+              unknown_params: unknownParams,
+            },
+          };
+        }
+        if (Object.keys(unknownTopLevel).length > 0) {
+          candidate.metadata = {
+            ...(candidate.metadata || {}),
+            extra: {
+              ...((candidate.metadata || {}).extra || {}),
+              unknown_top_level_fields: unknownTopLevel,
+            },
+          };
+        }
+
+        const { normalized, errors, warnings } = this.normalizeAndValidatePreset(candidate);
+        if (errors.length > 0) {
+          this.toast('Arquivo inválido', 'error');
+          this.toast(errors[0], 'error');
+          return;
+        }
+
+        this.params = { ...normalized.params };
+        this.validateParamRanges();
+        this.loadedPresetReference = window.BubbleCloudPresetSchema.createCanonicalPreset(normalized);
+        this.currentPresetInfo = { ...normalized };
+        this.currentPresetSource = 'imported';
+        this.presetImportInfo = { unknownParams };
+        this.queueParamFlush();
+        this.scheduleDraftPersist();
+        this.hasUnexportedChanges = true;
+        this.isDraft = true;
+        this.toast('Preset importado com sucesso', 'success');
+        if (legacyMigrated) this.toast('Preset legado convertido automaticamente', 'info');
+        if (Object.keys(unknownParams).length > 0 || Object.keys(unknownTopLevel).length > 0) this.toast('Alguns campos desconhecidos foram preservados', 'info');
+        if (warnings.length > 0) this.toast('Valores fora da faixa foram ajustados', 'info');
+      } catch (err) {
+        this.toast('Arquivo inválido', 'error');
+        this.toast(`Falha na importação: ${err.message || err}`, 'error');
+      } finally {
+        event.target.value = '';
       }
     },
 

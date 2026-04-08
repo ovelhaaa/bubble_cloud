@@ -51,17 +51,36 @@ The core engine now models granular read positions using three semantic regions 
 Each region is represented as `min_offset_samples` / `max_offset_samples` in `EngineConfig_t`.
 Spawned voices map from `(bubble class, engine state)` to one of these regions, then choose a deterministic PRNG position inside that range. This keeps presets musically meaningful while preserving exact repeatability for a fixed RNG seed.
 
-## Preset schema notes (canonical v2)
+## Preset schema notes (canonical v3: canonical out, tolerant in)
 
-Presets in `presets/` now use a canonical flat schema centered on:
+The browser UI now exports presets using a single canonical schema (`schema_version: 3`) with explicit metadata:
 
-- semantic region ranges (`attack_region_*`, `body_region_*`, `memory_region_*`)
-- class duration bounds (`micro_*`, `short_*`, `body_*`)
-- burst/density/ducking controls
-- deterministic seed (`rng_seed`)
-- output mix (`mix_dry_gain`, `mix_wet_gain`)
+- `schema_version`, `engine_version`, `created_at`
+- `preset_name`, `preset_slug`, `description`
+- `ui_category`, `tags`
+- `esp32_safe`, `quality_tier`
+- `params`
+- optional `metadata` (including preserved unknown input fields under `metadata.extra`)
 
-For backward compatibility, the offline renderer still translates legacy keys (offset/jitter and `master_*_gain`) to canonical fields when loading older files. Canonical keys take precedence when both are present. See `docs/IMPLEMENTATION_PLAN_V2.md` for the full schema and translation contract.
+Import is tolerant: legacy JSON without `schema_version` (or with old key names like `master_dry_gain` / `master_wet_gain`) is migrated to canonical form before apply. Out-of-range values are clamped, missing fields are filled with safe defaults, and warnings are surfaced in the UI.
+
+### Export actions in UI
+
+- **Export Preset**: saves only the current canonical preset object.
+- **Export Current State**: saves a session snapshot (transport/mode + embedded canonical preset).
+
+### Factory presets (UI)
+
+The UI ships with six musical factory presets:
+
+1. **Glass Bloom** — bright, wide stereo, lively attack, clean sustain.
+2. **Soft Halo** — softer rounded cloud for clean chord work.
+3. **Memory Pad** — darker long sustain with stronger memory/body behavior.
+4. **Shimmer Dust** — sparkling granular spread with jitter + droplets.
+5. **Frozen Attack** — transient-focused, more percussive attack fragmentation.
+6. **Smoky Chorus** — darker pseudo-chorus texture for base layering.
+
+Each preset declares `esp32_safe` and `quality_tier` so heavier configurations are explicitly labeled.
 
 ## New musical controls (spawn-time / bus-rate focused)
 
