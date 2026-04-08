@@ -1,0 +1,41 @@
+name: Build Verify
+
+on:
+  pull_request:
+    paths:
+      - 'core/**'
+      - 'web/**'
+      - 'web/wasm/**'
+      - 'platform/offline/**'
+      - 'Makefile'
+      - '.github/workflows/build-verify.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'core/**'
+      - 'web/**'
+      - 'web/wasm/**'
+      - 'platform/offline/**'
+      - 'Makefile'
+      - '.github/workflows/build-verify.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup emsdk
+        uses: mymindstorm/setup-emsdk@v14
+
+      - name: Build wasm target
+        run: make -B wasm
+
+      - name: Verify wasm outputs
+        run: |
+          test -f web/frontend/bubble_cloud_wasm.js
+
+      - name: Build offline target
+        run: make -B offline
