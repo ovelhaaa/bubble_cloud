@@ -87,10 +87,13 @@ a:hover { color: var(--primary-dark); text-decoration: underline; }
 }
 
 .app-logo {
-  height: 40px;
   width: auto;
   border-radius: 8px;
   box-shadow: var(--shadow-sm);
+}
+
+.header-logo {
+  height: 64px;
 }
 
 .subtitle {
@@ -449,12 +452,7 @@ a:hover { color: var(--primary-dark); text-decoration: underline; }
   flex-direction: column;
   align-items: flex-start;
 }
-.app-logo {
-  height: 48px;
-  width: auto;
-  border-radius: 8px;
-  box-shadow: var(--shadow-sm);
-}
+.card-logo { height: 48px; }
 
 /* How to use */
 .how-to-use ol {
@@ -661,6 +659,15 @@ a:hover { color: var(--primary-dark); text-decoration: underline; }
 .player-buttons {
   display: flex;
   gap: 0.5rem;
+}
+
+.repeat-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text-light);
+  font-size: 0.85rem;
+  font-weight: 600;
 }
 
 .btn-transport {
@@ -894,6 +901,7 @@ a:hover { color: var(--primary-dark); text-decoration: underline; }
 /* Mobile adjustments */
 @media (max-width: 768px) {
   .header-brand h1 { font-size: 1.1rem; }
+  .header-logo { height: 50px; }
   .subtitle { display: none; }
   .save-status span.dot { margin-right: 0; }
   .save-status { font-size: 0; } /* Hide text, keep dot */

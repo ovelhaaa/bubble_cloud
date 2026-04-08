@@ -61,33 +61,33 @@ const PARAM_DEFINITIONS = {
 };
 
 const PARAM_HELP = {
-  noise_floor: { musical: 'Filtra micro ruído na entrada para evitar grãos acidentais.', technical: 'Valor mínimo de energia para considerar sinal útil.' },
-  tracking_thresh: { musical: 'Ajusta sensibilidade geral do detector.', technical: 'Threshold principal para tracking de envelope.' },
-  sustain_thresh: { musical: 'Define quando o motor considera que entrou em sustain.', technical: 'Faixa de histerese para estado de sustentação.' },
-  transient_delta: { musical: 'Controla quão agressivo é detectar ataques.', technical: 'Delta mínimo entre amostras para marcar transiente.' },
-  duck_burst_level: { musical: 'Quanto o burst inicial derruba o nível base.', technical: 'Profundidade do duck durante transientes.' },
-  duck_attack_coef: { musical: 'Velocidade de entrada do duck.', technical: 'Coeficiente exponencial de ataque do duck.' },
-  duck_release_coef: { musical: 'Tempo para recuperar após transiente.', technical: 'Coeficiente exponencial de release do duck.' },
-  burst_duration_ticks: { musical: 'Quanto tempo dura o modo burst.', technical: 'Contador de ticks após detecção de ataque.' },
-  burst_immediate_count: { musical: 'Número de grãos imediatos no ataque.', technical: 'Vozes disparadas instantaneamente em transiente.' },
-  density_burst: { musical: 'Densidade de grãos no ataque.', technical: 'Taxa de spawn durante estado burst.' },
-  density_sustain: { musical: 'Densidade de grãos no corpo/sustain.', technical: 'Taxa de spawn no estado sustentado.' },
-  density_decay: { musical: 'Decaimento da densidade ao sair de sustain.', technical: 'Redução por bloco para voltar ao repouso.' },
-  attack_region_min_offset_samples: { musical: 'Início da leitura para material recente.', technical: 'Offset mínimo em samples da região de ataque.' },
-  attack_region_max_offset_samples: { musical: 'Fim da janela de ataque.', technical: 'Offset máximo em samples da região de ataque.' },
-  body_region_min_offset_samples: { musical: 'Início da leitura da região de corpo.', technical: 'Offset mínimo da janela de sustain.' },
-  body_region_max_offset_samples: { musical: 'Fim da leitura da região de corpo.', technical: 'Offset máximo da janela de sustain.' },
-  memory_region_min_offset_samples: { musical: 'Começo da memória longa.', technical: 'Offset mínimo da região histórica.' },
-  memory_region_max_offset_samples: { musical: 'Limite da memória longa.', technical: 'Offset máximo da região histórica.' },
-  micro_duration_ms_min: { musical: 'Menor duração de micro bolhas.', technical: 'Duração mínima (ms) da classe micro.' },
-  micro_duration_ms_max: { musical: 'Maior duração de micro bolhas.', technical: 'Duração máxima (ms) da classe micro.' },
-  short_duration_ms_min: { musical: 'Menor duração de bolhas curtas.', technical: 'Duração mínima (ms) da classe short.' },
-  short_duration_ms_max: { musical: 'Maior duração de bolhas curtas.', technical: 'Duração máxima (ms) da classe short.' },
-  body_duration_ms_min: { musical: 'Menor duração das bolhas de corpo.', technical: 'Duração mínima (ms) da classe body.' },
-  body_duration_ms_max: { musical: 'Maior duração das bolhas de corpo.', technical: 'Duração máxima (ms) da classe body.' },
-  rng_seed: { musical: 'Troca o “caráter” aleatório do preset.', technical: 'Seed do gerador pseudoaleatório do DSP.' },
-  mix_dry_gain: { musical: 'Volume do sinal limpo.', technical: 'Ganho linear aplicado ao dry path.' },
-  mix_wet_gain: { musical: 'Volume do sinal processado.', technical: 'Ganho linear aplicado ao wet path.' },
+  noise_floor: { musical: 'Define o piso de ruído ignorado pelo detector.', technical: 'Energia mínima para considerar sinal válido.', increase: 'o efeito atua já com sinais mais fracos.', decrease: 'o efeito só atua em sinais mais fortes.' },
+  tracking_thresh: { musical: 'Ajusta a sensibilidade principal do tracking.', technical: 'Threshold de entrada do detector de envelope.', increase: 'exige sinal mais forte para reagir.', decrease: 'reage mais cedo a pequenas variações.' },
+  sustain_thresh: { musical: 'Controla quando o estado vira sustain.', technical: 'Limite da histerese para manter sustentação.', increase: 'entra em sustain com mais facilidade.', decrease: 'fica mais tempo em tracking/transiente.' },
+  transient_delta: { musical: 'Regula agressividade na captura de ataque.', technical: 'Delta mínimo entre amostras para transiente.', increase: 'detecta menos ataques (mais seletivo).', decrease: 'detecta mais ataques (mais sensível).' },
+  duck_burst_level: { musical: 'Quantidade de duck no início do burst.', technical: 'Profundidade de redução durante transientes.', increase: 'o sinal base abaixa mais no ataque.', decrease: 'o sinal base quase não abaixa no ataque.' },
+  duck_attack_coef: { musical: 'Velocidade de entrada do duck.', technical: 'Coeficiente exponencial de ataque do duck.', increase: 'duck entra mais suave/lento.', decrease: 'duck entra mais rápido.' },
+  duck_release_coef: { musical: 'Tempo de recuperação após o ataque.', technical: 'Coeficiente exponencial de release do duck.', increase: 'recupera mais devagar.', decrease: 'recupera mais rápido.' },
+  burst_duration_ticks: { musical: 'Duração do modo burst após ataque.', technical: 'Número de ticks mantidos em burst.', increase: 'burst dura mais tempo.', decrease: 'burst termina mais cedo.' },
+  burst_immediate_count: { musical: 'Quantidade de grãos imediatos no ataque.', technical: 'Número de vozes disparadas instantaneamente.', increase: 'ataque mais cheio e denso.', decrease: 'ataque mais leve.' },
+  density_burst: { musical: 'Densidade durante a fase de burst.', technical: 'Taxa de spawn no estado burst.', increase: 'mais grãos por segundo no ataque.', decrease: 'menos grãos por segundo no ataque.' },
+  density_sustain: { musical: 'Densidade no corpo/sustain.', technical: 'Taxa de spawn no estado sustentado.', increase: 'textura contínua mais cheia.', decrease: 'textura de sustain mais espaçada.' },
+  density_decay: { musical: 'Velocidade de queda da densidade.', technical: 'Redução por bloco ao sair do sustain.', increase: 'a densidade cai mais rápido.', decrease: 'a densidade cai mais lentamente.' },
+  attack_region_min_offset_samples: { musical: 'Início da janela de leitura de ataque.', technical: 'Offset mínimo em samples da região attack.', increase: 'lê material um pouco mais antigo.', decrease: 'lê material mais recente.' },
+  attack_region_max_offset_samples: { musical: 'Fim da janela de leitura de ataque.', technical: 'Offset máximo em samples da região attack.', increase: 'amplia alcance temporal da região.', decrease: 'encurta alcance temporal da região.' },
+  body_region_min_offset_samples: { musical: 'Início da janela de corpo.', technical: 'Offset mínimo em samples da região body.', increase: 'empurra leitura para trás no tempo.', decrease: 'aproxima leitura do presente.' },
+  body_region_max_offset_samples: { musical: 'Fim da janela de corpo.', technical: 'Offset máximo em samples da região body.', increase: 'inclui material mais antigo.', decrease: 'foca em material menos antigo.' },
+  memory_region_min_offset_samples: { musical: 'Começo da janela de memória longa.', technical: 'Offset mínimo em samples da região memory.', increase: 'remove parte da memória mais recente.', decrease: 'traz memória mais recente para a região.' },
+  memory_region_max_offset_samples: { musical: 'Limite máximo da memória longa.', technical: 'Offset máximo em samples da região memory.', increase: 'acessa memória mais distante.', decrease: 'restringe memória mais distante.' },
+  micro_duration_ms_min: { musical: 'Menor duração das microbolhas.', technical: 'Duração mínima (ms) da classe micro.', increase: 'microgrãos ficam menos curtos.', decrease: 'microgrãos ficam mais curtinhos.' },
+  micro_duration_ms_max: { musical: 'Maior duração das microbolhas.', technical: 'Duração máxima (ms) da classe micro.', increase: 'permite microgrãos mais longos.', decrease: 'limita microgrãos mais curtos.' },
+  short_duration_ms_min: { musical: 'Menor duração dos grãos curtos.', technical: 'Duração mínima (ms) da classe short.', increase: 'grãos short começam mais longos.', decrease: 'grãos short podem ser mais curtos.' },
+  short_duration_ms_max: { musical: 'Maior duração dos grãos curtos.', technical: 'Duração máxima (ms) da classe short.', increase: 'grãos short podem alongar mais.', decrease: 'grãos short ficam mais contidos.' },
+  body_duration_ms_min: { musical: 'Menor duração dos grãos de corpo.', technical: 'Duração mínima (ms) da classe body.', increase: 'camada body fica menos curta.', decrease: 'camada body fica mais curta.' },
+  body_duration_ms_max: { musical: 'Maior duração dos grãos de corpo.', technical: 'Duração máxima (ms) da classe body.', increase: 'camada body pode sustentar mais.', decrease: 'camada body sustenta menos.' },
+  rng_seed: { musical: 'Troca o caráter randômico do preset.', technical: 'Seed do gerador pseudoaleatório.', increase: 'gera outra distribuição de escolhas.', decrease: 'gera uma distribuição diferente também.' },
+  mix_dry_gain: { musical: 'Volume do sinal original.', technical: 'Ganho linear no caminho dry.', increase: 'mais som limpo na saída.', decrease: 'menos som limpo na saída.' },
+  mix_wet_gain: { musical: 'Volume do sinal processado.', technical: 'Ganho linear no caminho wet.', increase: 'mais efeito na mistura final.', decrease: 'menos efeito na mistura final.' },
 };
 
 const PARAMETER_GROUPS = [
@@ -163,6 +163,7 @@ document.addEventListener('alpine:init', () => {
     audioError: false,
 
     previewMode: 'file',
+    repeatContinuous: false,
     isPlaying: false,
     dragOver: false,
 
@@ -519,6 +520,10 @@ document.addEventListener('alpine:init', () => {
       source.onended = () => {
         if (!this.fileSourceNode) return;
         this.fileSourceNode = null;
+        if (this.repeatContinuous && this.previewMode === 'file' && this.audioBuffer) {
+          this.startFilePlayback(0);
+          return;
+        }
         this.isPlaying = false;
         this.stopTransportTimer();
         this.pausedAt = 0;
