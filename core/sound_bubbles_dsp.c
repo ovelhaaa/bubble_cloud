@@ -18,6 +18,13 @@
 #define CLASS_GAIN_MICRO_DEFAULT   1.15f
 #define CLASS_GAIN_SHORT_DEFAULT   0.96f
 #define CLASS_GAIN_SUSTAIN_DEFAULT 0.78f
+#define DROPLET_OCCUPANCY_DISABLE 0.75f
+#define DROPLET_OCCUPANCY_REDUCE 0.50f
+#define SMART_START_ENERGY_RADIUS 3
+
+#if !defined(BUBBLES_QUALITY_ESP32_SAFE) && !defined(BUBBLES_QUALITY_WASM_FULL)
+#define BUBBLES_QUALITY_STANDARD 1
+#endif
 
 // --- Internal LUTs ---
 static float WindowLUT_Hann[1024];
@@ -43,10 +50,16 @@ static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_
 static void Scheduler_SpawnImmediateBurst(SoundBubblesEngine_t* engine);
 static void Scheduler_RunTick(SoundBubblesEngine_t* engine);
 static int Voice_Allocate(SoundBubblesEngine_t* engine);
-static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleClass_t b_class);
+static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleClass_t b_class, int generation);
 static float LookupWindow(float phase, WindowType_t type);
-static const ReadRegionConfig_t* ResolveReadRegion(const SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state);
+static const ReadRegionConfig_t* ResolveReadRegion(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state);
+static int ResolveReadRegionId(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state);
 static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state);
+static int32_t RefineReadOffsetSmartStart(const SoundBubblesEngine_t* engine, int32_t read_offset_samples, int32_t range);
+static float EnvelopeVariantGain(float phase, uint8_t variant, int family);
+static float SoftClip(float x, float amount);
+static float ProcessSustainDiffusionSample(SoundBubblesEngine_t* engine, float in, float* delay_line, int delay_samples);
+static void ApplyQualityTierDefaults(EngineConfig_t* cfg);
 static inline float Clamp01(float x);
 static inline float Clamp(float x, float lo, float hi);
 static inline float Lerp(float a, float b, float t);
@@ -59,6 +72,7 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
 
     engine->delay_buffer = delay_buffer_memory;
     engine->config = *initial_config;
+    ApplyQualityTierDefaults(&engine->config);
     SoundBubbles_SetRngSeed(engine, engine->config.rng_seed);
 
     engine->write_ptr = 0;
@@ -113,11 +127,17 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     engine->wet_presence_lpf.b0 = 0.2f;
     engine->wet_presence_lpf.a1 = 0.8f;
     engine->wet_presence_lpf.z1 = 0.0f;
+    engine->sustain_diffusion_write_idx = 0;
+    for (int i = 0; i < BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY; i++) {
+        engine->sustain_diffusion_delay_l[i] = 0.0f;
+        engine->sustain_diffusion_delay_r[i] = 0.0f;
+    }
 }
 
 void SoundBubbles_UpdateConfig(SoundBubblesEngine_t* engine, const EngineConfig_t* new_config) {
     bool rng_seed_changed = (engine->config.rng_seed != new_config->rng_seed);
     engine->config = *new_config;
+    ApplyQualityTierDefaults(&engine->config);
     if (rng_seed_changed) {
         SoundBubbles_SetRngSeed(engine, engine->config.rng_seed);
     }
@@ -152,9 +172,9 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
         engine->delay_buffer[engine->write_ptr] = (int16_t)(clamped_sample * 32767.0f);
 
         // Zero audio busses
-        float bus_attack = 0.0f;
-        float bus_flat = 0.0f;
-        float bus_sustain = 0.0f;
+        float bus_attack_l = 0.0f, bus_attack_r = 0.0f;
+        float bus_flat_l = 0.0f, bus_flat_r = 0.0f;
+        float bus_sustain_l = 0.0f, bus_sustain_r = 0.0f;
 
         // Process active voices
         for (int v_idx = 0; v_idx < BUBBLES_MAX_VOICES; v_idx++) {
@@ -180,8 +200,8 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
                 continue;
             }
 
-            // Advance read_ptr strictly at 1.0x playback
-            v->read_ptr_float += 1.0f;
+            // Advance read_ptr with optional spawn-time attack jittered rate.
+            v->read_ptr_float += v->rate;
             v->read_ptr_float = WrapFloatIndex(v->read_ptr_float, (float)BUBBLES_BUFFER_SIZE_SAMPLES);
 
             // Directional write-head guard
@@ -193,21 +213,47 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
             // Interpolate and apply window
             float sample_val = LinearInterpolate(engine->delay_buffer, v->read_ptr_float);
             float window_val = LookupWindow(v->phase, engine->config.class_configs[v->bubble_class].window_type);
-            float voice_out = sample_val * window_val * v->amp;
+            float env_var = EnvelopeVariantGain(v->phase, v->envelope_variant, engine->config.envelope_family);
+            float voice_out = sample_val * window_val * env_var * v->amp * v->gain;
 
             // Accumulate into designated bus
             if (v->bubble_class == BUBBLE_CLASS_MICRO_ATTACK) {
-                bus_attack += voice_out;
+                bus_attack_l += voice_out * v->pan_l;
+                bus_attack_r += voice_out * v->pan_r;
             } else if (v->bubble_class == BUBBLE_CLASS_SHORT_INTERMEDIATE) {
-                bus_flat += voice_out;
+                bus_flat_l += voice_out * v->pan_l;
+                bus_flat_r += voice_out * v->pan_r;
             } else {
-                bus_sustain += voice_out;
+                bus_sustain_l += voice_out * v->pan_l;
+                bus_sustain_r += voice_out * v->pan_r;
             }
         }
 
         // Bus Filters
-        float attack_filtered = Filter1Pole_ProcessHPF(&engine->attack_hpf, bus_attack);
-        float sustain_filtered = Filter1Pole_ProcessLPF(&engine->sustain_lpf, bus_sustain);
+        float attack_filtered_l = Filter1Pole_ProcessHPF(&engine->attack_hpf, bus_attack_l);
+        float attack_filtered_r = Filter1Pole_ProcessHPF(&engine->attack_hpf, bus_attack_r);
+        float sustain_filtered_l = Filter1Pole_ProcessLPF(&engine->sustain_lpf, bus_sustain_l);
+        float sustain_filtered_r = Filter1Pole_ProcessLPF(&engine->sustain_lpf, bus_sustain_r);
+
+        if (engine->config.sustain_diffusion_enable) {
+            int delay_samples = engine->config.sustain_diffusion_delay;
+            if (delay_samples < 2) delay_samples = 2;
+            if (delay_samples >= BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY) {
+                delay_samples = BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY - 1;
+            }
+            int stages = engine->config.sustain_diffusion_stages;
+            if (stages < 1) stages = 1;
+            if (stages > 2) stages = 2;
+
+            float d_l = sustain_filtered_l;
+            float d_r = sustain_filtered_r;
+            for (int st = 0; st < stages; st++) {
+                d_l = ProcessSustainDiffusionSample(engine, d_l, engine->sustain_diffusion_delay_l, delay_samples);
+                d_r = ProcessSustainDiffusionSample(engine, d_r, engine->sustain_diffusion_delay_r, delay_samples);
+            }
+            sustain_filtered_l = Lerp(sustain_filtered_l, d_l, Clamp01(engine->config.sustain_diffusion_amount));
+            sustain_filtered_r = Lerp(sustain_filtered_r, d_r, Clamp01(engine->config.sustain_diffusion_amount));
+        }
 
         // Final Output Mix (DSP core owns dry/wet policy)
         float attack_tilt = 1.0f;
@@ -222,15 +268,33 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
             sustain_tilt = 1.06f;
         }
 
-        float wet_sum =
-            (attack_filtered * attack_tilt * engine->class_gain_micro) +
-            (bus_flat * engine->class_gain_short) +
-            (sustain_filtered * sustain_tilt * engine->class_gain_sustain);
-        float wet_mix = wet_sum * engine->smoothed_ducking_gain * engine->wet_presence_smoothed * engine->master_wet_gain;
+        float wet_sum_l =
+            (attack_filtered_l * attack_tilt * engine->class_gain_micro) +
+            (bus_flat_l * engine->class_gain_short) +
+            (sustain_filtered_l * sustain_tilt * engine->class_gain_sustain);
+        float wet_sum_r =
+            (attack_filtered_r * attack_tilt * engine->class_gain_micro) +
+            (bus_flat_r * engine->class_gain_short) +
+            (sustain_filtered_r * sustain_tilt * engine->class_gain_sustain);
+        float wet_drive = fmaxf(0.1f, engine->config.wet_drive);
+        float wet_clip_amt = Clamp01(engine->config.wet_clip_amount);
+        float wet_trim = fmaxf(0.0f, engine->config.wet_output_trim);
+        wet_sum_l = SoftClip(wet_sum_l * wet_drive, wet_clip_amt) * wet_trim;
+        wet_sum_r = SoftClip(wet_sum_r * wet_drive, wet_clip_amt) * wet_trim;
+        float wet_gain = engine->smoothed_ducking_gain * engine->wet_presence_smoothed * engine->master_wet_gain;
+        float wet_mix_l = wet_sum_l * wet_gain;
+        float wet_mix_r = wet_sum_r * wet_gain;
         float dry_mix = dry_sample * engine->master_dry_gain;
 
-        out_left[i] = dry_mix + wet_mix;
-        out_right[i] = dry_mix + wet_mix;
+        out_left[i] = dry_mix + wet_mix_l;
+        out_right[i] = dry_mix + wet_mix_r;
+
+        if (engine->config.sustain_diffusion_enable) {
+            engine->sustain_diffusion_write_idx++;
+            if (engine->sustain_diffusion_write_idx >= BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY) {
+                engine->sustain_diffusion_write_idx = 0;
+            }
+        }
 
         // Advance write pointer
         engine->write_ptr = WrapIntIndex(engine->write_ptr + 1, BUBBLES_BUFFER_SIZE_SAMPLES);
@@ -424,7 +488,7 @@ static void Scheduler_SpawnImmediateBurst(SoundBubblesEngine_t* engine) {
     for (int i = 0; i < burst_count; i++) {
         int v_idx = Voice_Allocate(engine);
         if (v_idx >= 0) {
-            Voice_SpawnInit(engine, v_idx, BUBBLE_CLASS_MICRO_ATTACK);
+            Voice_SpawnInit(engine, v_idx, BUBBLE_CLASS_MICRO_ATTACK, 0);
             engine->metrics_tick_spawn_count++;
         }
     }
@@ -465,7 +529,7 @@ static void Scheduler_RunTick(SoundBubblesEngine_t* engine) {
 
         int voice_idx = Voice_Allocate(engine);
         if (voice_idx >= 0) {
-            Voice_SpawnInit(engine, voice_idx, selected_class);
+            Voice_SpawnInit(engine, voice_idx, selected_class, 0);
             engine->metrics_tick_spawn_count++;
         }
 
@@ -552,16 +616,23 @@ static int Voice_Allocate(SoundBubblesEngine_t* engine) {
     return -1;
 }
 
-static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleClass_t b_class) {
+static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleClass_t b_class, int generation) {
     BubbleVoice_t* v = &engine->voices[voice_idx];
     BubbleClassConfig_t* class_cfg = &engine->config.class_configs[b_class];
 
     v->state = VOICE_STATE_PLAYING;
     v->bubble_class = b_class;
+    v->generation = (uint8_t)((generation <= 0) ? 0 : 1);
     v->phase = 0.0f;
     v->amp = 1.0f;
+    v->rate = 1.0f;
+    v->gain = 1.0f;
 
     float duration_ms = class_cfg->duration_ms_min + (RandomFloat01(engine) * (class_cfg->duration_ms_max - class_cfg->duration_ms_min));
+    if (v->generation == 1) {
+        duration_ms *= Clamp(engine->config.droplet_length_scale, 0.2f, 1.0f);
+        v->gain *= Clamp(engine->config.droplet_gain, 0.0f, 1.0f);
+    }
     float duration_samples = duration_ms * ((float)BUBBLES_SAMPLE_RATE / 1000.0f);
 
     // Defensively clamp duration_samples to avoid div-by-zero or extremely rapid phase_inc
@@ -571,27 +642,92 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     v->phase_inc = 1.0f / duration_samples;
 
     int32_t read_offset_samples = ChooseReadOffsetSamples(engine, b_class, engine->engine_state);
+    if (engine->config.smart_start_enable) {
+        read_offset_samples = RefineReadOffsetSmartStart(engine, read_offset_samples, engine->config.smart_start_range);
+    }
     v->read_ptr_float = (float)WrapIntIndex(engine->write_ptr - read_offset_samples, BUBBLES_BUFFER_SIZE_SAMPLES);
+
+    float spread = (b_class == BUBBLE_CLASS_MICRO_ATTACK) ? engine->config.attack_pan_spread : engine->config.sustain_pan_spread;
+    float pan = (RandomFloat01(engine) * 2.0f - 1.0f) * Clamp01(spread) * Clamp01(engine->config.stereo_width);
+    float pan_pos = Clamp((pan + 1.0f) * 0.5f, 0.0f, 1.0f);
+    float theta = pan_pos * (0.5f * M_PI);
+    v->pan_l = cosf(theta);
+    v->pan_r = sinf(theta);
+
+    int env_count = (engine->config.envelope_variation > 0.001f) ? 3 : 1;
+    v->envelope_variant = (uint8_t)(NextRandomU32(engine) % (uint32_t)env_count);
+
+    int tone_count = (engine->config.tone_variation > 0.001f) ? 3 : 1;
+    v->tone_profile = (uint8_t)(NextRandomU32(engine) % (uint32_t)tone_count);
+    if (v->tone_profile == 0) {
+        v->gain *= (b_class == BUBBLE_CLASS_MICRO_ATTACK) ? Clamp(engine->config.attack_brightness, 0.3f, 1.8f) : 1.0f;
+    } else if (v->tone_profile == 2) {
+        v->gain *= (b_class == BUBBLE_CLASS_SUSTAIN_BODY) ? Clamp(1.0f - engine->config.sustain_darkness, 0.2f, 1.0f) : 0.92f;
+    }
+
+    int region_id = ResolveReadRegionId(engine, b_class, engine->engine_state);
+    v->source_region_id = (uint8_t)region_id;
+    if (region_id == 2) {
+        v->gain *= Clamp(1.0f - 0.6f * engine->config.memory_darkening, 0.2f, 1.0f);
+    }
+
+    if (engine->config.attack_rate_jitter && b_class == BUBBLE_CLASS_MICRO_ATTACK) {
+        float d = Clamp(engine->config.attack_rate_jitter_depth, 0.0f, 0.2f);
+        float j = (RandomFloat01(engine) * 2.0f - 1.0f) * d;
+        v->rate = 1.0f + j;
+    }
+
+    // Optional hard-limited 2nd-generation droplet (single child, no recursive chain).
+    if (engine->config.droplet_enable && v->generation == 0 && b_class == BUBBLE_CLASS_MICRO_ATTACK) {
+        int active = CountActiveVoices(engine);
+        float occupancy = (float)active / (float)BUBBLES_MAX_VOICES;
+        if (occupancy < DROPLET_OCCUPANCY_DISABLE) {
+            float prob = Clamp01(engine->config.droplet_probability);
+            if (occupancy > DROPLET_OCCUPANCY_REDUCE) {
+                prob *= 0.35f;
+            }
+            if (RandomFloat01(engine) < prob) {
+                int child_idx = Voice_Allocate(engine);
+                if (child_idx >= 0 && child_idx != voice_idx) {
+                    Voice_SpawnInit(engine, child_idx, BUBBLE_CLASS_SHORT_INTERMEDIATE, 1);
+                    engine->metrics_tick_spawn_count++;
+                }
+            }
+        }
+    }
 }
 
-static const ReadRegionConfig_t* ResolveReadRegion(const SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state) {
+static const ReadRegionConfig_t* ResolveReadRegion(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state) {
     // Deterministic map from "what bubble" + "what phrase phase" => temporal memory slice.
     // Attack-oriented contexts read from attack/body. Tail-oriented contexts read from memory.
     switch (bubble_class) {
         case BUBBLE_CLASS_MICRO_ATTACK:
             return &engine->config.attack_region;
         case BUBBLE_CLASS_SHORT_INTERMEDIATE:
+        {
+            float mem_bias = Clamp01(engine->config.memory_mix);
             if (engine_state == ENGINE_STATE_SUSTAIN_BODY || engine_state == ENGINE_STATE_SPARSE_DECAY) {
-                return &engine->config.memory_region;
+                mem_bias = Clamp01(mem_bias + engine->config.memory_pull * 0.35f);
             }
-            return &engine->config.body_region;
+            return (RandomFloat01(engine) < mem_bias) ? &engine->config.memory_region : &engine->config.body_region;
+        }
         case BUBBLE_CLASS_SUSTAIN_BODY:
         default:
+        {
+            float mem_bias = Clamp01(engine->config.memory_mix + engine->config.memory_pull);
             if (engine_state == ENGINE_STATE_TRANSIENT_BURST || engine_state == ENGINE_STATE_ATTACK_ONGOING) {
-                return &engine->config.body_region;
+                mem_bias *= 0.35f;
             }
-            return &engine->config.memory_region;
+            return (RandomFloat01(engine) < mem_bias) ? &engine->config.memory_region : &engine->config.body_region;
+        }
     }
+}
+
+static int ResolveReadRegionId(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state) {
+    const ReadRegionConfig_t* region = ResolveReadRegion(engine, bubble_class, engine_state);
+    if (region == &engine->config.attack_region) return 0;
+    if (region == &engine->config.body_region) return 1;
+    return 2;
 }
 
 static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state) {
@@ -619,6 +755,39 @@ static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, BubbleClass
     uint32_t rnd = NextRandomU32(engine);
     uint32_t bucket = (uint32_t)(span + 1);
     return min_offset + (int32_t)(rnd % bucket);
+}
+
+static int32_t RefineReadOffsetSmartStart(const SoundBubblesEngine_t* engine, int32_t read_offset_samples, int32_t range) {
+    int32_t best = read_offset_samples;
+    int32_t scan = range;
+    if (scan < 1) return best;
+    if (scan > 64) scan = 64;
+
+    float best_energy = 1.0e9f;
+    for (int32_t delta = -scan; delta <= scan; delta++) {
+        int32_t candidate = read_offset_samples + delta;
+        if (candidate < BUBBLES_GUARD_ZONE_SAMPLES) continue;
+        if (candidate >= (BUBBLES_BUFFER_SIZE_SAMPLES - BUBBLES_GUARD_ZONE_SAMPLES)) continue;
+        int32_t idx = WrapIntIndex(engine->write_ptr - candidate, BUBBLES_BUFFER_SIZE_SAMPLES);
+        int32_t prev = WrapIntIndex(idx - 1, BUBBLES_BUFFER_SIZE_SAMPLES);
+        float a = (float)engine->delay_buffer[prev];
+        float b = (float)engine->delay_buffer[idx];
+        if ((a <= 0.0f && b >= 0.0f) || (a >= 0.0f && b <= 0.0f)) {
+            return candidate;
+        }
+
+        float energy = 0.0f;
+        for (int k = -SMART_START_ENERGY_RADIUS; k <= SMART_START_ENERGY_RADIUS; k++) {
+            int32_t eidx = WrapIntIndex(idx + k, BUBBLES_BUFFER_SIZE_SAMPLES);
+            float s = (float)engine->delay_buffer[eidx];
+            energy += s * s;
+        }
+        if (energy < best_energy) {
+            best_energy = energy;
+            best = candidate;
+        }
+    }
+    return best;
 }
 
 // --- Mathematics and Filter Helpers ---
@@ -738,6 +907,56 @@ static inline float Filter1Pole_ProcessLPF(Filter1Pole_t* f, float input) {
 static inline float Filter1Pole_ProcessHPF(Filter1Pole_t* f, float input) {
     float lpf_out = Filter1Pole_ProcessLPF(f, input);
     return input - lpf_out;
+}
+
+static float EnvelopeVariantGain(float phase, uint8_t variant, int family) {
+    float p = Clamp01(phase);
+    if (variant == 0) return 1.0f;
+    if (family == ENVELOPE_FAMILY_SOFT) {
+        return (variant == 1) ? (0.85f + 0.15f * sinf(M_PI * p)) : (0.75f + 0.25f * (1.0f - p));
+    }
+    return (variant == 1) ? (0.92f + 0.08f * (1.0f - p)) : (0.85f + 0.15f * p);
+}
+
+static float SoftClip(float x, float amount) {
+    float a = Clamp01(amount);
+    float cubic = x - 0.3333333f * x * x * x;
+    return Lerp(x, cubic, a);
+}
+
+static float ProcessSustainDiffusionSample(SoundBubblesEngine_t* engine, float in, float* delay_line, int delay_samples) {
+    int read_idx = engine->sustain_diffusion_write_idx - delay_samples;
+    if (read_idx < 0) read_idx += BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY;
+    float delayed = delay_line[read_idx];
+    float g = Clamp(engine->config.sustain_diffusion_feedback, 0.0f, 0.95f);
+    float y = -g * in + delayed;
+    delay_line[engine->sustain_diffusion_write_idx] = in + g * y;
+    return y;
+}
+
+static void ApplyQualityTierDefaults(EngineConfig_t* cfg) {
+    if (cfg->stereo_width == 0.0f) cfg->stereo_width = 0.7f;
+    if (cfg->attack_pan_spread == 0.0f) cfg->attack_pan_spread = 0.85f;
+    if (cfg->sustain_pan_spread == 0.0f) cfg->sustain_pan_spread = 0.45f;
+    if (cfg->smart_start_range == 0) cfg->smart_start_range = 12;
+    if (cfg->wet_drive <= 0.0f) cfg->wet_drive = 1.0f;
+    if (cfg->wet_output_trim <= 0.0f) cfg->wet_output_trim = 1.0f;
+    if (cfg->sustain_diffusion_stages == 0) cfg->sustain_diffusion_stages = 1;
+    if (cfg->sustain_diffusion_delay == 0) cfg->sustain_diffusion_delay = 18;
+    if (cfg->droplet_length_scale <= 0.0f) cfg->droplet_length_scale = 0.6f;
+    if (cfg->attack_brightness <= 0.0f) cfg->attack_brightness = 1.15f;
+
+#if defined(BUBBLES_QUALITY_ESP32_SAFE)
+    cfg->sustain_diffusion_stages = 1;
+    cfg->droplet_enable = 0;
+    cfg->attack_rate_jitter_depth = fminf(cfg->attack_rate_jitter_depth, 0.03f);
+    cfg->smart_start_range = (cfg->smart_start_range > 16) ? 16 : cfg->smart_start_range;
+#elif defined(BUBBLES_QUALITY_WASM_FULL)
+    // Keep caller values; wasm tier can run all optional layers.
+#else
+    cfg->sustain_diffusion_stages = (cfg->sustain_diffusion_stages > 2) ? 2 : cfg->sustain_diffusion_stages;
+    cfg->smart_start_range = (cfg->smart_start_range > 32) ? 32 : cfg->smart_start_range;
+#endif
 }
 
 static float LookupWindow(float phase, WindowType_t type) {

@@ -63,6 +63,18 @@ Presets in `presets/` now use a canonical flat schema centered on:
 
 For backward compatibility, the offline renderer still translates legacy keys (offset/jitter and `master_*_gain`) to canonical fields when loading older files. Canonical keys take precedence when both are present. See `docs/IMPLEMENTATION_PLAN_V2.md` for the full schema and translation contract.
 
+## New musical controls (spawn-time / bus-rate focused)
+
+The core DSP now includes optional low-cost musical extensions designed for ESP32-safe execution:
+
+- **Stereo**: `stereo_width`, `attack_pan_spread`, `sustain_pan_spread`
+- **Texture**: `smart_start_enable`, `smart_start_range`, `envelope_variation`, `envelope_family`, droplet and attack-rate jitter controls
+- **Diffusion**: wet bus soft-clip (`wet_drive`, `wet_clip_amount`, `wet_output_trim`) and sustain all-pass diffusion controls
+- **Tone**: `tone_variation`, `attack_brightness`, `sustain_darkness`
+- **Memory**: `memory_mix`, `memory_pull`, `memory_darkening`
+
+All options remain deterministic for fixed `rng_seed`, avoid dynamic allocation in audio loops, and are implemented in the shared C core used by both WASM/browser and embedded targets.
+
 ## GitHub Actions & Workflows
 
 The project contains several GitHub Actions workflows with separated responsibilities:

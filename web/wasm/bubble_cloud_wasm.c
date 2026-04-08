@@ -37,7 +37,34 @@ enum {
     PARAM_ID_BODY_DURATION_MS_MAX = 23,
     PARAM_ID_RNG_SEED = 24,
     PARAM_ID_MIX_DRY_GAIN = 25,
-    PARAM_ID_MIX_WET_GAIN = 26
+    PARAM_ID_MIX_WET_GAIN = 26,
+    PARAM_ID_STEREO_WIDTH = 27,
+    PARAM_ID_ATTACK_PAN_SPREAD = 28,
+    PARAM_ID_SUSTAIN_PAN_SPREAD = 29,
+    PARAM_ID_SMART_START_ENABLE = 30,
+    PARAM_ID_SMART_START_RANGE = 31,
+    PARAM_ID_ENVELOPE_VARIATION = 32,
+    PARAM_ID_ENVELOPE_FAMILY = 33,
+    PARAM_ID_WET_DRIVE = 34,
+    PARAM_ID_WET_CLIP_AMOUNT = 35,
+    PARAM_ID_WET_OUTPUT_TRIM = 36,
+    PARAM_ID_SUSTAIN_DIFFUSION_ENABLE = 37,
+    PARAM_ID_SUSTAIN_DIFFUSION_AMOUNT = 38,
+    PARAM_ID_SUSTAIN_DIFFUSION_STAGES = 39,
+    PARAM_ID_SUSTAIN_DIFFUSION_DELAY = 40,
+    PARAM_ID_SUSTAIN_DIFFUSION_FEEDBACK = 41,
+    PARAM_ID_DROPLET_ENABLE = 42,
+    PARAM_ID_DROPLET_PROBABILITY = 43,
+    PARAM_ID_DROPLET_GAIN = 44,
+    PARAM_ID_DROPLET_LENGTH_SCALE = 45,
+    PARAM_ID_MEMORY_MIX = 46,
+    PARAM_ID_MEMORY_PULL = 47,
+    PARAM_ID_MEMORY_DARKENING = 48,
+    PARAM_ID_TONE_VARIATION = 49,
+    PARAM_ID_ATTACK_BRIGHTNESS = 50,
+    PARAM_ID_SUSTAIN_DARKNESS = 51,
+    PARAM_ID_ATTACK_RATE_JITTER = 52,
+    PARAM_ID_ATTACK_RATE_JITTER_DEPTH = 53
 };
 
 EMSCRIPTEN_KEEPALIVE
@@ -68,6 +95,34 @@ void wasm_init() {
     current_config.memory_region.min_offset_samples = 11025;
     current_config.memory_region.max_offset_samples = 39690;
     current_config.rng_seed = 1u;
+
+    current_config.stereo_width = 0.7f;
+    current_config.attack_pan_spread = 0.85f;
+    current_config.sustain_pan_spread = 0.45f;
+    current_config.smart_start_enable = 1;
+    current_config.smart_start_range = 12;
+    current_config.envelope_variation = 0.35f;
+    current_config.envelope_family = ENVELOPE_FAMILY_CLASSIC;
+    current_config.wet_drive = 1.0f;
+    current_config.wet_clip_amount = 0.2f;
+    current_config.wet_output_trim = 1.0f;
+    current_config.sustain_diffusion_enable = 0;
+    current_config.sustain_diffusion_amount = 0.35f;
+    current_config.sustain_diffusion_stages = 1;
+    current_config.sustain_diffusion_delay = 18;
+    current_config.sustain_diffusion_feedback = 0.45f;
+    current_config.droplet_enable = 0;
+    current_config.droplet_probability = 0.12f;
+    current_config.droplet_gain = 0.5f;
+    current_config.droplet_length_scale = 0.6f;
+    current_config.memory_mix = 0.35f;
+    current_config.memory_pull = 0.25f;
+    current_config.memory_darkening = 0.2f;
+    current_config.tone_variation = 0.4f;
+    current_config.attack_brightness = 1.15f;
+    current_config.sustain_darkness = 0.25f;
+    current_config.attack_rate_jitter = 0;
+    current_config.attack_rate_jitter_depth = 0.02f;
 
     // Micro
     current_config.class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_min = 5.0f;
@@ -135,6 +190,33 @@ void wasm_set_param(int param_id, float value) {
         case PARAM_ID_RNG_SEED: current_config.rng_seed = (uint32_t)value; break;
         case PARAM_ID_MIX_DRY_GAIN: master_dry_gain = value; break;
         case PARAM_ID_MIX_WET_GAIN: master_wet_gain = value; break;
+        case PARAM_ID_STEREO_WIDTH: current_config.stereo_width = value; break;
+        case PARAM_ID_ATTACK_PAN_SPREAD: current_config.attack_pan_spread = value; break;
+        case PARAM_ID_SUSTAIN_PAN_SPREAD: current_config.sustain_pan_spread = value; break;
+        case PARAM_ID_SMART_START_ENABLE: current_config.smart_start_enable = (int32_t)value; break;
+        case PARAM_ID_SMART_START_RANGE: current_config.smart_start_range = (int32_t)value; break;
+        case PARAM_ID_ENVELOPE_VARIATION: current_config.envelope_variation = value; break;
+        case PARAM_ID_ENVELOPE_FAMILY: current_config.envelope_family = (int32_t)value; break;
+        case PARAM_ID_WET_DRIVE: current_config.wet_drive = value; break;
+        case PARAM_ID_WET_CLIP_AMOUNT: current_config.wet_clip_amount = value; break;
+        case PARAM_ID_WET_OUTPUT_TRIM: current_config.wet_output_trim = value; break;
+        case PARAM_ID_SUSTAIN_DIFFUSION_ENABLE: current_config.sustain_diffusion_enable = (int32_t)value; break;
+        case PARAM_ID_SUSTAIN_DIFFUSION_AMOUNT: current_config.sustain_diffusion_amount = value; break;
+        case PARAM_ID_SUSTAIN_DIFFUSION_STAGES: current_config.sustain_diffusion_stages = (int32_t)value; break;
+        case PARAM_ID_SUSTAIN_DIFFUSION_DELAY: current_config.sustain_diffusion_delay = (int32_t)value; break;
+        case PARAM_ID_SUSTAIN_DIFFUSION_FEEDBACK: current_config.sustain_diffusion_feedback = value; break;
+        case PARAM_ID_DROPLET_ENABLE: current_config.droplet_enable = (int32_t)value; break;
+        case PARAM_ID_DROPLET_PROBABILITY: current_config.droplet_probability = value; break;
+        case PARAM_ID_DROPLET_GAIN: current_config.droplet_gain = value; break;
+        case PARAM_ID_DROPLET_LENGTH_SCALE: current_config.droplet_length_scale = value; break;
+        case PARAM_ID_MEMORY_MIX: current_config.memory_mix = value; break;
+        case PARAM_ID_MEMORY_PULL: current_config.memory_pull = value; break;
+        case PARAM_ID_MEMORY_DARKENING: current_config.memory_darkening = value; break;
+        case PARAM_ID_TONE_VARIATION: current_config.tone_variation = value; break;
+        case PARAM_ID_ATTACK_BRIGHTNESS: current_config.attack_brightness = value; break;
+        case PARAM_ID_SUSTAIN_DARKNESS: current_config.sustain_darkness = value; break;
+        case PARAM_ID_ATTACK_RATE_JITTER: current_config.attack_rate_jitter = (int32_t)value; break;
+        case PARAM_ID_ATTACK_RATE_JITTER_DEPTH: current_config.attack_rate_jitter_depth = value; break;
         default:
             return;
     }
