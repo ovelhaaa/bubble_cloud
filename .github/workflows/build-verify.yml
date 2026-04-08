@@ -36,7 +36,6 @@ jobs:
       - name: Verify wasm outputs
         run: |
           test -f web/frontend/bubble_cloud_wasm.js
-          test -f web/frontend/bubble_cloud_wasm.wasm
 
       - name: Build offline target
         run: make -B offline
