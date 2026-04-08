@@ -12,6 +12,7 @@
 #define BUBBLES_FADE_SAMPLES 44           // ~1ms preemption fade at 44.1kHz
 #define BUBBLES_GUARD_ZONE_SAMPLES 64
 #define SCHED_MAX_SPAWNS_PER_TICK 3
+#define BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY 96
 
 // --- Enums ---
 
@@ -40,6 +41,11 @@ typedef enum {
     WINDOW_TYPE_HANN = 0,
     WINDOW_TYPE_TUKEY_LIKE
 } WindowType_t;
+
+typedef enum {
+    ENVELOPE_FAMILY_CLASSIC = 0,
+    ENVELOPE_FAMILY_SOFT = 1
+} EnvelopeFamily_t;
 
 // --- Configuration Structs ---
 
@@ -81,6 +87,51 @@ typedef struct {
     ReadRegionConfig_t memory_region;
     uint32_t rng_seed;      // Deterministic PRNG seed for all sound-affecting random decisions
 
+    // Stereo spawn-time controls.
+    float stereo_width;
+    float attack_pan_spread;
+    float sustain_pan_spread;
+
+    // Spawn alignment controls.
+    int32_t smart_start_enable;
+    int32_t smart_start_range;
+
+    // Envelope variation controls.
+    float envelope_variation;
+    int32_t envelope_family;
+
+    // Wet bus dynamics controls.
+    float wet_drive;
+    float wet_clip_amount;
+    float wet_output_trim;
+
+    // Sustain bus diffusion controls (1st-order all-pass bus stages).
+    int32_t sustain_diffusion_enable;
+    float sustain_diffusion_amount;
+    int32_t sustain_diffusion_stages;
+    int32_t sustain_diffusion_delay;
+    float sustain_diffusion_feedback;
+
+    // Second-generation droplet controls.
+    int32_t droplet_enable;
+    float droplet_probability;
+    float droplet_gain;
+    float droplet_length_scale;
+
+    // Body -> memory morph controls.
+    float memory_mix;
+    float memory_pull;
+    float memory_darkening;
+
+    // Quantized tone controls.
+    float tone_variation;
+    float attack_brightness;
+    float sustain_darkness;
+
+    // Attack-only playback jitter controls.
+    int32_t attack_rate_jitter;
+    float attack_rate_jitter_depth;
+
     BubbleClassConfig_t class_configs[BUBBLE_CLASS_COUNT];
 } EngineConfig_t;
 
@@ -93,9 +144,17 @@ typedef struct {
 
     // Hot-path critical fields
     float read_ptr_float; // Advances precisely 1.0f per sample
+    float rate;           // Spawn-time playback rate, optional and deterministic
     float phase;          // Window phase (0.0 to 1.0)
     float phase_inc;      // Phase step per sample based on class duration
     float amp;            // Amplitude multiplier for preemption fade
+    float gain;           // Spawn-time gain shaping (droplets + tone + memory darkening)
+    float pan_l;
+    float pan_r;
+    uint8_t envelope_variant;
+    uint8_t tone_profile;
+    uint8_t source_region_id;
+    uint8_t generation;
 
     // Preemption tracking
     int32_t fade_counter; // Counts down from BUBBLES_FADE_SAMPLES
@@ -154,6 +213,9 @@ typedef struct {
     Filter1Pole_t sustain_lpf;
     Filter1Pole_t ducking_lpf;     // Smoothing filter for ducking gain
     Filter1Pole_t wet_presence_lpf;// Control-rate smoothing for wet presence target
+    float sustain_diffusion_delay_l[BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY];
+    float sustain_diffusion_delay_r[BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY];
+    int32_t sustain_diffusion_write_idx;
 
     // Global Config & Block tracking
     EngineConfig_t config;
