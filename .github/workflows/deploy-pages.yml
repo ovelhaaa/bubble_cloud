@@ -6,6 +6,8 @@ on:
     paths:
       - 'web/**'
       - 'core/**'
+      - 'web/wasm/**'
+      - 'Makefile'
       - '.github/workflows/deploy-pages.yml'
   workflow_dispatch:
 
@@ -34,6 +36,11 @@ jobs:
       - name: Build WASM
         run: make wasm
 
+      - name: Verify generated artifacts
+        run: |
+          test -f web/frontend/bubble_cloud_wasm.js || (echo "ERROR: bubble_cloud_wasm.js missing" && false)
+          test -f web/frontend/bubble_cloud_wasm.wasm || (echo "ERROR: bubble_cloud_wasm.wasm missing" && false)
+
       - name: Prepare distribution directory
         run: |
           mkdir dist
@@ -43,6 +50,8 @@ jobs:
           echo "Verified dist contents:"
           ls -lah dist
           test -f dist/index.html || (echo "ERROR: dist/index.html is missing" && false)
+          test -f dist/bubble_cloud_wasm.js || (echo "ERROR: dist/bubble_cloud_wasm.js is missing" && false)
+          test -f dist/bubble_cloud_wasm.wasm || (echo "ERROR: dist/bubble_cloud_wasm.wasm is missing" && false)
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
