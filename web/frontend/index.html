@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Sound Bubbles Editor</title>
+    <title>Bubbles Editor</title>
     <link rel="stylesheet" href="style.css">
     <!-- Using Alpine.js for lightweight, reactive state management without a build step -->
     <script defer src="app.js"></script>
@@ -14,8 +14,9 @@
     <!-- Header -->
     <header class="app-header">
         <div class="header-brand">
+            <img src="logo.png" alt="Bubbles Logo" class="app-logo header-logo">
             <div class="brand-text">
-                <h1>Sound Bubbles</h1>
+                <h1>Bubbles</h1>
                 <p class="subtitle">Granular Performance Engine</p>
             </div>
         </div>
@@ -47,7 +48,7 @@
                             <span x-text="audioInitialized ? 'Áudio pronto' : 'Áudio não ativado'"></span>
                         </div>
                     </div>
-                    <img src="logo.png" alt="Sound Bubbles Logo" class="app-logo">
+                    <img src="logo.png" alt="Bubbles Logo" class="app-logo card-logo">
                 </div>
 
                 <div x-show="!audioInitialized" class="audio-init-overlay">
@@ -112,6 +113,10 @@
                                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>
                                 </button>
                             </div>
+                            <label class="repeat-toggle" x-show="previewMode === 'file'">
+                                <input type="checkbox" x-model="repeatContinuous" :disabled="!audioBuffer">
+                                <span>Repeat contínuo</span>
+                            </label>
 
                             <!-- Progress Bar -->
                             <div class="progress-container" :class="{ 'disabled': previewMode === 'synth' || !audioBuffer }">
@@ -221,6 +226,8 @@
                                     >
                                         <p><strong>Musically:</strong> <span x-text="paramHelp[paramKey].musical"></span></p>
                                         <p><strong>Technically:</strong> <span x-text="paramHelp[paramKey].technical"></span></p>
+                                        <p><strong>+</strong>: <span x-text="paramHelp[paramKey].increase"></span></p>
+                                        <p><strong>-</strong>: <span x-text="paramHelp[paramKey].decrease"></span></p>
                                     </div>
 
                                     <!-- Thick touch-friendly slider -->
