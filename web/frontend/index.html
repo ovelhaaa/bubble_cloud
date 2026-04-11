@@ -11,6 +11,7 @@
     <script defer src="src/presets/presetMigration.js"></script>
     <script defer src="src/presets/presetValidation.js"></script>
     <script defer src="src/presets/presetIO.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js" crossorigin="anonymous"></script>
     <script defer src="app.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 </head>
@@ -180,6 +181,15 @@
                     <button @click="copyJson()" class="btn btn-secondary">Copiar Preset JSON</button>
                     <button @click="downloadPresetJson()" class="btn btn-primary">Export Preset</button>
                     <button @click="downloadSnapshotJson()" class="btn btn-secondary">Export Current State</button>
+                    <button
+                        @click="exportProcessedTrackMp3()"
+                        class="btn btn-primary"
+                        :disabled="!audioBuffer || isExportingMp3 || !window.lamejs?.Mp3Encoder"
+                        :title="!window.lamejs?.Mp3Encoder ? 'MP3 encoder not available' : (!audioBuffer ? 'Carregue um arquivo para exportar.' : '')"
+                    >
+                        <span x-show="!isExportingMp3">Export Processed MP3</span>
+                        <span x-show="isExportingMp3" x-cloak>Exportando MP3...</span>
+                    </button>
                 </div>
                 <div class="action-buttons">
                     <label for="preset-upload" class="btn btn-secondary">Importar preset JSON</label>
