@@ -294,6 +294,7 @@ document.addEventListener('alpine:init', () => {
     audioFile: null,
     audioBuffer: null,
     isDecoding: false,
+    isExportingMp3: false,
 
     fileSourceNode: null,
     startedAt: 0,
@@ -934,6 +935,111 @@ document.addEventListener('alpine:init', () => {
         this.toast(this.audioStatusMsg, 'error');
       } finally {
         this.isDecoding = false;
+      }
+    },
+
+    async createOfflineRenderedBuffer() {
+      if (!this.audioBuffer) {
+        throw new Error('Nenhum arquivo carregado para exportação.');
+      }
+
+      const sampleRate = this.audioBuffer.sampleRate || 44100;
+      const tailSeconds = 0.8;
+      const frameCount = Math.ceil((this.audioBuffer.duration + tailSeconds) * sampleRate);
+      const offlineContext = new OfflineAudioContext(2, frameCount, sampleRate);
+      await offlineContext.audioWorklet.addModule(new URL('worklet.js', window.location.href).toString());
+
+      const workletNode = new AudioWorkletNode(offlineContext, 'sound-bubbles-worklet', { outputChannelCount: [2] });
+      const source = new AudioBufferSourceNode(offlineContext, { buffer: this.audioBuffer });
+      source.connect(workletNode).connect(offlineContext.destination);
+
+      await new Promise((resolve, reject) => {
+        const timeoutId = setTimeout(() => reject(new Error('Tempo limite ao iniciar o processador de áudio.')), 5000);
+        workletNode.port.onmessage = (event) => {
+          const data = event.data || {};
+          if (data.type === 'ready') {
+            clearTimeout(timeoutId);
+            this.pushAllParamsToPort(workletNode.port);
+            resolve();
+          } else if (data.type === 'init-failed' || data.type === 'wasm-error' || data.type === 'processor-error') {
+            clearTimeout(timeoutId);
+            reject(new Error(data.message || 'Falha no processador de áudio.'));
+          }
+        };
+      });
+
+      source.start(0);
+      return offlineContext.startRendering();
+    },
+
+    pushAllParamsToPort(port) {
+      Object.keys(this.params).forEach((key) => {
+        const id = WASM_PARAM_ID_MAP[key];
+        if (id === undefined) return;
+        port.postMessage({ type: 'param', id, value: Number(this.params[key]) });
+      });
+    },
+
+    floatTo16BitPCM(floatSamples) {
+      const pcm = new Int16Array(floatSamples.length);
+      for (let i = 0; i < floatSamples.length; i += 1) {
+        const sample = Math.max(-1, Math.min(1, floatSamples[i]));
+        pcm[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+      }
+      return pcm;
+    },
+
+    encodeAudioBufferToMp3(audioBuffer, kbps = 192) {
+      const LameCtor = window.lamejs?.Mp3Encoder;
+      if (!LameCtor) {
+        throw new Error('Encoder MP3 indisponível no navegador.');
+      }
+
+      const left = this.floatTo16BitPCM(audioBuffer.getChannelData(0));
+      const right = audioBuffer.numberOfChannels > 1 ? this.floatTo16BitPCM(audioBuffer.getChannelData(1)) : left;
+      const encoder = new LameCtor(2, audioBuffer.sampleRate, kbps);
+      const blockSize = 1152;
+      const chunks = [];
+
+      for (let i = 0; i < left.length; i += blockSize) {
+        const leftChunk = left.subarray(i, i + blockSize);
+        const rightChunk = right.subarray(i, i + blockSize);
+        const mp3buf = encoder.encodeBuffer(leftChunk, rightChunk);
+        if (mp3buf.length > 0) chunks.push(new Uint8Array(mp3buf));
+      }
+
+      const flush = encoder.flush();
+      if (flush.length > 0) chunks.push(new Uint8Array(flush));
+      return new Blob(chunks, { type: 'audio/mpeg' });
+    },
+
+    async exportProcessedTrackMp3() {
+      if (!this.audioBuffer) {
+        this.toast('Carregue um arquivo para exportar.', 'error');
+        return;
+      }
+
+      this.isExportingMp3 = true;
+      try {
+        this.setAudioStatus('Renderizando faixa processada para exportação...');
+        const renderedBuffer = await this.createOfflineRenderedBuffer();
+        const mp3Blob = this.encodeAudioBufferToMp3(renderedBuffer);
+        const filename = `bubble-cloud-processed-${new Date().toISOString().replace(/[\W:]/g, '-')}.mp3`;
+        const url = URL.createObjectURL(mp3Blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+        this.setAudioStatus('Exportação MP3 concluída.');
+        this.toast('Faixa processada exportada em MP3.', 'success');
+      } catch (err) {
+        this.setAudioStatus(`Falha na exportação MP3: ${err.message || err}`, true);
+        this.toast(this.audioStatusMsg, 'error');
+      } finally {
+        this.isExportingMp3 = false;
       }
     },
 
