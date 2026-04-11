@@ -295,6 +295,7 @@ document.addEventListener('alpine:init', () => {
     audioBuffer: null,
     isDecoding: false,
     isExportingMp3: false,
+    mp3Worker: null,
 
     fileSourceNode: null,
     startedAt: 0,
@@ -916,6 +917,11 @@ document.addEventListener('alpine:init', () => {
       try {
         this.isDecoding = true;
         this.stopPlay();
+        this.audioBuffer = null;
+        this.duration = 0;
+        this.currentTime = 0;
+        this.seekTime = 0;
+        this.pausedAt = 0;
         this.audioFile = file;
         const arrayBuffer = await file.arrayBuffer();
         this.audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
@@ -992,37 +998,53 @@ document.addEventListener('alpine:init', () => {
       });
     },
 
-    floatTo16BitPCM(floatSamples) {
-      const pcm = new Int16Array(floatSamples.length);
-      for (let i = 0; i < floatSamples.length; i += 1) {
-        const sample = Math.max(-1, Math.min(1, floatSamples[i]));
-        pcm[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-      }
-      return pcm;
+    isMp3ExportAvailable() {
+      return typeof Worker !== 'undefined';
     },
 
-    encodeAudioBufferToMp3(audioBuffer, kbps = 192) {
-      const LameCtor = window.lamejs?.Mp3Encoder;
-      if (!LameCtor) {
-        throw new Error('Encoder MP3 indisponível no navegador.');
-      }
+    getOrCreateMp3Worker() {
+      if (this.mp3Worker) return this.mp3Worker;
+      this.mp3Worker = new Worker(new URL('mp3EncoderWorker.js', window.location.href));
+      return this.mp3Worker;
+    },
 
-      const left = this.floatTo16BitPCM(audioBuffer.getChannelData(0));
-      const right = audioBuffer.numberOfChannels > 1 ? this.floatTo16BitPCM(audioBuffer.getChannelData(1)) : left;
-      const encoder = new LameCtor(2, audioBuffer.sampleRate, kbps);
-      const blockSize = 1152;
-      const chunks = [];
+    async encodeAudioBufferToMp3InWorker(audioBuffer, kbps = 192) {
+      const left = audioBuffer.getChannelData(0).slice();
+      const right = (audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : left).slice();
+      const worker = this.getOrCreateMp3Worker();
+      const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-      for (let i = 0; i < left.length; i += blockSize) {
-        const leftChunk = left.subarray(i, i + blockSize);
-        const rightChunk = right.subarray(i, i + blockSize);
-        const mp3buf = encoder.encodeBuffer(leftChunk, rightChunk);
-        if (mp3buf.length > 0) chunks.push(new Uint8Array(mp3buf));
-      }
+      const mp3Bytes = await new Promise((resolve, reject) => {
+        const handleMessage = (event) => {
+          const data = event.data || {};
+          if (data.requestId !== requestId) return;
+          worker.removeEventListener('message', handleMessage);
+          worker.removeEventListener('error', handleError);
+          if (data.type === 'success' && data.mp3Buffer) resolve(data.mp3Buffer);
+          else reject(new Error(data.message || 'Falha na codificação MP3.'));
+        };
+        const handleError = () => {
+          worker.removeEventListener('message', handleMessage);
+          worker.removeEventListener('error', handleError);
+          reject(new Error('Falha no worker de codificação MP3.'));
+        };
 
-      const flush = encoder.flush();
-      if (flush.length > 0) chunks.push(new Uint8Array(flush));
-      return new Blob(chunks, { type: 'audio/mpeg' });
+        worker.addEventListener('message', handleMessage);
+        worker.addEventListener('error', handleError);
+        worker.postMessage(
+          {
+            type: 'encode-mp3',
+            requestId,
+            sampleRate: audioBuffer.sampleRate,
+            kbps,
+            leftBuffer: left.buffer,
+            rightBuffer: right.buffer,
+          },
+          [left.buffer, right.buffer]
+        );
+      });
+
+      return new Blob([mp3Bytes], { type: 'audio/mpeg' });
     },
 
     async exportProcessedTrackMp3() {
@@ -1030,12 +1052,17 @@ document.addEventListener('alpine:init', () => {
         this.toast('Carregue um arquivo para exportar.', 'error');
         return;
       }
+      if (!this.isMp3ExportAvailable()) {
+        this.toast('Seu navegador não suporta exportação MP3 em background.', 'error');
+        return;
+      }
 
       this.isExportingMp3 = true;
       try {
         this.setAudioStatus('Renderizando faixa processada para exportação...');
         const renderedBuffer = await this.createOfflineRenderedBuffer();
-        const mp3Blob = this.encodeAudioBufferToMp3(renderedBuffer);
+        this.setAudioStatus('Codificando MP3 em background...');
+        const mp3Blob = await this.encodeAudioBufferToMp3InWorker(renderedBuffer);
         const filename = `bubble-cloud-processed-${new Date().toISOString().replace(/[\W:]/g, '-')}.mp3`;
         const url = URL.createObjectURL(mp3Blob);
         const anchor = document.createElement('a');
@@ -1053,35 +1080,6 @@ document.addEventListener('alpine:init', () => {
       } finally {
         this.isExportingMp3 = false;
       }
-    },
-
-    clearAudioFile() {
-      this.stopPlay();
-      this.audioFile = null;
-      this.audioBuffer = null;
-      this.duration = 0;
-      this.currentTime = 0;
-      this.seekTime = 0;
-      const input = document.getElementById('audio-upload');
-      if (input) input.value = '';
-      this.setAudioStatus('Arquivo removido.');
-    },
-
-    getEngineStateName(state) {
-      const names = {
-        0: 'Idle',
-        1: 'Tracking',
-        2: 'Sustain',
-        3: 'Transient',
-      };
-      return names[state] || `State ${state}`;
-    },
-
-    formatTime(seconds) {
-      const safe = Math.max(0, Number(seconds) || 0);
-      const min = Math.floor(safe / 60);
-      const sec = Math.floor(safe % 60);
-      return `${min}:${String(sec).padStart(2, '0')}`;
     },
 
     clearAudioFile() {
