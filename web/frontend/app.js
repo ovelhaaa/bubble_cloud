@@ -943,7 +943,7 @@ document.addEventListener('alpine:init', () => {
         throw new Error('Nenhum arquivo carregado para exportação.');
       }
 
-      const sampleRate = this.audioBuffer.sampleRate || 44100;
+      const sampleRate = Math.min(this.audioBuffer.sampleRate || 44100, 48000);
       const tailSeconds = 0.8;
       const frameCount = Math.ceil((this.audioBuffer.duration + tailSeconds) * sampleRate);
       const offlineContext = new OfflineAudioContext(2, frameCount, sampleRate);
