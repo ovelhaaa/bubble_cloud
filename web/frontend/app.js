@@ -953,13 +953,21 @@ document.addEventListener('alpine:init', () => {
       const source = new AudioBufferSourceNode(offlineContext, { buffer: this.audioBuffer });
       source.connect(workletNode).connect(offlineContext.destination);
 
+      let errorHandler = null;
       await new Promise((resolve, reject) => {
         const timeoutId = setTimeout(() => reject(new Error('Tempo limite ao iniciar o processador de áudio.')), 5000);
+        errorHandler = (event) => {
+          const data = event.data || {};
+          if (data.type === 'init-failed' || data.type === 'wasm-error' || data.type === 'processor-error') {
+            reject(new Error(data.message || 'Falha no processador de áudio.'));
+          }
+        };
         workletNode.port.onmessage = (event) => {
           const data = event.data || {};
           if (data.type === 'ready') {
             clearTimeout(timeoutId);
             this.pushAllParamsToPort(workletNode.port);
+            workletNode.port.onmessage = errorHandler;
             resolve();
           } else if (data.type === 'init-failed' || data.type === 'wasm-error' || data.type === 'processor-error') {
             clearTimeout(timeoutId);
@@ -969,7 +977,11 @@ document.addEventListener('alpine:init', () => {
       });
 
       source.start(0);
-      return offlineContext.startRendering();
+      try {
+        return await offlineContext.startRendering();
+      } finally {
+        workletNode.port.onmessage = null;
+      }
     },
 
     pushAllParamsToPort(port) {
@@ -1032,7 +1044,7 @@ document.addEventListener('alpine:init', () => {
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
-        URL.revokeObjectURL(url);
+        setTimeout(() => URL.revokeObjectURL(url), 100);
         this.setAudioStatus('Exportação MP3 concluída.');
         this.toast('Faixa processada exportada em MP3.', 'success');
       } catch (err) {
