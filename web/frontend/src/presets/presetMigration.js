@@ -30,6 +30,8 @@
       quality_tier: raw.quality_tier || 'ESP32_SAFE',
       description: raw.description || 'Preset legado convertido automaticamente.',
       params: migratedParams,
+      base_params: migratedParams,
+      macro_values: {},
       metadata: {
         ...(raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {}),
         migrated_from_legacy: true,

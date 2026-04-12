@@ -11,6 +11,7 @@
     <script defer src="src/presets/presetMigration.js"></script>
     <script defer src="src/presets/presetValidation.js"></script>
     <script defer src="src/presets/presetIO.js"></script>
+    <script defer src="macro_layer.js"></script>
     <script defer src="app.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 </head>
@@ -211,6 +212,24 @@
                     <h2 class="section-title">Engine Parameters</h2>
                     <p class="helper-text">Adjust properties. The audio preview updates in real-time.</p>
                     <p class="helper-text" x-text="parityNote"></p>
+                </div>
+
+                <div class="card macro-controls">
+                    <h3>Macro Layer</h3>
+                    <p class="helper-text">Pipeline: Response → Impact/Bloom → Smoothness/Memory → Width/Scatter → Mix</p>
+                    <template x-for="macroKey in macroPipeline" :key="macroKey">
+                        <div class="param-row">
+                            <div class="param-labels">
+                                <label x-text="macroLabels[macroKey]"></label>
+                                <input type="number" min="0" max="1" step="0.01" class="num-input" x-model.number="macroValues[macroKey]" @input="onMacroInput()">
+                            </div>
+                            <input type="range" min="0" max="1" step="0.01" class="slider" x-model.number="macroValues[macroKey]" @input="onMacroInput()">
+                        </div>
+                    </template>
+                    <div class="action-buttons">
+                        <button class="btn btn-secondary" @click="resetMacros()">Reset Macros</button>
+                        <button class="btn btn-primary" @click="commitResolvedToBase()">Commit to Base</button>
+                    </div>
                 </div>
 
                 <div class="accordions-container">

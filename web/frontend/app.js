@@ -253,7 +253,20 @@ function pickUnknownParams(params, definitions) {
 
 document.addEventListener('alpine:init', () => {
   Alpine.data('editorApp', () => ({
+    baseParams: { ...BASELINE },
     params: { ...BASELINE },
+    resolvedParams: { ...BASELINE },
+    macroValues: window.BubbleCloudMacroLayer.createNeutralMacroValues(),
+    macroPipeline: window.BubbleCloudMacroLayer.PIPELINE_ORDER,
+    macroDestinations: window.BubbleCloudMacroLayer.MACRO_DESTINATIONS,
+    macroPerfHint: 1.0,
+    macroLabels: {
+      response: 'Response',
+      impact_bloom: 'Impact / Bloom',
+      smoothness_memory: 'Smoothness / Memory',
+      width_scatter: 'Width / Scatter',
+      mix: 'Mix',
+    },
     baseline: { ...BASELINE },
     factoryPresets: [],
     selectedPresetCategory: 'All',
@@ -313,6 +326,7 @@ document.addEventListener('alpine:init', () => {
     draftPersistDelayMs: 180,
 
     init() {
+      this.params = this.baseParams;
       this.factoryPresets = (window.BubbleCloudFactoryPresets?.createFactoryPresets?.(this.baseline) || []).map((preset) =>
         window.BubbleCloudPresetSchema.createCanonicalPreset(preset)
       );
@@ -366,16 +380,42 @@ document.addEventListener('alpine:init', () => {
       return this.paramDefinitions[paramKey]?.label || paramKey.replaceAll('_', ' ');
     },
 
-    validateParamRanges() {
-      Object.keys(this.params).forEach((key) => {
-        const cfg = this.getParamConfig(key);
-        this.params[key] = clamp(Number(this.params[key]), cfg.min, cfg.max);
+    validateMacroRanges() {
+      Object.keys(this.macroValues).forEach((key) => {
+        this.macroValues[key] = clamp(Number(this.macroValues[key]), 0, 1);
       });
+    },
+
+    updateResolvedParams() {
+      this.validateMacroRanges();
+      this.resolvedParams = window.BubbleCloudMacroLayer.applyMacroPipeline(
+        this.baseParams,
+        this.macroValues,
+        this.paramDefinitions,
+        this.macroPerfHint
+      );
+    },
+
+    validateParamRanges() {
+      Object.keys(this.baseParams).forEach((key) => {
+        const cfg = this.getParamConfig(key);
+        this.baseParams[key] = clamp(Number(this.baseParams[key]), cfg.min, cfg.max);
+      });
+      this.params = this.baseParams;
+      this.updateResolvedParams();
     },
 
     persistDraftNow() {
       this.validateParamRanges();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ params: this.params, savedAt: Date.now() }));
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          params: this.resolvedParams,
+          base_params: this.baseParams,
+          macro_values: this.macroValues,
+          savedAt: Date.now(),
+        })
+      );
     },
 
     scheduleDraftPersist() {
@@ -396,15 +436,43 @@ document.addEventListener('alpine:init', () => {
       this.queueParamFlush();
     },
 
+    onMacroInput() {
+      this.saveDraft();
+    },
+
+    resetMacros() {
+      this.macroValues = window.BubbleCloudMacroLayer.createNeutralMacroValues();
+      this.saveDraft();
+      this.toast('Macros resetados para neutro.', 'success');
+    },
+
+    commitResolvedToBase() {
+      this.validateParamRanges();
+      this.baseParams = { ...this.resolvedParams };
+      this.params = this.baseParams;
+      this.macroValues = window.BubbleCloudMacroLayer.createNeutralMacroValues();
+      this.validateParamRanges();
+      this.scheduleDraftPersist();
+      this.queueParamFlush();
+      this.hasUnexportedChanges = true;
+      this.isDraft = true;
+      this.toast('Resolved Params fundidos em Base Params.', 'success');
+    },
+
     restoreDraft() {
       try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return;
         const parsed = JSON.parse(raw);
-        if (parsed?.params && typeof parsed.params === 'object') {
-          this.params = { ...this.params, ...parsed.params };
+        if (parsed && typeof parsed === 'object') {
+          this.baseParams = { ...this.baseParams, ...(parsed.base_params || parsed.params || {}) };
+          this.params = this.baseParams;
+          if (parsed.macro_values && typeof parsed.macro_values === 'object') {
+            this.macroValues = { ...this.macroValues, ...parsed.macro_values };
+          }
           this.isDraft = true;
           this.hasUnexportedChanges = true;
+          this.validateParamRanges();
         }
       } catch (err) {
         this.toast(`Falha ao restaurar rascunho: ${err.message || err}`, 'error');
@@ -422,7 +490,9 @@ document.addEventListener('alpine:init', () => {
     },
 
     confirmReset() {
-      this.params = { ...this.baseline };
+      this.baseParams = { ...this.baseline };
+      this.params = this.baseParams;
+      this.macroValues = window.BubbleCloudMacroLayer.createNeutralMacroValues();
       this.validateParamRanges();
       this.clearDraft();
       this.showResetModal = false;
@@ -436,7 +506,12 @@ document.addEventListener('alpine:init', () => {
     loadFactoryPreset(slug) {
       const preset = this.factoryPresets.find((item) => item.preset_slug === slug);
       if (!preset) return;
-      this.params = { ...preset.params };
+      this.baseParams = { ...(preset.base_params || preset.params) };
+      this.params = this.baseParams;
+      this.macroValues = {
+        ...window.BubbleCloudMacroLayer.createNeutralMacroValues(),
+        ...(preset.macro_values || {}),
+      };
       this.validateParamRanges();
       this.currentPresetSource = 'factory';
       this.currentPresetInfo = { ...preset };
@@ -450,7 +525,12 @@ document.addEventListener('alpine:init', () => {
     },
 
     resetToLoadedPresetDefaults() {
-      this.params = { ...this.loadedPresetReference.params };
+      this.baseParams = { ...(this.loadedPresetReference.base_params || this.loadedPresetReference.params) };
+      this.params = this.baseParams;
+      this.macroValues = {
+        ...window.BubbleCloudMacroLayer.createNeutralMacroValues(),
+        ...(this.loadedPresetReference.macro_values || {}),
+      };
       this.validateParamRanges();
       this.queueParamFlush();
       this.scheduleDraftPersist();
@@ -464,7 +544,9 @@ document.addEventListener('alpine:init', () => {
         ...info,
         preset_name: info.preset_name || 'Current Preset',
         preset_slug: info.preset_slug || window.BubbleCloudPresetSchema.slugify(info.preset_name || 'current-preset'),
-        params: { ...this.params },
+        params: { ...this.resolvedParams },
+        base_params: { ...this.baseParams },
+        macro_values: { ...this.macroValues },
         metadata: {
           ...(info.metadata || {}),
           source: this.currentPresetSource,
@@ -558,6 +640,8 @@ document.addEventListener('alpine:init', () => {
           'quality_tier',
           'description',
           'params',
+          'base_params',
+          'macro_values',
           'metadata',
           'preset',
         ]);
@@ -607,7 +691,12 @@ document.addEventListener('alpine:init', () => {
           return;
         }
 
-        this.params = { ...normalized.params };
+        this.baseParams = { ...(normalized.base_params || normalized.params) };
+        this.params = this.baseParams;
+        this.macroValues = {
+          ...window.BubbleCloudMacroLayer.createNeutralMacroValues(),
+          ...(normalized.macro_values || {}),
+        };
         this.validateParamRanges();
         this.loadedPresetReference = window.BubbleCloudPresetSchema.createCanonicalPreset(normalized);
         this.currentPresetInfo = { ...normalized };
@@ -692,11 +781,11 @@ document.addEventListener('alpine:init', () => {
       if (!this.workletReady || !this.workletNode) return;
       const id = WASM_PARAM_ID_MAP[key];
       if (id === undefined) return;
-      this.workletNode.port.postMessage({ type: 'param', id, value: Number(this.params[key]) });
+      this.workletNode.port.postMessage({ type: 'param', id, value: Number(this.resolvedParams[key]) });
     },
 
     pushAllParamsToAudio() {
-      Object.keys(this.params).forEach((key) => this.pushParamToAudio(key));
+      Object.keys(this.resolvedParams).forEach((key) => this.pushParamToAudio(key));
     },
 
     queueParamFlush() {
@@ -991,10 +1080,10 @@ document.addEventListener('alpine:init', () => {
     },
 
     pushAllParamsToPort(port) {
-      Object.keys(this.params).forEach((key) => {
+      Object.keys(this.resolvedParams).forEach((key) => {
         const id = WASM_PARAM_ID_MAP[key];
         if (id === undefined) return;
-        port.postMessage({ type: 'param', id, value: Number(this.params[key]) });
+        port.postMessage({ type: 'param', id, value: Number(this.resolvedParams[key]) });
       });
     },
 
