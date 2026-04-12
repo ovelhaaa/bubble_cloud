@@ -26,6 +26,8 @@
       quality_tier: input.quality_tier || DEFAULT_QUALITY_TIER,
       description: input.description || '',
       params: { ...(input.params || {}) },
+      base_params: { ...(input.base_params || input.params || {}) },
+      macro_values: input.macro_values && typeof input.macro_values === 'object' ? { ...input.macro_values } : {},
       metadata: input.metadata && typeof input.metadata === 'object' ? { ...input.metadata } : {},
     };
   }

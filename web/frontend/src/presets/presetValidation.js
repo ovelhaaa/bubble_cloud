@@ -4,6 +4,8 @@
     const normalized = {
       ...canonicalPreset,
       params: { ...baselineParams, ...(canonicalPreset.params || {}) },
+      base_params: { ...baselineParams, ...(canonicalPreset.base_params || canonicalPreset.params || {}) },
+      macro_values: canonicalPreset.macro_values && typeof canonicalPreset.macro_values === 'object' ? { ...canonicalPreset.macro_values } : {},
       metadata: { ...(canonicalPreset.metadata || {}) },
     };
 
@@ -14,6 +16,12 @@
       const clamped = Math.min(cfg.max, Math.max(cfg.min, value));
       if (clamped !== value) warnings.push(`Campo ${key} fora da faixa e ajustado.`);
       normalized.params[key] = clamped;
+
+      const rawBaseValue = Number(normalized.base_params[key]);
+      let baseValue = Number.isFinite(rawBaseValue) ? rawBaseValue : baselineParams[key];
+      const clampedBase = Math.min(cfg.max, Math.max(cfg.min, baseValue));
+      if (clampedBase !== baseValue) warnings.push(`Campo base_params.${key} fora da faixa e ajustado.`);
+      normalized.base_params[key] = clampedBase;
     });
 
     const pairs = [
