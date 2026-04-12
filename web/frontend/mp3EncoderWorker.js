@@ -1,6 +1,36 @@
 /* global importScripts */
 
-self.importScripts('https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js');
+const ENCODER_SCRIPT_CANDIDATES = [
+  'vendor/lame.min.js',
+  'https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js',
+  'https://unpkg.com/lamejs@1.2.1/lame.min.js',
+];
+
+let encoderReady = false;
+let encoderLoadError = '';
+
+function ensureEncoderLoaded() {
+  if (encoderReady && self.lamejs?.Mp3Encoder) return;
+
+  let lastError = null;
+  for (const url of ENCODER_SCRIPT_CANDIDATES) {
+    try {
+      importScripts(url);
+      if (self.lamejs?.Mp3Encoder) {
+        encoderReady = true;
+        encoderLoadError = '';
+        return;
+      }
+      lastError = new Error(`Script carregado sem Mp3Encoder: ${url}`);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  encoderReady = false;
+  encoderLoadError = lastError?.message || String(lastError) || 'Erro desconhecido ao carregar o encoder MP3.';
+  throw new Error(`Não foi possível carregar o encoder MP3. ${encoderLoadError}`);
+}
 
 function floatTo16BitPCM(floatSamples) {
   const pcm = new Int16Array(floatSamples.length);
@@ -18,6 +48,7 @@ self.onmessage = (event) => {
   const { requestId, sampleRate, kbps = 192, leftBuffer, rightBuffer } = data;
 
   try {
+    ensureEncoderLoaded();
     const LameCtor = self.lamejs?.Mp3Encoder;
     if (!LameCtor) throw new Error('Encoder MP3 indisponível no worker.');
 
@@ -50,6 +81,14 @@ self.onmessage = (event) => {
 
     self.postMessage({ type: 'success', requestId, mp3Buffer: merged.buffer }, [merged.buffer]);
   } catch (err) {
-    self.postMessage({ type: 'error', requestId, message: err?.message || String(err) });
+    self.postMessage({
+      type: 'error',
+      requestId,
+      message: err?.message || String(err),
+      details: {
+        encoderLoadError,
+        sourcesTried: ENCODER_SCRIPT_CANDIDATES,
+      },
+    });
   }
 };

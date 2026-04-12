@@ -15,30 +15,31 @@
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 </head>
 <body x-data="editorApp()">
+    <div class="hero-layout">
+        <div class="hero-main">
+            <!-- Header -->
+            <header class="app-header">
+                <div class="header-brand">
+                    <img src="logo.png" alt="Bubbles Logo" class="app-logo header-logo">
+                    <div class="brand-text">
+                        <h1>Bubbles</h1>
+                        <p class="subtitle">Granular Performance Engine</p>
+                    </div>
+                </div>
+                <div class="header-status">
+                    <div class="save-status" x-show="hasUnexportedChanges" x-transition x-cloak title="Você tem alterações não exportadas">
+                        <span class="dot unexported"></span> Alterações não salvas
+                    </div>
+                    <div class="save-status" x-show="!hasUnexportedChanges && isDraft" x-transition x-cloak title="Todas as alterações foram exportadas">
+                        <span class="dot exported"></span> Salvo
+                    </div>
+                    <span class="status-pill" :class="isDraft ? 'draft' : 'baseline'" x-text="isDraft ? 'Rascunho Local' : 'Padrões Ativos'"></span>
+                    <button @click="showResetModal = true" class="btn-reset">Reset</button>
+                </div>
+            </header>
 
-    <!-- Header -->
-    <header class="app-header">
-        <div class="header-brand">
-            <img src="logo.png" alt="Bubbles Logo" class="app-logo header-logo">
-            <div class="brand-text">
-                <h1>Bubbles</h1>
-                <p class="subtitle">Granular Performance Engine</p>
-            </div>
-        </div>
-        <div class="header-status">
-            <div class="save-status" x-show="hasUnexportedChanges" x-transition x-cloak title="Você tem alterações não exportadas">
-                <span class="dot unexported"></span> Alterações não salvas
-            </div>
-            <div class="save-status" x-show="!hasUnexportedChanges && isDraft" x-transition x-cloak title="Todas as alterações foram exportadas">
-                <span class="dot exported"></span> Salvo
-            </div>
-            <span class="status-pill" :class="isDraft ? 'draft' : 'baseline'" x-text="isDraft ? 'Rascunho Local' : 'Padrões Ativos'"></span>
-            <button @click="showResetModal = true" class="btn-reset">Reset</button>
-        </div>
-    </header>
-
-    <!-- Main Layout -->
-    <main class="app-layout">
+            <!-- Main Layout -->
+            <main class="app-layout">
 
         <!-- Top Row: Audio Preview and Actions -->
         <section class="panel-top">
@@ -328,7 +329,13 @@
                 </div>
             </div>
         </section>
-    </main>
+            </main>
+        </div>
+
+        <aside class="hero-visual" aria-hidden="true">
+            <img src="logo.png" alt="" class="hero-visual-image">
+        </aside>
+    </div>
 
     <!-- Reset Modal -->
     <div class="modal-backdrop" x-show="showResetModal" x-transition.opacity x-cloak>
