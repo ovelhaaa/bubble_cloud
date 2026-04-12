@@ -81,7 +81,15 @@
         const curveDelta = getCurveDelta(macroValue, target.curve);
         const perfScale = getPerfScale(perfHint, target.minPerf, target.maxPerf);
         const offset = range * Number(target.weight || 0) * curveDelta * perfScale;
-        resolved[target.param] = clamp(Number(resolved[target.param]) + offset, Number(cfg.min), Number(cfg.max));
+        const unclampedValue = Number(resolved[target.param]) + offset;
+        const min = Number(cfg.min);
+        const max = Number(cfg.max);
+        const step = Number(cfg.step);
+        let finalValue = unclampedValue;
+        if (step && step > 0) {
+          finalValue = Math.round((unclampedValue - min) / step) * step + min;
+        }
+        resolved[target.param] = clamp(finalValue, min, max);
       });
     });
     return resolved;

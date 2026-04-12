@@ -397,9 +397,11 @@ document.addEventListener('alpine:init', () => {
     },
 
     validateParamRanges() {
-      Object.keys(this.baseParams).forEach((key) => {
-        const cfg = this.getParamConfig(key);
-        this.baseParams[key] = clamp(Number(this.baseParams[key]), cfg.min, cfg.max);
+      Object.keys(this.paramDefinitions).forEach((key) => {
+        if (key in this.baseParams) {
+          const cfg = this.getParamConfig(key);
+          this.baseParams[key] = clamp(Number(this.baseParams[key]), cfg.min, cfg.max);
+        }
       });
       this.params = this.baseParams;
       this.updateResolvedParams();
