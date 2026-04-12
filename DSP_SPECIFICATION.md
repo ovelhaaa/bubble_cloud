@@ -114,6 +114,11 @@ The Web UI keeps internal parameter keys unchanged for preset/WASM compatibility
 * `sustain_thresh` → **Sustain Entry Threshold**  
   Higher value = requires stronger envelope to enter sustain. Lower value = enters sustain earlier.
 
+## 17. Macro/UI performance ranges
+The UI macro layer now operates on **performance sub-ranges** per parameter, instead of writing macro offsets directly across each parameter's raw technical min/max.  
+This preserves musical control in normal editing while keeping the original engine limits unchanged and available through an advanced raw-range mode.  
+Detailed per-parameter rationale and ranges are documented in `docs/macro_ranges.md`.
+
 ---
 
 ## Design Summary

@@ -251,6 +251,13 @@
                         </button>
 
                         <div class="accordion-content" x-show="openAccordion === group.name" x-collapse x-cloak>
+                            <div class="param-row" x-show="group.name === 'Advanced'">
+                                <div class="param-labels">
+                                    <label for="advanced-raw-range">Advanced: raw range</label>
+                                    <input id="advanced-raw-range" type="checkbox" x-model="showAdvancedRawRange" @change="saveDraft()">
+                                </div>
+                                <p class="helper-text">Desligado: performance ranges musicais. Ligado: faixa técnica completa do engine.</p>
+                            </div>
                             <template x-for="paramKey in group.params" :key="paramKey">
                                 <div class="param-row">
                                     <div class="param-labels">

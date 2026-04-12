@@ -267,6 +267,7 @@ document.addEventListener('alpine:init', () => {
       width_scatter: 'Width / Scatter',
       mix: 'Mix',
     },
+    showAdvancedRawRange: false,
     baseline: { ...BASELINE },
     factoryPresets: [],
     selectedPresetCategory: 'All',
@@ -373,7 +374,17 @@ document.addEventListener('alpine:init', () => {
     },
 
     getParamConfig(paramKey) {
-      return this.paramDefinitions[paramKey] || { min: 0, max: 1, step: 0.01 };
+      const cfg = this.paramDefinitions[paramKey] || { min: 0, max: 1, step: 0.01 };
+      const shouldUseRaw = this.showAdvancedRawRange && this.isAdvancedParam(paramKey);
+      if (shouldUseRaw) return cfg;
+      const perf = window.BubbleCloudMacroLayer.resolvePerformanceRange(paramKey, cfg);
+      if (!perf || perf.isRawFallback) return cfg;
+      return { ...cfg, min: perf.min, max: perf.max };
+    },
+
+    isAdvancedParam(paramKey) {
+      const advancedGroup = this.parameterGroups.find((group) => group.name === 'Advanced');
+      return Array.isArray(advancedGroup?.params) && advancedGroup.params.includes(paramKey);
     },
 
     formatLabel(paramKey) {
@@ -405,7 +416,7 @@ document.addEventListener('alpine:init', () => {
     validateParamRanges() {
       Object.keys(this.paramDefinitions).forEach((key) => {
         if (key in this.baseParams) {
-          const cfg = this.getParamConfig(key);
+          const cfg = this.paramDefinitions[key];
           this.baseParams[key] = clamp(Number(this.baseParams[key]), cfg.min, cfg.max);
         }
       });
