@@ -255,11 +255,11 @@
                                 <div class="param-row">
                                     <div class="param-labels">
                                         <div class="param-label-wrapper">
-                                            <label :for="paramKey" x-text="formatLabel(paramKey)"></label>
+                                            <label :for="paramKey" x-text="formatLabel(paramKey)" :title="getDirectionalTooltip(paramKey)"></label>
                                             <button
                                                 class="btn-help-toggle"
                                                 @click="toggleHelp(paramKey)"
-                                                title="What this does"
+                                                :title="getDirectionalTooltip(paramKey)"
                                                 :id="'help-btn-' + paramKey"
                                                 :aria-expanded="openHelp[paramKey] ? 'true' : 'false'"
                                                 :aria-controls="'help-' + paramKey"
@@ -271,6 +271,7 @@
                                             :id="paramKey + '_num'"
                                             x-model.number="params[paramKey]"
                                             @input="saveDraft()"
+                                            :title="getDirectionalTooltip(paramKey)"
                                             :step="getParamConfig(paramKey).step"
                                             :min="getParamConfig(paramKey).min"
                                             :max="getParamConfig(paramKey).max"
@@ -299,6 +300,7 @@
                                         :id="paramKey"
                                         x-model.number="params[paramKey]"
                                         @input="saveDraft()"
+                                        :title="getDirectionalTooltip(paramKey)"
                                         :step="getParamConfig(paramKey).step"
                                         :min="getParamConfig(paramKey).min"
                                         :max="getParamConfig(paramKey).max"

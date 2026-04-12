@@ -100,6 +100,20 @@ Parameters are exposed via macro-level, physics-inspired labels rather than raw 
 * **Reverse Bubbles**: Allowing a percentage of Sustain bubbles to read backwards through the buffer.
 * **Multi-tap Burst**: Attack bubbles explicitly spawning 2–3 delayed, quieter copies of themselves to simulate bouncing on a hard surface.
 
+## 16. Web/Embedded terminology glossary (consistency guard)
+The Web UI keeps internal parameter keys unchanged for preset/WASM compatibility, but uses DSP-semantic labels:
+
+* `duck_burst_level` → **Attack Duck Target**  
+  Higher value = less ducking during transient burst (wet remains more present). Lower value = deeper ducking.
+* `duck_attack_coef` → **Duck Engage Speed**  
+  Higher value = duck engages faster toward the attack target. Lower value = slower engagement.
+* `duck_release_coef` → **Duck Recovery Speed**  
+  Higher value = recovery back to unity is faster. Lower value = slower recovery.
+* `density_decay` → **Tail Density**  
+  Higher value = denser spawn activity in sparse decay tail. Lower value = sparser tail.
+* `sustain_thresh` → **Sustain Entry Threshold**  
+  Higher value = requires stronger envelope to enter sustain. Lower value = enters sustain earlier.
+
 ---
 
 ## Design Summary
