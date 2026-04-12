@@ -41,7 +41,9 @@
   }
 
   function getCurveDelta(normalizedValue, curve) {
-    const centered = clamp((Number(normalizedValue) || 0.5) - NEUTRAL_MACRO_VALUE, -0.5, 0.5) * 2;
+    const parsedValue = Number(normalizedValue);
+    const safeValue = Number.isFinite(parsedValue) ? parsedValue : NEUTRAL_MACRO_VALUE;
+    const centered = clamp(safeValue - NEUTRAL_MACRO_VALUE, -0.5, 0.5) * 2;
     if (curve === 'softExp') {
       return Math.sign(centered) * (Math.exp(Math.abs(centered)) - 1) / (Math.E - 1);
     }
