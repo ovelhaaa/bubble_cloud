@@ -1,0 +1,139 @@
+{
+  "version": "1.0.0",
+  "description": "Macro Layer matrix. JSON syntax (valid YAML subset) to keep frontend parsing lightweight.",
+  "neutral_macro_value": 0.5,
+  "application": {
+    "global_order": ["response", "impact", "bloom", "smoothness", "memory", "width", "scatter", "mix"],
+    "conflict_rule": "Aplicar em ordem global; conflitos no mesmo parâmetro são acumulativos por macro e o último macro da ordem prevalece após clamp+step."
+  },
+  "performance_ranges": {
+    "tracking_thresh": { "min": 0.01, "max": 0.12, "curve": "sCurve", "softKnee": 0.12, "rationale": "Resposta rápida sem entrar em auto-trigger de ruído." },
+    "transient_delta": { "min": 0.02, "max": 0.22, "curve": "sCurve", "softKnee": 0.14, "rationale": "Sensibilidade de ataque musical antes da região hiper-seletiva." },
+    "duck_attack_coef": { "min": 0.55, "max": 0.97, "curve": "exp", "softKnee": 0.10, "rationale": "Engate do duck rápido o suficiente sem colapsar dinâmica." },
+    "burst_immediate_count": { "min": 2, "max": 9, "curve": "linear", "softKnee": 0.08, "rationale": "Ataque cheio sem densidade excessiva." },
+    "density_burst": { "min": 20, "max": 140, "curve": "log", "softKnee": 0.12, "rationale": "Faixa de energia principal do burst em contexto musical." },
+    "density_sustain": { "min": 8, "max": 55, "curve": "log", "softKnee": 0.12, "rationale": "Corpo contínuo sem wash constante." },
+    "attack_brightness": { "min": 0.8, "max": 1.65, "curve": "sCurve", "softKnee": 0.12, "rationale": "Brilho de ataque útil sem aspereza extrema." },
+    "wet_drive": { "min": 0.75, "max": 1.45, "curve": "exp", "softKnee": 0.10, "rationale": "Saturação leve a moderada com headroom." },
+    "sustain_darkness": { "min": 0.10, "max": 0.72, "curve": "sCurve", "softKnee": 0.12, "rationale": "Escurecimento progressivo sem perda de definição." },
+    "memory_mix": { "min": 0.12, "max": 0.72, "curve": "sCurve", "softKnee": 0.12, "rationale": "Memória perceptível sem engolir o presente." },
+    "memory_pull": { "min": 0.08, "max": 0.62, "curve": "sCurve", "softKnee": 0.12, "rationale": "Tração para regiões antigas com preservação de ataque atual." },
+    "attack_rate_jitter_depth": { "min": 0.002, "max": 0.09, "curve": "exp", "softKnee": 0.16, "rationale": "Humanização leve sem instabilidade de timing." },
+    "stereo_width": { "min": 0.30, "max": 1.00, "curve": "sCurve", "softKnee": 0.10, "rationale": "Abertura estéreo ampla mantendo centro estável." },
+    "attack_pan_spread": { "min": 0.25, "max": 1.00, "curve": "sCurve", "softKnee": 0.10, "rationale": "Espalhamento do ataque com foco central preservado." },
+    "sustain_pan_spread": { "min": 0.10, "max": 0.85, "curve": "sCurve", "softKnee": 0.10, "rationale": "Largura do sustain sem desfocar imagem." },
+    "smart_start_range": { "min": 4, "max": 24, "curve": "log", "softKnee": 0.12, "rationale": "Busca de zero-cross útil sem custo/latência excessivos." },
+    "mix_dry_gain": { "min": 0.25, "max": 0.85, "curve": "sCurve", "softKnee": 0.12, "rationale": "Dry equilibrado com espaço para wet reagir." },
+    "mix_wet_gain": { "min": 0.15, "max": 0.90, "curve": "sCurve", "softKnee": 0.12, "rationale": "Wet expressivo sem cobrir completamente o dry." },
+    "wet_output_trim": { "min": 0.55, "max": 1.20, "curve": "exp", "softKnee": 0.10, "rationale": "Compensação de nível pós-drive com margem de segurança." },
+    "sustain_diffusion_amount": { "min": 0.00, "max": 0.72, "curve": "sCurve", "softKnee": 0.12, "rationale": "Difusão para cauda musical sem virar pad contínuo." }
+  },
+  "macros": {
+    "response": {
+      "gain_compensation": 1.0,
+      "destinations": [
+        { "param": "tracking_thresh", "direction": "negative", "weight": 0.22, "curve": "sCurve", "safe_range": { "min": 0.15, "max": 1.0 } },
+        { "param": "transient_delta", "direction": "negative", "weight": 0.18, "curve": "sCurve", "safe_range": { "min": 0.15, "max": 1.0 } },
+        { "param": "duck_attack_coef", "direction": "negative", "weight": 0.20, "curve": "linear", "safe_range": { "min": 0.30, "max": 1.0 } },
+        { "param": "burst_immediate_count", "direction": "positive", "weight": 0.25, "curve": "sCurve", "safe_range": { "min": 0.45, "max": 1.0 } }
+      ]
+    },
+    "impact": {
+      "gain_compensation": 1.0,
+      "destinations": [
+        { "param": "density_burst", "direction": "positive", "weight": 0.35, "curve": "sCurve", "safe_range": { "min": 0.35, "max": 1.0 } },
+        { "param": "attack_brightness", "direction": "positive", "weight": 0.16, "curve": "linear", "safe_range": { "min": 0.25, "max": 1.0 } },
+        { "param": "burst_immediate_count", "direction": "positive", "weight": 0.20, "curve": "linear", "safe_range": { "min": 0.35, "max": 1.0 } }
+      ]
+    },
+    "bloom": {
+      "gain_compensation": 1.0,
+      "destinations": [
+        { "param": "density_sustain", "direction": "positive", "weight": 0.20, "curve": "linear", "safe_range": { "min": 0.35, "max": 1.0 } },
+        { "param": "wet_drive", "direction": "positive", "weight": 0.18, "curve": "softExp", "safe_range": { "min": 0.55, "max": 1.0 } },
+        { "param": "sustain_diffusion_amount", "direction": "positive", "weight": 0.20, "curve": "sCurve", "safe_range": { "min": 0.55, "max": 1.0 } }
+      ]
+    },
+    "smoothness": {
+      "gain_compensation": 1.0,
+      "destinations": [
+        { "param": "sustain_darkness", "direction": "positive", "weight": 0.22, "curve": "sCurve", "safe_range": { "min": 0.20, "max": 1.0 } },
+        { "param": "attack_rate_jitter_depth", "direction": "negative", "weight": 0.20, "curve": "softExp", "safe_range": { "min": 0.50, "max": 1.0 } }
+      ]
+    },
+    "memory": {
+      "gain_compensation": 1.0,
+      "destinations": [
+        { "param": "memory_mix", "direction": "positive", "weight": 0.25, "curve": "sCurve", "safe_range": { "min": 0.20, "max": 1.0 } },
+        { "param": "memory_pull", "direction": "positive", "weight": 0.16, "curve": "linear", "safe_range": { "min": 0.20, "max": 1.0 } }
+      ]
+    },
+    "width": {
+      "gain_compensation": 1.0,
+      "destinations": [
+        { "param": "stereo_width", "direction": "positive", "weight": 0.32, "curve": "sCurve", "safe_range": { "min": 0.20, "max": 1.0 } },
+        { "param": "attack_pan_spread", "direction": "positive", "weight": 0.24, "curve": "sCurve", "safe_range": { "min": 0.20, "max": 1.0 } }
+      ]
+    },
+    "scatter": {
+      "gain_compensation": 1.0,
+      "destinations": [
+        { "param": "sustain_pan_spread", "direction": "positive", "weight": 0.24, "curve": "sCurve", "safe_range": { "min": 0.20, "max": 1.0 } },
+        { "param": "smart_start_range", "direction": "positive", "weight": 0.20, "curve": "softExp", "safe_range": { "min": 0.60, "max": 1.0 } }
+      ]
+    },
+    "mix": {
+      "gain_compensation": 0.95,
+      "destinations": [
+        { "param": "mix_dry_gain", "direction": "negative", "weight": 0.28, "curve": "linear", "safe_range": { "min": 0.10, "max": 1.0 } },
+        { "param": "mix_wet_gain", "direction": "positive", "weight": 0.28, "curve": "linear", "safe_range": { "min": 0.10, "max": 1.0 } },
+        { "param": "wet_output_trim", "direction": "negative", "weight": 0.14, "curve": "softExp", "safe_range": { "min": 0.35, "max": 1.0 } },
+        { "param": "sustain_diffusion_amount", "direction": "positive", "weight": 0.16, "curve": "sCurve", "safe_range": { "min": 0.70, "max": 1.0 } }
+      ]
+    }
+  },
+  "canonical_presets": [
+    {
+      "preset_slug": "macro_balanced_v1",
+      "description": "Ponto de partida geral para validação de paridade.",
+      "expected_macro_positions": {
+        "response": 0.50,
+        "impact": 0.52,
+        "bloom": 0.48,
+        "smoothness": 0.54,
+        "memory": 0.46,
+        "width": 0.55,
+        "scatter": 0.50,
+        "mix": 0.50
+      }
+    },
+    {
+      "preset_slug": "macro_reactive_attack_v1",
+      "description": "Foco em ataque presente e resposta rápida.",
+      "expected_macro_positions": {
+        "response": 0.82,
+        "impact": 0.78,
+        "bloom": 0.40,
+        "smoothness": 0.38,
+        "memory": 0.32,
+        "width": 0.58,
+        "scatter": 0.46,
+        "mix": 0.62
+      }
+    },
+    {
+      "preset_slug": "macro_soft_ambient_v1",
+      "description": "Sustain aveludado com foco em bloom/memória.",
+      "expected_macro_positions": {
+        "response": 0.34,
+        "impact": 0.42,
+        "bloom": 0.84,
+        "smoothness": 0.80,
+        "memory": 0.74,
+        "width": 0.72,
+        "scatter": 0.68,
+        "mix": 0.56
+      }
+    }
+  ]
+}
