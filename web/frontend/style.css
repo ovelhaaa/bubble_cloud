@@ -931,6 +931,58 @@ a:hover { color: var(--primary-dark); text-decoration: underline; }
   color: var(--text);
   font-family: monospace;
 }
+.macro-health-grid {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+}
+.health-box {
+  background: var(--secondary);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.75rem;
+}
+.health-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.8rem;
+  color: var(--text-light);
+  margin-bottom: 0.4rem;
+}
+.health-meter {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.health-meter.is-na {
+  background: rgba(148, 163, 184, 0.35);
+}
+.health-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, #34d399, #f59e0b);
+  transition: width 120ms linear;
+}
+.indicator-na {
+  color: #9ca3af;
+}
+.indicator-live {
+  color: var(--text);
+}
+.state-transition {
+  margin-top: 0.85rem;
+  margin-bottom: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.macro-affected {
+  margin-top: 0.55rem;
+  margin-bottom: 0.1rem;
+  font-size: 0.78rem;
+  color: var(--text-light);
+}
 
 /* Actions */
 .export-actions .action-buttons {
