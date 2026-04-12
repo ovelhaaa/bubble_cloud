@@ -261,12 +261,20 @@ document.addEventListener('alpine:init', () => {
     macroDestinations: window.BubbleCloudMacroLayer.MACRO_DESTINATIONS,
     macroPerfHint: 1.0,
     macroLabels: {
-      response: 'Response',
-      impact_bloom: 'Impact / Bloom',
-      smoothness_memory: 'Smoothness / Memory',
-      width_scatter: 'Width / Scatter',
       mix: 'Mix',
+      impact: 'Impact',
+      bloom: 'Bloom',
+      smoothness: 'Smoothness',
+      memory: 'Memory',
+      response: 'Response',
+      width: 'Width',
+      scatter: 'Scatter',
     },
+    macroPrimaryPage: ['mix', 'impact', 'bloom', 'smoothness', 'memory', 'response'],
+    macroSecondaryPage: ['width', 'scatter'],
+    activeMacroPage: 0,
+    shiftMode: false,
+    compareMode: false,
     showAdvancedRawRange: false,
     baseline: { ...BASELINE },
     factoryPresets: [],
@@ -279,7 +287,7 @@ document.addEventListener('alpine:init', () => {
     paramDefinitions: PARAM_DEFINITIONS,
     paramHelp: PARAM_HELP,
 
-    openAccordion: PARAMETER_GROUPS[0].name,
+    openAccordion: 'Advanced',
     openHelp: {},
 
     toasts: [],
@@ -375,6 +383,32 @@ document.addEventListener('alpine:init', () => {
 
     toggleAccordion(name) {
       this.openAccordion = this.openAccordion === name ? '' : name;
+    },
+
+    get displayedMacroKeys() {
+      return this.activeMacroPage === 0 ? this.macroPrimaryPage : this.macroSecondaryPage;
+    },
+
+    get macroPageTitle() {
+      return this.activeMacroPage === 0 ? 'Main Macros' : 'Width / Scatter';
+    },
+
+    get macroSliderStep() {
+      return this.shiftMode ? 0.005 : 0.01;
+    },
+
+    cycleMacroPage() {
+      this.activeMacroPage = this.activeMacroPage === 0 ? 1 : 0;
+    },
+
+    toggleShiftMode() {
+      this.shiftMode = !this.shiftMode;
+    },
+
+    toggleCompareMode() {
+      this.compareMode = !this.compareMode;
+      this.queueParamFlush();
+      this.toast(this.compareMode ? 'Compare ativo: ouvindo Base Params.' : 'Compare desligado: ouvindo Resolved Params.', 'info');
     },
 
     toggleHelp(paramKey) {
@@ -498,9 +532,7 @@ document.addEventListener('alpine:init', () => {
         if (parsed && typeof parsed === 'object') {
           this.baseParams = { ...this.baseParams, ...(parsed.base_params || parsed.params || {}) };
           this.params = this.baseParams;
-          if (parsed.macro_values && typeof parsed.macro_values === 'object') {
-            this.macroValues = { ...this.macroValues, ...parsed.macro_values };
-          }
+          this.macroValues = window.BubbleCloudMacroLayer.normalizeMacroValues(parsed.macro_values);
           this.isDraft = true;
           this.hasUnexportedChanges = true;
           this.validateParamRanges();
@@ -539,10 +571,7 @@ document.addEventListener('alpine:init', () => {
       if (!preset) return;
       this.baseParams = { ...(preset.base_params || preset.params) };
       this.params = this.baseParams;
-      this.macroValues = {
-        ...window.BubbleCloudMacroLayer.createNeutralMacroValues(),
-        ...(preset.macro_values || {}),
-      };
+      this.macroValues = window.BubbleCloudMacroLayer.normalizeMacroValues(preset.macro_values);
       this.validateParamRanges();
       this.currentPresetSource = 'factory';
       this.currentPresetInfo = { ...preset };
@@ -558,10 +587,7 @@ document.addEventListener('alpine:init', () => {
     resetToLoadedPresetDefaults() {
       this.baseParams = { ...(this.loadedPresetReference.base_params || this.loadedPresetReference.params) };
       this.params = this.baseParams;
-      this.macroValues = {
-        ...window.BubbleCloudMacroLayer.createNeutralMacroValues(),
-        ...(this.loadedPresetReference.macro_values || {}),
-      };
+      this.macroValues = window.BubbleCloudMacroLayer.normalizeMacroValues(this.loadedPresetReference.macro_values);
       this.validateParamRanges();
       this.queueParamFlush();
       this.scheduleDraftPersist();
@@ -724,10 +750,7 @@ document.addEventListener('alpine:init', () => {
 
         this.baseParams = { ...(normalized.base_params || normalized.params) };
         this.params = this.baseParams;
-        this.macroValues = {
-          ...window.BubbleCloudMacroLayer.createNeutralMacroValues(),
-          ...(normalized.macro_values || {}),
-        };
+        this.macroValues = window.BubbleCloudMacroLayer.normalizeMacroValues(normalized.macro_values);
         this.validateParamRanges();
         this.loadedPresetReference = window.BubbleCloudPresetSchema.createCanonicalPreset(normalized);
         this.currentPresetInfo = { ...normalized };
@@ -813,7 +836,8 @@ document.addEventListener('alpine:init', () => {
       if (!this.workletReady || !this.workletNode) return;
       const id = WASM_PARAM_ID_MAP[key];
       if (id === undefined) return;
-      this.workletNode.port.postMessage({ type: 'param', id, value: Number(this.resolvedParams[key]) });
+      const activeParams = this.compareMode ? this.baseParams : this.resolvedParams;
+      this.workletNode.port.postMessage({ type: 'param', id, value: Number(activeParams[key]) });
     },
 
     pushAllParamsToAudio() {

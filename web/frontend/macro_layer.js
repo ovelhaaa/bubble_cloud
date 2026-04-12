@@ -1,7 +1,7 @@
 (function initMacroLayer(global) {
   const NEUTRAL_MACRO_VALUE = 0.5;
 
-  const PIPELINE_ORDER = ['response', 'impact_bloom', 'smoothness_memory', 'width_scatter', 'mix'];
+  const PIPELINE_ORDER = ['response', 'impact', 'bloom', 'smoothness', 'memory', 'width', 'scatter', 'mix'];
 
   const PERFORMANCE_RANGES = Object.freeze({
     tracking_thresh: { min: 0.01, max: 0.12, curve: 'sCurve', softKnee: 0.12, rationale: 'Resposta rápida sem entrar em auto-trigger de ruído.' },
@@ -33,21 +33,29 @@
       { param: 'duck_attack_coef', weight: -0.2, curve: 'linear', minPerf: 0.3, maxPerf: 1.0 },
       { param: 'burst_immediate_count', weight: 0.25, curve: 'sCurve', minPerf: 0.45, maxPerf: 1.0 },
     ],
-    impact_bloom: [
+    impact: [
       { param: 'density_burst', weight: 0.35, curve: 'sCurve', minPerf: 0.35, maxPerf: 1.0 },
-      { param: 'density_sustain', weight: 0.2, curve: 'linear', minPerf: 0.35, maxPerf: 1.0 },
       { param: 'attack_brightness', weight: 0.16, curve: 'linear', minPerf: 0.25, maxPerf: 1.0 },
-      { param: 'wet_drive', weight: 0.18, curve: 'softExp', minPerf: 0.55, maxPerf: 1.0 },
+      { param: 'burst_immediate_count', weight: 0.2, curve: 'linear', minPerf: 0.35, maxPerf: 1.0 },
     ],
-    smoothness_memory: [
+    bloom: [
+      { param: 'density_sustain', weight: 0.2, curve: 'linear', minPerf: 0.35, maxPerf: 1.0 },
+      { param: 'wet_drive', weight: 0.18, curve: 'softExp', minPerf: 0.55, maxPerf: 1.0 },
+      { param: 'sustain_diffusion_amount', weight: 0.2, curve: 'sCurve', minPerf: 0.55, maxPerf: 1.0 },
+    ],
+    smoothness: [
       { param: 'sustain_darkness', weight: 0.22, curve: 'sCurve', minPerf: 0.2, maxPerf: 1.0 },
-      { param: 'memory_mix', weight: 0.25, curve: 'sCurve', minPerf: 0.2, maxPerf: 1.0 },
-      { param: 'memory_pull', weight: 0.16, curve: 'linear', minPerf: 0.2, maxPerf: 1.0 },
       { param: 'attack_rate_jitter_depth', weight: -0.2, curve: 'softExp', minPerf: 0.5, maxPerf: 1.0 },
     ],
-    width_scatter: [
+    memory: [
+      { param: 'memory_mix', weight: 0.25, curve: 'sCurve', minPerf: 0.2, maxPerf: 1.0 },
+      { param: 'memory_pull', weight: 0.16, curve: 'linear', minPerf: 0.2, maxPerf: 1.0 },
+    ],
+    width: [
       { param: 'stereo_width', weight: 0.32, curve: 'sCurve', minPerf: 0.2, maxPerf: 1.0 },
       { param: 'attack_pan_spread', weight: 0.24, curve: 'sCurve', minPerf: 0.2, maxPerf: 1.0 },
+    ],
+    scatter: [
       { param: 'sustain_pan_spread', weight: 0.24, curve: 'sCurve', minPerf: 0.2, maxPerf: 1.0 },
       { param: 'smart_start_range', weight: 0.2, curve: 'softExp', minPerf: 0.6, maxPerf: 1.0 },
     ],
@@ -154,6 +162,35 @@
     }, {});
   }
 
+  function normalizeMacroValues(rawMacroValues) {
+    const normalized = createNeutralMacroValues();
+    const input = rawMacroValues && typeof rawMacroValues === 'object' ? rawMacroValues : {};
+    const fallbackImpactBloom = Number.isFinite(Number(input.impact_bloom)) ? Number(input.impact_bloom) : null;
+    const fallbackSmoothMemory = Number.isFinite(Number(input.smoothness_memory)) ? Number(input.smoothness_memory) : null;
+    const fallbackWidthScatter = Number.isFinite(Number(input.width_scatter)) ? Number(input.width_scatter) : null;
+
+    if (fallbackImpactBloom !== null) {
+      normalized.impact = fallbackImpactBloom;
+      normalized.bloom = fallbackImpactBloom;
+    }
+    if (fallbackSmoothMemory !== null) {
+      normalized.smoothness = fallbackSmoothMemory;
+      normalized.memory = fallbackSmoothMemory;
+    }
+    if (fallbackWidthScatter !== null) {
+      normalized.width = fallbackWidthScatter;
+      normalized.scatter = fallbackWidthScatter;
+    }
+
+    Object.keys(normalized).forEach((macroKey) => {
+      if (macroKey in input && Number.isFinite(Number(input[macroKey]))) {
+        normalized[macroKey] = Number(input[macroKey]);
+      }
+      normalized[macroKey] = clamp(normalized[macroKey], 0, 1);
+    });
+    return normalized;
+  }
+
   function applyMacroPipeline(baseParams, macroValues, paramDefinitions, perfHint = 1) {
     const resolved = { ...(baseParams || {}) };
     PIPELINE_ORDER.forEach((macroKey) => {
@@ -190,6 +227,7 @@
     PERFORMANCE_RANGES,
     resolvePerformanceRange,
     createNeutralMacroValues,
+    normalizeMacroValues,
     applyMacroPipeline,
   };
 })(window);
