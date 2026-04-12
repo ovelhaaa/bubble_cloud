@@ -319,6 +319,14 @@ document.addEventListener('alpine:init', () => {
     duration: 0,
 
     metrics: { envelope: 0, state: 0, voices: 0 },
+    telemetry: {
+      targetDensity: { value: 0, ratio: 0, available: false },
+      wetDuckAmount: { value: 0, ratio: 0, available: false },
+      schedulerPressure: { value: 0, ratio: 0, available: false },
+    },
+    recentStateTransition: 'N/A → N/A',
+    previousEngineState: null,
+    lastMacroAffectedText: '',
     pollInterval: null,
     transportTimer: null,
 
@@ -455,7 +463,11 @@ document.addEventListener('alpine:init', () => {
       this.queueParamFlush();
     },
 
-    onMacroInput() {
+    onMacroInput(macroKey) {
+      const affected = (this.macroDestinations?.[macroKey] || [])
+        .map((target) => this.formatLabel(target.param))
+        .filter(Boolean);
+      this.lastMacroAffectedText = affected.length > 0 ? `Affected: ${affected.join(', ')}` : 'Affected: N/A';
       this.saveDraft();
     },
 
@@ -784,6 +796,7 @@ document.addEventListener('alpine:init', () => {
             this.metrics.envelope = Number(data.envelope) || 0;
             this.metrics.state = Number(data.state) || 0;
             this.metrics.voices = Number(data.voices) || 0;
+            this.updateTelemetryIndicators();
           } else if (data.type === 'init-failed' || data.type === 'wasm-error' || data.type === 'processor-error') {
             this.workletReady = false;
             this.setAudioStatus(data.message || 'Falha na inicialização do WASM.', true);
@@ -823,6 +836,79 @@ document.addEventListener('alpine:init', () => {
           this.workletNode.port.postMessage({ type: 'poll' });
         }
       }, 100);
+    },
+
+    updateTelemetryIndicators() {
+      const currentState = Number(this.metrics.state);
+      if (Number.isFinite(currentState) && currentState !== this.previousEngineState) {
+        const previousLabel = this.previousEngineState === null ? 'N/A' : this.getEngineStateName(this.previousEngineState);
+        this.recentStateTransition = `${previousLabel} → ${this.getEngineStateName(currentState)}`;
+        this.previousEngineState = currentState;
+      }
+
+      const targetDensityEstimate = this.estimateTargetDensity(currentState, Number(this.metrics.envelope));
+      const wetDuckEstimate = this.estimateWetDuckAmount(currentState, Number(this.metrics.envelope));
+      const schedulerPressure = this.estimateSchedulerPressure(Number(this.metrics.voices), targetDensityEstimate);
+
+      this.telemetry.targetDensity = this.createSmoothedIndicator(this.telemetry.targetDensity, targetDensityEstimate, 160);
+      this.telemetry.wetDuckAmount = this.createSmoothedIndicator(this.telemetry.wetDuckAmount, wetDuckEstimate, 1);
+      this.telemetry.schedulerPressure = this.createSmoothedIndicator(this.telemetry.schedulerPressure, schedulerPressure, 1);
+    },
+
+    estimateTargetDensity(state, envelope) {
+      if (!Number.isFinite(state) || !Number.isFinite(envelope)) return null;
+      const env = clamp(envelope, 0, 1);
+      if (state === 3) {
+        const min = Number(this.resolvedParams.density_sustain) || 0;
+        const max = Number(this.resolvedParams.density_burst) || 0;
+        return min + (max - min) * env;
+      }
+      if (state === 2) return Number(this.resolvedParams.density_sustain);
+      if (state === 1) return Number(this.resolvedParams.density_decay);
+      return 0;
+    },
+
+    estimateWetDuckAmount(state, envelope) {
+      if (!Number.isFinite(state) || !Number.isFinite(envelope)) return null;
+      if (state === 0) return 0;
+      const env = clamp(envelope, 0, 1);
+      const maxDuck = 1 - clamp(Number(this.resolvedParams.duck_burst_level), 0, 1);
+      if (state === 3) return maxDuck;
+      if (state === 2 || state === 1) return maxDuck * env * 0.5;
+      return 0;
+    },
+
+    estimateSchedulerPressure(voices, targetDensityEstimate) {
+      if (!Number.isFinite(voices) || !Number.isFinite(targetDensityEstimate)) return null;
+      const voiceRatio = clamp(voices / 12, 0, 1);
+      const densityCap = Math.max(
+        Number(this.resolvedParams.density_burst) || 0,
+        Number(this.resolvedParams.density_sustain) || 0,
+        1
+      );
+      const densityRatio = clamp(targetDensityEstimate / densityCap, 0, 1);
+      return clamp(voiceRatio * 0.7 + densityRatio * 0.3, 0, 1);
+    },
+
+    createSmoothedIndicator(previous, nextValue, maxReference) {
+      const available = Number.isFinite(nextValue);
+      if (!available) return { value: 0, ratio: 0, available: false };
+      const oldValue = previous?.available ? Number(previous.value) : Number(nextValue);
+      const smoothedValue = oldValue + (Number(nextValue) - oldValue) * 0.35;
+      return {
+        value: smoothedValue,
+        ratio: clamp(smoothedValue / Math.max(1e-6, maxReference), 0, 1),
+        available: true,
+      };
+    },
+
+    formatIndicator(value, decimals = 0, suffix = '', available = false) {
+      if (!available || !Number.isFinite(value)) return 'N/A';
+      return `${Number(value).toFixed(decimals)}${suffix}`;
+    },
+
+    indicatorClass(available) {
+      return available ? 'indicator-live' : 'indicator-na';
     },
 
     handleModeSwitch() {
