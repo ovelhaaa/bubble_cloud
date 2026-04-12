@@ -1023,10 +1023,11 @@ document.addEventListener('alpine:init', () => {
           if (data.type === 'success' && data.mp3Buffer) resolve(data.mp3Buffer);
           else reject(new Error(data.message || 'Falha na codificação MP3.'));
         };
-        const handleError = () => {
+        const handleError = (event) => {
           worker.removeEventListener('message', handleMessage);
           worker.removeEventListener('error', handleError);
-          reject(new Error('Falha no worker de codificação MP3.'));
+          const detail = event?.message ? ` ${event.message}` : '';
+          reject(new Error(`Falha no worker de codificação MP3.${detail}`));
         };
 
         worker.addEventListener('message', handleMessage);
@@ -1075,7 +1076,11 @@ document.addEventListener('alpine:init', () => {
         this.setAudioStatus('Exportação MP3 concluída.');
         this.toast('Faixa processada exportada em MP3.', 'success');
       } catch (err) {
-        this.setAudioStatus(`Falha na exportação MP3: ${err.message || err}`, true);
+        const baseMessage = err?.message || String(err);
+        const hint = /carregar o encoder mp3|importscripts|network|cdn/i.test(baseMessage)
+          ? ' Verifique conexão de rede/CSP e a disponibilidade de vendor/lame.min.js.'
+          : '';
+        this.setAudioStatus(`Falha na exportação MP3: ${baseMessage}${hint}`, true);
         this.toast(this.audioStatusMsg, 'error');
       } finally {
         this.isExportingMp3 = false;
