@@ -214,22 +214,36 @@
                     <p class="helper-text" x-text="parityNote"></p>
                 </div>
 
-                <div class="card macro-controls">
-                    <h3>Macro Layer</h3>
-                    <p class="helper-text">Pipeline: Response → Impact/Bloom → Smoothness/Memory → Width/Scatter → Mix</p>
-                    <template x-for="macroKey in macroPipeline" :key="macroKey">
-                        <div class="param-row">
-                            <div class="param-labels">
-                                <label x-text="macroLabels[macroKey]"></label>
-                                <input type="number" min="0" max="1" step="0.01" class="num-input" x-model.number="macroValues[macroKey]" @input="onMacroInput(macroKey)">
-                            </div>
-                            <input type="range" min="0" max="1" step="0.01" class="slider" x-model.number="macroValues[macroKey]" @input="onMacroInput(macroKey)">
+                <div class="card macro-controls macro-ribbon">
+                    <div class="macro-ribbon-header">
+                        <h3 x-text="macroPageTitle"></h3>
+                        <div class="embedded-nav">
+                            <button class="btn btn-secondary" @click="cycleMacroPage()">Page</button>
+                            <button class="btn btn-secondary" :class="{ 'is-active': shiftMode }" @click="toggleShiftMode()">Shift</button>
+                            <button class="btn btn-primary" @click="commitResolvedToBase()">Commit</button>
+                            <button class="btn btn-secondary" :class="{ 'is-active': compareMode }" @click="toggleCompareMode()">Compare</button>
                         </div>
-                    </template>
+                    </div>
+                    <p class="helper-text">Main: Mix, Impact, Bloom, Smoothness, Memory, Response • Secondary: Width, Scatter</p>
+                    <div class="macro-grid">
+                        <template x-for="macroKey in displayedMacroKeys" :key="macroKey">
+                            <div class="macro-tile">
+                                <label x-text="macroLabels[macroKey]"></label>
+                                <input type="number" min="0" max="1" :step="macroSliderStep" class="num-input" x-model.number="macroValues[macroKey]" @input="onMacroInput(macroKey)">
+                                <input type="range" min="0" max="1" :step="macroSliderStep" class="slider" x-model.number="macroValues[macroKey]" @input="onMacroInput(macroKey)">
+                            </div>
+                        </template>
+                        <template x-if="activeMacroPage === 1">
+                            <div class="macro-slot-placeholders">
+                                <div class="macro-slot">Reserved Slot A</div>
+                                <div class="macro-slot">Reserved Slot B</div>
+                                <div class="macro-slot">Reserved Slot C</div>
+                            </div>
+                        </template>
+                    </div>
                     <p class="macro-affected" x-show="lastMacroAffectedText" x-text="lastMacroAffectedText"></p>
                     <div class="action-buttons">
                         <button class="btn btn-secondary" @click="resetMacros()">Reset Macros</button>
-                        <button class="btn btn-primary" @click="commitResolvedToBase()">Commit to Base</button>
                     </div>
                 </div>
 
