@@ -60,16 +60,16 @@ const BASELINE = {
 const PARAM_DEFINITIONS = {
   noise_floor: { min: 0, max: 0.1, step: 0.0005, label: 'Noise Floor' },
   tracking_thresh: { min: 0, max: 0.2, step: 0.001, label: 'Tracking Threshold' },
-  sustain_thresh: { min: 0, max: 0.5, step: 0.001, label: 'Sustain Threshold' },
+  sustain_thresh: { min: 0, max: 0.5, step: 0.001, label: 'Sustain Entry Threshold' },
   transient_delta: { min: 0, max: 0.5, step: 0.001, label: 'Transient Delta' },
-  duck_burst_level: { min: 0, max: 1, step: 0.01, label: 'Duck Burst Level' },
-  duck_attack_coef: { min: 0, max: 1, step: 0.001, label: 'Duck Attack Coef' },
-  duck_release_coef: { min: 0.8, max: 0.9999, step: 0.0001, label: 'Duck Release Coef' },
+  duck_burst_level: { min: 0, max: 1, step: 0.01, label: 'Attack Duck Target' },
+  duck_attack_coef: { min: 0, max: 1, step: 0.001, label: 'Duck Engage Speed' },
+  duck_release_coef: { min: 0.8, max: 0.9999, step: 0.0001, label: 'Duck Recovery Speed' },
   burst_duration_ticks: { min: 1, max: 64, step: 1, label: 'Burst Duration Ticks' },
   burst_immediate_count: { min: 1, max: 12, step: 1, label: 'Burst Immediate Count' },
   density_burst: { min: 0, max: 200, step: 0.1, label: 'Burst Density' },
   density_sustain: { min: 0, max: 100, step: 0.1, label: 'Sustain Density' },
-  density_decay: { min: 0, max: 50, step: 0.1, label: 'Density Decay' },
+  density_decay: { min: 0, max: 50, step: 0.1, label: 'Tail Density' },
   attack_region_min_offset_samples: { min: 0, max: 30000, step: 1, label: 'Attack Min Offset' },
   attack_region_max_offset_samples: { min: 64, max: 60000, step: 1, label: 'Attack Max Offset' },
   body_region_min_offset_samples: { min: 128, max: 90000, step: 1, label: 'Body Min Offset' },
@@ -117,16 +117,16 @@ const PARAM_DEFINITIONS = {
 const PARAM_HELP = {
   noise_floor: { musical: 'Define o piso de ruído ignorado pelo detector.', technical: 'Energia mínima para considerar sinal válido.', increase: 'o efeito atua já com sinais mais fracos.', decrease: 'o efeito só atua em sinais mais fortes.' },
   tracking_thresh: { musical: 'Ajusta a sensibilidade principal do tracking.', technical: 'Threshold de entrada do detector de envelope.', increase: 'exige sinal mais forte para reagir.', decrease: 'reage mais cedo a pequenas variações.' },
-  sustain_thresh: { musical: 'Controla quando o estado vira sustain.', technical: 'Limite da histerese para manter sustentação.', increase: 'entra em sustain com mais facilidade.', decrease: 'fica mais tempo em tracking/transiente.' },
+  sustain_thresh: { musical: 'Controla a entrada no estado de sustain.', technical: 'Limite superior para transição tracking/decay → sustain.', increase: 'valor maior = entra em sustain mais tarde (exige envelope maior).', decrease: 'valor menor = entra em sustain mais cedo.' },
   transient_delta: { musical: 'Regula agressividade na captura de ataque.', technical: 'Delta mínimo entre amostras para transiente.', increase: 'detecta menos ataques (mais seletivo).', decrease: 'detecta mais ataques (mais sensível).' },
-  duck_burst_level: { musical: 'Quantidade de duck no início do burst.', technical: 'Profundidade de redução durante transientes.', increase: 'o sinal base abaixa mais no ataque.', decrease: 'o sinal base quase não abaixa no ataque.' },
-  duck_attack_coef: { musical: 'Velocidade de entrada do duck.', technical: 'Coeficiente exponencial de ataque do duck.', increase: 'duck entra mais suave/lento.', decrease: 'duck entra mais rápido.' },
-  duck_release_coef: { musical: 'Tempo de recuperação após o ataque.', technical: 'Coeficiente exponencial de release do duck.', increase: 'recupera mais devagar.', decrease: 'recupera mais rápido.' },
+  duck_burst_level: { musical: 'Define o alvo de ganho wet durante burst/attack.', technical: 'Target aplicado ao ducking interno em estado transiente.', increase: 'valor maior = menos duck (mais presença de wet no ataque).', decrease: 'valor menor = mais duck (ataque mais limpo no dry).' },
+  duck_attack_coef: { musical: 'Velocidade com que o duck engata no ataque.', technical: 'Coeficiente do smoothing 1-pole durante transient burst.', increase: 'valor maior = duck engata mais rápido.', decrease: 'valor menor = duck engata mais lento.' },
+  duck_release_coef: { musical: 'Velocidade com que o duck se recupera após ataque.', technical: 'Coeficiente do smoothing 1-pole no retorno para ganho 1.0.', increase: 'valor maior = recuperação mais rápida.', decrease: 'valor menor = recuperação mais lenta.' },
   burst_duration_ticks: { musical: 'Duração do modo burst após ataque.', technical: 'Número de ticks mantidos em burst.', increase: 'burst dura mais tempo.', decrease: 'burst termina mais cedo.' },
   burst_immediate_count: { musical: 'Quantidade de grãos imediatos no ataque.', technical: 'Número de vozes disparadas instantaneamente.', increase: 'ataque mais cheio e denso.', decrease: 'ataque mais leve.' },
   density_burst: { musical: 'Densidade durante a fase de burst.', technical: 'Taxa de spawn no estado burst.', increase: 'mais grãos por segundo no ataque.', decrease: 'menos grãos por segundo no ataque.' },
   density_sustain: { musical: 'Densidade no corpo/sustain.', technical: 'Taxa de spawn no estado sustentado.', increase: 'textura contínua mais cheia.', decrease: 'textura de sustain mais espaçada.' },
-  density_decay: { musical: 'Velocidade de queda da densidade.', technical: 'Redução por bloco ao sair do sustain.', increase: 'a densidade cai mais rápido.', decrease: 'a densidade cai mais lentamente.' },
+  density_decay: { musical: 'Define quanta densidade existe na cauda (sparse decay).', technical: 'Teto de target_density no estado ENGINE_STATE_SPARSE_DECAY.', increase: 'valor maior = cauda mais densa (mais spawns no decay).', decrease: 'valor menor = cauda mais rarefeita.' },
   attack_region_min_offset_samples: { musical: 'Início da janela de leitura de ataque.', technical: 'Offset mínimo em samples da região attack.', increase: 'lê material um pouco mais antigo.', decrease: 'lê material mais recente.' },
   attack_region_max_offset_samples: { musical: 'Fim da janela de leitura de ataque.', technical: 'Offset máximo em samples da região attack.', increase: 'amplia alcance temporal da região.', decrease: 'encurta alcance temporal da região.' },
   body_region_min_offset_samples: { musical: 'Início da janela de corpo.', technical: 'Offset mínimo em samples da região body.', increase: 'empurra leitura para trás no tempo.', decrease: 'aproxima leitura do presente.' },
@@ -378,6 +378,12 @@ document.addEventListener('alpine:init', () => {
 
     formatLabel(paramKey) {
       return this.paramDefinitions[paramKey]?.label || paramKey.replaceAll('_', ' ');
+    },
+
+    getDirectionalTooltip(paramKey) {
+      const help = this.paramHelp[paramKey];
+      if (!help) return '';
+      return `Valor maior: ${help.increase} | Valor menor: ${help.decrease}`;
     },
 
     validateMacroRanges() {
