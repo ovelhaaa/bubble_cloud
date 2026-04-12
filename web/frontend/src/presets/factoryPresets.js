@@ -70,6 +70,106 @@
         esp32_safe: true,
         quality_tier: 'ESP32_SAFE',
         params: { density_burst: 30, density_sustain: 26, density_decay: 3, attack_pan_spread: 0.58, sustain_pan_spread: 0.72, stereo_width: 0.74, envelope_variation: 0.56, tone_variation: 0.35, attack_brightness: 0.78, sustain_darkness: 0.58, memory_mix: 0.45, memory_darkening: 0.5, sustain_diffusion_enable: 1, sustain_diffusion_amount: 0.34, sustain_diffusion_feedback: 0.48, attack_rate_jitter: 1, attack_rate_jitter_depth: 0.026, rng_seed: 6121 }
+      }),
+      buildPreset(baseParams, {
+        preset_name: 'Tape Cathedral',
+        preset_slug: 'tape-cathedral',
+        description: 'Ambiência ampla e quente com cauda longa, ótima para swells e worship.',
+        ui_category: 'Ambient',
+        tags: ['ambient', 'warm', 'wide', 'swells', 'cathedral'],
+        esp32_safe: false,
+        quality_tier: 'HIGH_QUALITY',
+        params: { density_burst: 24, density_sustain: 36, density_decay: 2, burst_immediate_count: 2, attack_brightness: 0.76, sustain_darkness: 0.62, stereo_width: 0.92, attack_pan_spread: 0.62, sustain_pan_spread: 0.86, memory_mix: 0.68, memory_pull: 0.58, memory_darkening: 0.54, sustain_diffusion_enable: 1, sustain_diffusion_amount: 0.64, sustain_diffusion_stages: 2, sustain_diffusion_feedback: 0.58, body_duration_ms_min: 140, body_duration_ms_max: 320, rng_seed: 7319 }
+      }),
+      buildPreset(baseParams, {
+        preset_name: 'Neon Funk Grid',
+        preset_slug: 'neon-funk-grid',
+        description: 'Ataque recortado e brilhante com decay curto para riffs funk e disco modernos.',
+        ui_category: 'Expressive',
+        tags: ['funk', 'tight', 'bright', 'rhythmic', 'esp32-safe'],
+        esp32_safe: true,
+        quality_tier: 'ESP32_SAFE',
+        params: { burst_duration_ticks: 5, burst_immediate_count: 5, density_burst: 90, density_sustain: 8, density_decay: 8, attack_brightness: 1.62, sustain_darkness: 0.16, attack_region_min_offset_samples: 160, attack_region_max_offset_samples: 1850, body_region_min_offset_samples: 2400, body_region_max_offset_samples: 6400, transient_delta: 0.09, stereo_width: 0.84, attack_pan_spread: 0.88, sustain_pan_spread: 0.42, sustain_diffusion_enable: 0, droplet_enable: 0, memory_mix: 0.12, rng_seed: 8426 }
+      }),
+      buildPreset(baseParams, {
+        preset_name: 'Cinematic Reverse Bloom',
+        preset_slug: 'cinematic-reverse-bloom',
+        description: 'Envelope mais lento e memória alta para sensação de swell reverso cinematográfico.',
+        ui_category: 'Ambient',
+        tags: ['cinematic', 'reverse-feel', 'swell', 'pad', 'diffuse'],
+        esp32_safe: false,
+        quality_tier: 'HIGH_QUALITY',
+        params: { density_burst: 20, density_sustain: 34, density_decay: 2, burst_immediate_count: 1, attack_brightness: 0.84, sustain_darkness: 0.48, envelope_variation: 0.64, memory_mix: 0.72, memory_pull: 0.66, memory_darkening: 0.42, sustain_diffusion_enable: 1, sustain_diffusion_amount: 0.6, sustain_diffusion_stages: 2, sustain_diffusion_feedback: 0.52, sustain_diffusion_delay: 28, stereo_width: 0.9, attack_pan_spread: 0.52, sustain_pan_spread: 0.84, droplet_enable: 1, droplet_probability: 0.1, droplet_gain: 0.34, rng_seed: 9532 }
+      }),
+      buildPreset(baseParams, {
+        preset_name: 'Lo-Fi Velvet Cloud',
+        preset_slug: 'lo-fi-velvet-cloud',
+        description: 'Textura aveludada com escurecimento extra, perfeita para neo-soul e lo-fi.',
+        ui_category: 'Utility',
+        tags: ['lofi', 'dark', 'soft', 'neo-soul', 'esp32-safe'],
+        esp32_safe: true,
+        quality_tier: 'ESP32_SAFE',
+        params: { density_burst: 34, density_sustain: 24, density_decay: 3, attack_brightness: 0.7, sustain_darkness: 0.72, memory_mix: 0.52, memory_pull: 0.4, memory_darkening: 0.62, sustain_diffusion_enable: 1, sustain_diffusion_amount: 0.3, sustain_diffusion_feedback: 0.4, stereo_width: 0.66, attack_pan_spread: 0.48, sustain_pan_spread: 0.58, tone_variation: 0.28, envelope_variation: 0.42, droplet_enable: 0, rng_seed: 1054 }
+      }),
+      buildPreset(baseParams, {
+        preset_name: 'Math Spark Delayless',
+        preset_slug: 'math-spark-delayless',
+        description: 'Resposta hiper-articulada e estéreo controlado para linhas rápidas com definição.',
+        ui_category: 'Expressive',
+        tags: ['math-rock', 'articulate', 'tight', 'stereo', 'esp32-safe'],
+        esp32_safe: true,
+        quality_tier: 'ESP32_SAFE',
+        params: { burst_duration_ticks: 4, burst_immediate_count: 4, density_burst: 82, density_sustain: 12, density_decay: 7, attack_brightness: 1.48, sustain_darkness: 0.22, attack_region_min_offset_samples: 120, attack_region_max_offset_samples: 1300, body_region_min_offset_samples: 2100, body_region_max_offset_samples: 5600, transient_delta: 0.08, stereo_width: 0.8, attack_pan_spread: 0.74, sustain_pan_spread: 0.36, sustain_diffusion_enable: 0, attack_rate_jitter: 1, attack_rate_jitter_depth: 0.02, memory_mix: 0.16, droplet_enable: 0, rng_seed: 1168 }
+      }),
+      buildPreset(baseParams, {
+        preset_name: 'Post-Rock Aurora',
+        preset_slug: 'post-rock-aurora',
+        description: 'Textura larga e crescente com difusão rica para camadas post-rock emotivas.',
+        ui_category: 'Ambient',
+        tags: ['post-rock', 'wide', 'emotional', 'layer', 'diffuse'],
+        esp32_safe: false,
+        quality_tier: 'HIGH_QUALITY',
+        params: { density_burst: 22, density_sustain: 38, density_decay: 2, burst_immediate_count: 2, attack_brightness: 0.88, sustain_darkness: 0.46, stereo_width: 0.94, attack_pan_spread: 0.66, sustain_pan_spread: 0.9, memory_mix: 0.7, memory_pull: 0.62, memory_darkening: 0.38, sustain_diffusion_enable: 1, sustain_diffusion_amount: 0.66, sustain_diffusion_stages: 2, sustain_diffusion_feedback: 0.57, sustain_diffusion_delay: 26, droplet_enable: 1, droplet_probability: 0.08, droplet_gain: 0.28, rng_seed: 2145 }
+      }),
+      buildPreset(baseParams, {
+        preset_name: 'Indie Sparkle Comp',
+        preset_slug: 'indie-sparkle-comp',
+        description: 'Ataque brilhante, compressão perceptiva e sustain médio para linhas indie abertas.',
+        ui_category: 'Expressive',
+        tags: ['indie', 'sparkle', 'chime', 'rhythm', 'esp32-safe'],
+        esp32_safe: true,
+        quality_tier: 'ESP32_SAFE',
+        params: { density_burst: 64, density_sustain: 18, density_decay: 5, burst_immediate_count: 3, attack_brightness: 1.44, sustain_darkness: 0.24, transient_delta: 0.06, stereo_width: 0.82, attack_pan_spread: 0.78, sustain_pan_spread: 0.5, sustain_diffusion_enable: 1, sustain_diffusion_amount: 0.22, sustain_diffusion_feedback: 0.34, memory_mix: 0.24, memory_pull: 0.18, attack_rate_jitter: 1, attack_rate_jitter_depth: 0.018, droplet_enable: 0, rng_seed: 3251 }
+      }),
+      buildPreset(baseParams, {
+        preset_name: 'Dub Bloom Fragments',
+        preset_slug: 'dub-bloom-fragments',
+        description: 'Grãos fragmentados com cauda escura e pulsante para frases dub/experimental.',
+        ui_category: 'Expressive',
+        tags: ['dub', 'fragmented', 'dark', 'experimental', 'stereo'],
+        esp32_safe: false,
+        quality_tier: 'HIGH_QUALITY',
+        params: { burst_duration_ticks: 7, burst_immediate_count: 4, density_burst: 74, density_sustain: 22, density_decay: 4, attack_brightness: 1.08, sustain_darkness: 0.64, memory_mix: 0.58, memory_pull: 0.52, memory_darkening: 0.56, sustain_diffusion_enable: 1, sustain_diffusion_amount: 0.48, sustain_diffusion_stages: 2, sustain_diffusion_feedback: 0.54, stereo_width: 0.88, attack_pan_spread: 0.84, sustain_pan_spread: 0.74, droplet_enable: 1, droplet_probability: 0.18, droplet_gain: 0.46, rng_seed: 4363 }
+      }),
+      buildPreset(baseParams, {
+        preset_name: 'Country Air Slap',
+        preset_slug: 'country-air-slap',
+        description: 'Ataque definido e arejado com sustain enxuto para licks country e hybrid picking.',
+        ui_category: 'Utility',
+        tags: ['country', 'twang', 'pick', 'tight', 'esp32-safe'],
+        esp32_safe: true,
+        quality_tier: 'ESP32_SAFE',
+        params: { burst_duration_ticks: 4, burst_immediate_count: 4, density_burst: 78, density_sustain: 10, density_decay: 8, attack_brightness: 1.58, sustain_darkness: 0.18, attack_region_min_offset_samples: 110, attack_region_max_offset_samples: 1450, body_region_min_offset_samples: 1900, body_region_max_offset_samples: 5200, transient_delta: 0.09, stereo_width: 0.76, attack_pan_spread: 0.68, sustain_pan_spread: 0.34, sustain_diffusion_enable: 0, memory_mix: 0.14, droplet_enable: 0, rng_seed: 5477 }
+      }),
+      buildPreset(baseParams, {
+        preset_name: 'Dream Pop Cassette',
+        preset_slug: 'dream-pop-cassette',
+        description: 'Cola de fita com escurecimento suave e estéreo largo para cama dream-pop.',
+        ui_category: 'Ambient',
+        tags: ['dream-pop', 'cassette', 'soft', 'wide', 'esp32-safe'],
+        esp32_safe: true,
+        quality_tier: 'ESP32_SAFE',
+        params: { density_burst: 28, density_sustain: 30, density_decay: 3, burst_immediate_count: 2, attack_brightness: 0.82, sustain_darkness: 0.66, memory_mix: 0.5, memory_pull: 0.42, memory_darkening: 0.58, sustain_diffusion_enable: 1, sustain_diffusion_amount: 0.36, sustain_diffusion_feedback: 0.44, stereo_width: 0.86, attack_pan_spread: 0.56, sustain_pan_spread: 0.72, tone_variation: 0.32, envelope_variation: 0.48, droplet_enable: 0, rng_seed: 6589 }
       })
     ];
   }
