@@ -209,8 +209,10 @@ typedef struct {
     int32_t bloom_timer_ticks;
 
     // Bus & Control Filters
-    Filter1Pole_t attack_hpf;
-    Filter1Pole_t sustain_lpf;
+    Filter1Pole_t attack_hpf_l;
+    Filter1Pole_t attack_hpf_r;
+    Filter1Pole_t sustain_lpf_l;
+    Filter1Pole_t sustain_lpf_r;
     Filter1Pole_t ducking_lpf;     // Smoothing filter for ducking gain
     Filter1Pole_t wet_presence_lpf;// Control-rate smoothing for wet presence target
     float sustain_diffusion_delay_l[BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY];
