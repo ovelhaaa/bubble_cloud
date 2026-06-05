@@ -153,76 +153,70 @@ static void WriteRawFile(const char* filename, const float* out_l, const float* 
 }
 
 
-static void ConfigureMonoCenterProbeVoice(BubbleClass_t bubble_class) {
-    const float center_pan = 0.70710678118f;
-
-    for (int i = 0; i < BUBBLES_BUFFER_SIZE_SAMPLES; i++) {
-        float t = (float)i / (float)SAMPLE_RATE;
-        float sample = 0.55f * sinf(2.0f * 3.14159f * 997.0f * t);
-        engine.delay_buffer[i] = (int16_t)(sample * 32767.0f);
-    }
-
-    for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
-        engine.voices[i].state = VOICE_STATE_INACTIVE;
-    }
-
-    BubbleVoice_t* v = &engine.voices[0];
-    v->state = VOICE_STATE_PLAYING;
-    v->bubble_class = bubble_class;
-    v->read_ptr_float = 1024.0f;
-    v->rate = 1.0f;
-    v->phase = 0.1f;
-    v->phase_inc = 0.01f;
-    v->amp = 1.0f;
-    v->gain = 1.0f;
-    v->pan_l = center_pan;
-    v->pan_r = center_pan;
-    v->envelope_variant = 0;
-    v->tone_profile = 0;
-    v->source_region_id = 0;
-    v->generation = 0;
-    v->fade_counter = 0;
-}
-
-static void AssertMonoCenterFilterSymmetry(BubbleClass_t bubble_class, const char* label) {
+static void RunMonoCenterCrosstalkCase(TestVectorType_t type, const char* label) {
     EngineConfig_t config = GetBaselineConfig();
+    config.stereo_width = 0.0f;
+    config.attack_pan_spread = 1.0f;
+    config.sustain_pan_spread = 1.0f;
+    config.sustain_diffusion_enable = 0;
+
     SoundBubbles_Init(&engine, delay_buffer_memory, &config);
     engine.master_dry_gain = 0.0f;
     engine.master_wet_gain = 1.0f;
-    engine.smoothed_ducking_gain = 1.0f;
-    engine.wet_presence_smoothed = 1.0f;
-    engine.class_gain_micro = 1.0f;
-    engine.class_gain_short = 1.0f;
-    engine.class_gain_sustain = 1.0f;
 
-    ConfigureMonoCenterProbeVoice(bubble_class);
+    int total_samples = NUM_SAMPLES + NUM_DRAIN_SAMPLES;
+    float* in_buffer = (float*)malloc(total_samples * sizeof(float));
+    float* out_l_buffer = (float*)malloc(total_samples * sizeof(float));
+    float* out_r_buffer = (float*)malloc(total_samples * sizeof(float));
 
-    enum { probe_samples = 24 };
-    float in_buffer[probe_samples] = {0.0f};
-    float out_l_buffer[probe_samples] = {0.0f};
-    float out_r_buffer[probe_samples] = {0.0f};
+    if (!in_buffer || !out_l_buffer || !out_r_buffer) {
+        printf("Error: Malloc failed for mono-center crosstalk test.\n");
+        free(in_buffer); free(out_l_buffer); free(out_r_buffer);
+        exit(1);
+    }
 
-    SoundBubbles_ProcessBlock(&engine, in_buffer, out_l_buffer, out_r_buffer, probe_samples);
-    ValidateEngineState(&engine);
+    GenerateTestVector(type, in_buffer, NUM_SAMPLES);
+    for (int i = NUM_SAMPLES; i < total_samples; i++) {
+        in_buffer[i] = 0.0f;
+    }
 
-    float max_diff = 0.0f;
+    int num_blocks = total_samples / BLOCK_SIZE;
+    for (int i = 0; i < num_blocks; i++) {
+        int offset = i * BLOCK_SIZE;
+        SoundBubbles_ProcessBlock(&engine, &in_buffer[offset], &out_l_buffer[offset], &out_r_buffer[offset], BLOCK_SIZE);
+        ValidateEngineState(&engine);
+    }
+
+    int remaining = total_samples % BLOCK_SIZE;
+    if (remaining > 0) {
+        int offset = num_blocks * BLOCK_SIZE;
+        SoundBubbles_ProcessBlock(&engine, &in_buffer[offset], &out_l_buffer[offset], &out_r_buffer[offset], remaining);
+        ValidateEngineState(&engine);
+    }
+
     float peak_val = 0.0f;
-    for (int i = 0; i < probe_samples; i++) {
+    float max_diff = 0.0f;
+    ValidateAndTrackOutput(out_l_buffer, out_r_buffer, total_samples, &peak_val);
+    for (int i = 0; i < total_samples; i++) {
         float diff = fabsf(out_l_buffer[i] - out_r_buffer[i]);
         if (diff > max_diff) max_diff = diff;
     }
-    ValidateAndTrackOutput(out_l_buffer, out_r_buffer, probe_samples, &peak_val);
 
-    printf("  %s mono-center max L/R diff: %.9g (peak %.9g)\n", label, max_diff, peak_val);
+    printf("  %s mono-center max L/R diff: %.9g (wet peak %.9g)\n", label, max_diff, peak_val);
     assert(peak_val > 0.0001f);
-    assert(max_diff <= 0.000001f);
+    assert(max_diff <= 0.00001f);
+
+    free(in_buffer);
+    free(out_l_buffer);
+    free(out_r_buffer);
 }
 
 static void RunMonoCenterCrosstalkTest(void) {
     printf("Running mono-center L/R filter crosstalk test...\n");
-    AssertMonoCenterFilterSymmetry(BUBBLE_CLASS_MICRO_ATTACK, "Attack HPF");
-    AssertMonoCenterFilterSymmetry(BUBBLE_CLASS_SUSTAIN_BODY, "Sustain LPF");
+    RunMonoCenterCrosstalkCase(TEST_VECTOR_PLUCKED_TONE, "Attack-biased pluck");
+    RunMonoCenterCrosstalkCase(TEST_VECTOR_SUSTAINED_SINE, "Sustain-biased sine");
 }
+
 
 // --- Main Execution Runners ---
 
