@@ -33,6 +33,11 @@ static float WindowLUT_Tukey[1024];
 static bool luts_initialized = false;
 static const uint32_t RNG_STATE_FALLBACK = 0x6D2B79F5u;
 
+typedef struct {
+    const ReadRegionConfig_t* region;
+    uint8_t region_id;
+} ReadRegionChoice_t;
+
 // --- Static Helper Prototypes ---
 static void InitWindowLUTs(void);
 static uint32_t NextRandomU32(SoundBubblesEngine_t* engine);
@@ -53,9 +58,8 @@ static void Scheduler_RunTick(SoundBubblesEngine_t* engine);
 static int Voice_Allocate(SoundBubblesEngine_t* engine);
 static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleClass_t b_class, int generation);
 static float LookupWindow(float phase, WindowType_t type);
-static const ReadRegionConfig_t* ResolveReadRegion(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state);
-static int ResolveReadRegionId(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state);
-static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state);
+static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state);
+static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadRegionConfig_t* region);
 static int32_t RefineReadOffsetSmartStart(const SoundBubblesEngine_t* engine, int32_t read_offset_samples, int32_t range);
 static float EnvelopeVariantGain(float phase, uint8_t variant, int family);
 static float SoftClip(float x, float amount);
@@ -648,7 +652,8 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     }
     v->phase_inc = 1.0f / duration_samples;
 
-    int32_t read_offset_samples = ChooseReadOffsetSamples(engine, b_class, engine->engine_state);
+    ReadRegionChoice_t region_choice = ResolveReadRegionChoice(engine, b_class, engine->engine_state);
+    int32_t read_offset_samples = ChooseReadOffsetSamples(engine, region_choice.region);
     if (engine->config.smart_start_enable) {
         read_offset_samples = RefineReadOffsetSmartStart(engine, read_offset_samples, engine->config.smart_start_range);
     }
@@ -672,9 +677,8 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
         v->gain *= (b_class == BUBBLE_CLASS_SUSTAIN_BODY) ? Clamp(1.0f - engine->config.sustain_darkness, 0.2f, 1.0f) : 0.92f;
     }
 
-    int region_id = ResolveReadRegionId(engine, b_class, engine->engine_state);
-    v->source_region_id = (uint8_t)region_id;
-    if (region_id == 2) {
+    v->source_region_id = region_choice.region_id;
+    if (region_choice.region_id == 2) {
         v->gain *= Clamp(1.0f - 0.6f * engine->config.memory_darkening, 0.2f, 1.0f);
     }
 
@@ -704,20 +708,33 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     }
 }
 
-static const ReadRegionConfig_t* ResolveReadRegion(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state) {
+static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state) {
     // Deterministic map from "what bubble" + "what phrase phase" => temporal memory slice.
     // Attack-oriented contexts read from attack/body. Tail-oriented contexts read from memory.
+    ReadRegionChoice_t choice;
+
     switch (bubble_class) {
         case BUBBLE_CLASS_MICRO_ATTACK:
-            return &engine->config.attack_region;
+            choice.region = &engine->config.attack_region;
+            choice.region_id = 0;
+            return choice;
+
         case BUBBLE_CLASS_SHORT_INTERMEDIATE:
         {
             float mem_bias = Clamp01(engine->config.memory_mix);
             if (engine_state == ENGINE_STATE_SUSTAIN_BODY || engine_state == ENGINE_STATE_SPARSE_DECAY) {
                 mem_bias = Clamp01(mem_bias + engine->config.memory_pull * 0.35f);
             }
-            return (RandomFloat01(engine) < mem_bias) ? &engine->config.memory_region : &engine->config.body_region;
+            if (RandomFloat01(engine) < mem_bias) {
+                choice.region = &engine->config.memory_region;
+                choice.region_id = 2;
+            } else {
+                choice.region = &engine->config.body_region;
+                choice.region_id = 1;
+            }
+            return choice;
         }
+
         case BUBBLE_CLASS_SUSTAIN_BODY:
         default:
         {
@@ -725,21 +742,19 @@ static const ReadRegionConfig_t* ResolveReadRegion(SoundBubblesEngine_t* engine,
             if (engine_state == ENGINE_STATE_TRANSIENT_BURST || engine_state == ENGINE_STATE_ATTACK_ONGOING) {
                 mem_bias *= 0.35f;
             }
-            return (RandomFloat01(engine) < mem_bias) ? &engine->config.memory_region : &engine->config.body_region;
+            if (RandomFloat01(engine) < mem_bias) {
+                choice.region = &engine->config.memory_region;
+                choice.region_id = 2;
+            } else {
+                choice.region = &engine->config.body_region;
+                choice.region_id = 1;
+            }
+            return choice;
         }
     }
 }
 
-static int ResolveReadRegionId(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state) {
-    const ReadRegionConfig_t* region = ResolveReadRegion(engine, bubble_class, engine_state);
-    if (region == &engine->config.attack_region) return 0;
-    if (region == &engine->config.body_region) return 1;
-    return 2;
-}
-
-static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state) {
-    const ReadRegionConfig_t* region = ResolveReadRegion(engine, bubble_class, engine_state);
-
+static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadRegionConfig_t* region) {
     // Clamp and normalize range so presets stay ring-buffer safe.
     const int32_t min_safe = BUBBLES_GUARD_ZONE_SAMPLES;
     const int32_t max_safe = BUBBLES_BUFFER_SIZE_SAMPLES - BUBBLES_GUARD_ZONE_SAMPLES - 1;
