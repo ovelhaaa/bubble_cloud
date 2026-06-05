@@ -152,6 +152,72 @@ static void WriteRawFile(const char* filename, const float* out_l, const float* 
     }
 }
 
+
+static void RunMonoCenterCrosstalkCase(TestVectorType_t type, const char* label) {
+    EngineConfig_t config = GetBaselineConfig();
+    config.stereo_width = 0.0f;
+    config.attack_pan_spread = 1.0f;
+    config.sustain_pan_spread = 1.0f;
+    config.sustain_diffusion_enable = 0;
+
+    SoundBubbles_Init(&engine, delay_buffer_memory, &config);
+    engine.master_dry_gain = 0.0f;
+    engine.master_wet_gain = 1.0f;
+
+    int total_samples = NUM_SAMPLES + NUM_DRAIN_SAMPLES;
+    float* in_buffer = (float*)malloc(total_samples * sizeof(float));
+    float* out_l_buffer = (float*)malloc(total_samples * sizeof(float));
+    float* out_r_buffer = (float*)malloc(total_samples * sizeof(float));
+
+    if (!in_buffer || !out_l_buffer || !out_r_buffer) {
+        printf("Error: Malloc failed for mono-center crosstalk test.\n");
+        free(in_buffer); free(out_l_buffer); free(out_r_buffer);
+        exit(1);
+    }
+
+    GenerateTestVector(type, in_buffer, NUM_SAMPLES);
+    for (int i = NUM_SAMPLES; i < total_samples; i++) {
+        in_buffer[i] = 0.0f;
+    }
+
+    int num_blocks = total_samples / BLOCK_SIZE;
+    for (int i = 0; i < num_blocks; i++) {
+        int offset = i * BLOCK_SIZE;
+        SoundBubbles_ProcessBlock(&engine, &in_buffer[offset], &out_l_buffer[offset], &out_r_buffer[offset], BLOCK_SIZE);
+        ValidateEngineState(&engine);
+    }
+
+    int remaining = total_samples % BLOCK_SIZE;
+    if (remaining > 0) {
+        int offset = num_blocks * BLOCK_SIZE;
+        SoundBubbles_ProcessBlock(&engine, &in_buffer[offset], &out_l_buffer[offset], &out_r_buffer[offset], remaining);
+        ValidateEngineState(&engine);
+    }
+
+    float peak_val = 0.0f;
+    float max_diff = 0.0f;
+    ValidateAndTrackOutput(out_l_buffer, out_r_buffer, total_samples, &peak_val);
+    for (int i = 0; i < total_samples; i++) {
+        float diff = fabsf(out_l_buffer[i] - out_r_buffer[i]);
+        if (diff > max_diff) max_diff = diff;
+    }
+
+    printf("  %s mono-center max L/R diff: %.9g (wet peak %.9g)\n", label, max_diff, peak_val);
+    assert(peak_val > 0.0001f);
+    assert(max_diff <= 0.00001f);
+
+    free(in_buffer);
+    free(out_l_buffer);
+    free(out_r_buffer);
+}
+
+static void RunMonoCenterCrosstalkTest(void) {
+    printf("Running mono-center L/R filter crosstalk test...\n");
+    RunMonoCenterCrosstalkCase(TEST_VECTOR_PLUCKED_TONE, "Attack-biased pluck");
+    RunMonoCenterCrosstalkCase(TEST_VECTOR_SUSTAINED_SINE, "Sustain-biased sine");
+}
+
+
 // --- Main Execution Runners ---
 
 static void RunTest(TestVectorType_t type, const char* out_filename) {
@@ -291,6 +357,9 @@ int main(void) {
 
     // Irregular chunk size validation
     RunTestIrregularChunks(TEST_VECTOR_PLUCKED_TONE, "test_out_pluck_irregular.raw");
+
+    // Stereo bus filter state isolation validation
+    RunMonoCenterCrosstalkTest();
 
     printf("All tests completed successfully. No assertions failed.\n");
     return 0;

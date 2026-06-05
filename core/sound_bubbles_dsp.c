@@ -115,10 +115,12 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
         engine->voices[i].state = VOICE_STATE_INACTIVE;
     }
 
-    // Attack HPF (implemented internally as input - LPF)
-    CalculateFilterCoeffsLPF(&engine->attack_hpf, 1500.0f);
-    // Sustain LPF
-    CalculateFilterCoeffsLPF(&engine->sustain_lpf, 2000.0f);
+    // Attack HPF (implemented internally as input - LPF), one state per stereo channel.
+    CalculateFilterCoeffsLPF(&engine->attack_hpf_l, 1500.0f);
+    CalculateFilterCoeffsLPF(&engine->attack_hpf_r, 1500.0f);
+    // Sustain LPF, one state per stereo channel.
+    CalculateFilterCoeffsLPF(&engine->sustain_lpf_l, 2000.0f);
+    CalculateFilterCoeffsLPF(&engine->sustain_lpf_r, 2000.0f);
 
     engine->ducking_lpf.b0 = engine->config.duck_attack_coef;
     engine->ducking_lpf.a1 = 1.0f - engine->config.duck_attack_coef;
@@ -233,10 +235,10 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
         }
 
         // Bus Filters
-        float attack_filtered_l = Filter1Pole_ProcessHPF(&engine->attack_hpf, bus_attack_l);
-        float attack_filtered_r = Filter1Pole_ProcessHPF(&engine->attack_hpf, bus_attack_r);
-        float sustain_filtered_l = Filter1Pole_ProcessLPF(&engine->sustain_lpf, bus_sustain_l);
-        float sustain_filtered_r = Filter1Pole_ProcessLPF(&engine->sustain_lpf, bus_sustain_r);
+        float attack_filtered_l = Filter1Pole_ProcessHPF(&engine->attack_hpf_l, bus_attack_l);
+        float attack_filtered_r = Filter1Pole_ProcessHPF(&engine->attack_hpf_r, bus_attack_r);
+        float sustain_filtered_l = Filter1Pole_ProcessLPF(&engine->sustain_lpf_l, bus_sustain_l);
+        float sustain_filtered_r = Filter1Pole_ProcessLPF(&engine->sustain_lpf_r, bus_sustain_r);
 
         if (engine->config.sustain_diffusion_enable) {
             int delay_samples = engine->config.sustain_diffusion_delay;
