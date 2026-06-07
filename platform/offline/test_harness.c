@@ -116,6 +116,15 @@ static EngineConfig_t GetBaselineConfig() {
 static void ValidateEngineState(SoundBubblesEngine_t* e) {
     assert(e->engine_state >= ENGINE_STATE_SILENCE && e->engine_state <= ENGINE_STATE_SPARSE_DECAY);
     assert(e->smoothed_ducking_gain >= 0.0f && e->smoothed_ducking_gain <= 1.0f);
+    assert(e->pending_spawn_count >= 0 && e->pending_spawn_count <= BUBBLES_PENDING_SPAWN_CAPACITY);
+    assert(e->pending_spawn_head >= 0 && e->pending_spawn_head < BUBBLES_PENDING_SPAWN_CAPACITY);
+
+    for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
+        assert(e->voices[i].state >= VOICE_STATE_INACTIVE && e->voices[i].state <= VOICE_STATE_PREEMPT_FADING);
+        if (e->voices[i].state == VOICE_STATE_PREEMPT_FADING) {
+            assert(e->voices[i].fade_counter >= 0 && e->voices[i].fade_counter <= BUBBLES_FADE_SAMPLES);
+        }
+    }
 }
 
 static void ValidateVoicesNotStuck(SoundBubblesEngine_t* e) {
@@ -137,6 +146,20 @@ static void ValidateAndTrackOutput(const float* out_l, const float* out_r, int n
         if (abs_l > *peak) *peak = abs_l;
         if (abs_r > *peak) *peak = abs_r;
     }
+}
+
+static void ValidateNoSampleDiscontinuities(const float* out_l, const float* out_r, int num_samples, float max_allowed_step) {
+    float max_step = 0.0f;
+
+    for (int i = 1; i < num_samples; i++) {
+        float step_l = fabsf(out_l[i] - out_l[i - 1]);
+        float step_r = fabsf(out_r[i] - out_r[i - 1]);
+        if (step_l > max_step) max_step = step_l;
+        if (step_r > max_step) max_step = step_r;
+    }
+
+    printf("  Saturation max adjacent-sample step: %.9g (limit %.9g)\n", max_step, max_allowed_step);
+    assert(max_step <= max_allowed_step);
 }
 
 static void WriteRawFile(const char* filename, const float* out_l, const float* out_r, int num_samples) {
@@ -345,6 +368,77 @@ static void RunTestIrregularChunks(TestVectorType_t type, const char* out_filena
     free(out_r_buffer);
 }
 
+static void RunVoiceSaturationContinuityTest(void) {
+    printf("Running saturated voice continuity test...\n");
+
+    EngineConfig_t config = GetBaselineConfig();
+    config.burst_immediate_count = BUBBLES_MAX_VOICES;
+    config.density_burst = 2400.0f;
+    config.density_sustain = 1800.0f;
+    config.density_decay = 1200.0f;
+    config.droplet_enable = 1;
+    config.droplet_probability = 1.0f;
+    config.droplet_gain = 0.7f;
+    config.droplet_length_scale = 1.0f;
+    config.class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_min = 60.0f;
+    config.class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_max = 90.0f;
+    config.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].duration_ms_min = 90.0f;
+    config.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].duration_ms_max = 140.0f;
+    config.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_min = 160.0f;
+    config.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_max = 260.0f;
+
+    SoundBubbles_Init(&engine, delay_buffer_memory, &config);
+    engine.master_dry_gain = 0.0f;
+    engine.master_wet_gain = 1.0f;
+
+    int total_samples = SAMPLE_RATE * 3;
+    float* in_buffer = (float*)malloc(total_samples * sizeof(float));
+    float* out_l_buffer = (float*)malloc(total_samples * sizeof(float));
+    float* out_r_buffer = (float*)malloc(total_samples * sizeof(float));
+
+    if (!in_buffer || !out_l_buffer || !out_r_buffer) {
+        printf("Error: Malloc failed for saturated continuity test.\n");
+        free(in_buffer); free(out_l_buffer); free(out_r_buffer);
+        exit(1);
+    }
+
+    for (int i = 0; i < total_samples; i++) {
+        float t = (float)i / SAMPLE_RATE;
+        float transient = (i % (SAMPLE_RATE / 20) == 0) ? 0.9f : 0.0f;
+        in_buffer[i] = 0.45f * sinf(2.0f * 3.14159f * 330.0f * t) + transient;
+    }
+
+    int saturated_ticks = 0;
+    int pending_ticks = 0;
+    for (int offset = 0; offset < total_samples; offset += BLOCK_SIZE) {
+        int chunk = BLOCK_SIZE;
+        if (offset + chunk > total_samples) {
+            chunk = total_samples - offset;
+        }
+
+        SoundBubbles_ProcessBlock(&engine, &in_buffer[offset], &out_l_buffer[offset], &out_r_buffer[offset], chunk);
+        ValidateEngineState(&engine);
+
+        if (engine.metrics_last_block.active_voices == BUBBLES_MAX_VOICES) {
+            saturated_ticks++;
+        }
+        if (engine.pending_spawn_count > 0) {
+            pending_ticks++;
+        }
+    }
+
+    float peak_val = 0.0f;
+    ValidateAndTrackOutput(out_l_buffer, out_r_buffer, total_samples, &peak_val);
+    ValidateNoSampleDiscontinuities(out_l_buffer, out_r_buffer, total_samples, 0.85f);
+    assert(saturated_ticks > 0);
+    assert(pending_ticks > 0);
+    printf("  Saturated ticks: %d, pending ticks: %d, wet peak %.9g\n", saturated_ticks, pending_ticks, peak_val);
+
+    free(in_buffer);
+    free(out_l_buffer);
+    free(out_r_buffer);
+}
+
 int main(void) {
     printf("Starting Sound Bubbles DSP Offline Test Harness...\n");
 
@@ -360,6 +454,9 @@ int main(void) {
 
     // Stereo bus filter state isolation validation
     RunMonoCenterCrosstalkTest();
+
+    // Saturated voice stealing/pending-spawn continuity validation
+    RunVoiceSaturationContinuityTest();
 
     printf("All tests completed successfully. No assertions failed.\n");
     return 0;
