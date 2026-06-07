@@ -97,7 +97,7 @@ void bubble_engine_init(BubbleEngine_t* engine, int16_t* delay_buffer_memory, co
 }
 
 void bubble_engine_reset(BubbleEngine_t* engine) {
-    if (engine == NULL) {
+    if (engine == NULL || engine->delay_buffer == NULL) {
         return;
     }
 
@@ -116,7 +116,7 @@ void bubble_engine_reset(BubbleEngine_t* engine) {
 }
 
 void bubble_engine_process(BubbleEngine_t* engine, const float* in_mono, float* out_left, float* out_right, int num_samples) {
-    if (engine == NULL || in_mono == NULL || out_left == NULL || out_right == NULL || num_samples <= 0) {
+    if (engine == NULL || engine->delay_buffer == NULL || in_mono == NULL || out_left == NULL || out_right == NULL || num_samples <= 0) {
         return;
     }
 
