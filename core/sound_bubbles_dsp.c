@@ -58,7 +58,8 @@ static void Scheduler_RunTick(SoundBubblesEngine_t* engine);
 static int Voice_FindInactiveSlot(SoundBubblesEngine_t* engine);
 static int Voice_Allocate(SoundBubblesEngine_t* engine);
 static bool Voice_QueuePendingSpawn(SoundBubblesEngine_t* engine, BubbleClass_t b_class, int generation);
-static bool Voice_FlushPendingSpawns(SoundBubblesEngine_t* engine);
+static int32_t Voice_CountFadingVoices(const SoundBubblesEngine_t* engine);
+static int Voice_FlushPendingSpawns(SoundBubblesEngine_t* engine, int max_spawns);
 static bool Voice_RequestSpawn(SoundBubblesEngine_t* engine, BubbleClass_t b_class, int generation);
 static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleClass_t b_class, int generation);
 static float LookupWindow(float phase, WindowType_t type);
@@ -510,7 +511,7 @@ static void Scheduler_SpawnImmediateBurst(SoundBubblesEngine_t* engine) {
 }
 
 static void Scheduler_RunTick(SoundBubblesEngine_t* engine) {
-    Voice_FlushPendingSpawns(engine);
+    int spawns_this_tick = Voice_FlushPendingSpawns(engine, SCHED_MAX_SPAWNS_PER_TICK);
 
     if (engine->engine_state == ENGINE_STATE_SILENCE) {
         engine->spawn_accumulator = 0.0f;
@@ -521,7 +522,6 @@ static void Scheduler_RunTick(SoundBubblesEngine_t* engine) {
     float spawns_per_tick = engine->target_density * ((float)BUBBLES_BLOCK_SIZE / (float)BUBBLES_SAMPLE_RATE);
     engine->spawn_accumulator += spawns_per_tick;
 
-    int spawns_this_tick = 0;
     while (engine->spawn_accumulator >= 1.0f && spawns_this_tick < SCHED_MAX_SPAWNS_PER_TICK) {
         BubbleClass_t selected_class;
         float r = RandomFloat01(engine);
@@ -656,10 +656,22 @@ static bool Voice_QueuePendingSpawn(SoundBubblesEngine_t* engine, BubbleClass_t 
     return true;
 }
 
-static bool Voice_FlushPendingSpawns(SoundBubblesEngine_t* engine) {
-    bool spawned_any = false;
+static int32_t Voice_CountFadingVoices(const SoundBubblesEngine_t* engine) {
+    int32_t fading_count = 0;
 
-    while (engine->pending_spawn_count > 0) {
+    for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
+        if (engine->voices[i].state == VOICE_STATE_PREEMPT_FADING) {
+            fading_count++;
+        }
+    }
+
+    return fading_count;
+}
+
+static int Voice_FlushPendingSpawns(SoundBubblesEngine_t* engine, int max_spawns) {
+    int spawned_count = 0;
+
+    while (engine->pending_spawn_count > 0 && spawned_count < max_spawns) {
         int voice_idx = Voice_FindInactiveSlot(engine);
         if (voice_idx < 0) {
             break;
@@ -671,14 +683,14 @@ static bool Voice_FlushPendingSpawns(SoundBubblesEngine_t* engine) {
 
         Voice_SpawnInit(engine, voice_idx, request.bubble_class, request.generation);
         engine->metrics_tick_spawn_count++;
-        spawned_any = true;
+        spawned_count++;
     }
 
     if (engine->pending_spawn_count == 0) {
         engine->pending_spawn_head = 0;
     }
 
-    return spawned_any;
+    return spawned_count;
 }
 
 static bool Voice_RequestSpawn(SoundBubblesEngine_t* engine, BubbleClass_t b_class, int generation) {
@@ -692,10 +704,15 @@ static bool Voice_RequestSpawn(SoundBubblesEngine_t* engine, BubbleClass_t b_cla
         return false;
     }
 
-    // If Voice_Allocate finds no inactive slot, it may choose exactly one active
-    // victim and start its fade. The spawn itself stays queued until that victim
-    // (or another voice) becomes inactive on a later control tick.
-    (void)Voice_Allocate(engine);
+    // Only preempt a new victim when currently fading voices cannot already cover
+    // all queued spawns plus this new request. Existing PREEMPT_FADING voices are
+    // guaranteed future inactive slots, so reusing their pending capacity avoids
+    // unnecessary polyphony loss.
+    int32_t fading_count = Voice_CountFadingVoices(engine);
+    if (fading_count <= engine->pending_spawn_count) {
+        (void)Voice_Allocate(engine);
+    }
+
     Voice_QueuePendingSpawn(engine, b_class, generation);
     return false;
 }

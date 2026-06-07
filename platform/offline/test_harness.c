@@ -133,6 +133,18 @@ static void ValidateVoicesNotStuck(SoundBubblesEngine_t* e) {
     }
 }
 
+static int CountVoicesInState(const SoundBubblesEngine_t* e, VoiceState_t state) {
+    int count = 0;
+
+    for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
+        if (e->voices[i].state == state) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
 static void ValidateAndTrackOutput(const float* out_l, const float* out_r, int num_samples, float* peak) {
     for (int i = 0; i < num_samples; i++) {
         assert(!isnan(out_l[i]) && !isinf(out_l[i]));
@@ -368,6 +380,84 @@ static void RunTestIrregularChunks(TestVectorType_t type, const char* out_filena
     free(out_r_buffer);
 }
 
+static void RunPendingSpawnBudgetTest(void) {
+    printf("Running pending spawn budget test...\n");
+
+    EngineConfig_t config = GetBaselineConfig();
+    SoundBubbles_Init(&engine, delay_buffer_memory, &config);
+
+    for (int i = 0; i < BUBBLES_PENDING_SPAWN_CAPACITY; i++) {
+        engine.pending_spawns[i].bubble_class = BUBBLE_CLASS_MICRO_ATTACK;
+        engine.pending_spawns[i].generation = 0;
+    }
+    engine.pending_spawn_head = 0;
+    engine.pending_spawn_count = BUBBLES_PENDING_SPAWN_CAPACITY;
+
+    float in_buffer[BLOCK_SIZE] = {0.0f};
+    float out_l_buffer[BLOCK_SIZE] = {0.0f};
+    float out_r_buffer[BLOCK_SIZE] = {0.0f};
+
+    SoundBubbles_ProcessBlock(&engine, in_buffer, out_l_buffer, out_r_buffer, BLOCK_SIZE);
+    ValidateEngineState(&engine);
+
+    assert(engine.metrics_last_block.spawn_count == SCHED_MAX_SPAWNS_PER_TICK);
+    assert(engine.pending_spawn_count == BUBBLES_PENDING_SPAWN_CAPACITY - SCHED_MAX_SPAWNS_PER_TICK);
+    assert(CountVoicesInState(&engine, VOICE_STATE_PLAYING) == SCHED_MAX_SPAWNS_PER_TICK);
+    printf("  Flushed pending spawns: %d, remaining pending: %d\n",
+           engine.metrics_last_block.spawn_count, engine.pending_spawn_count);
+}
+
+static void RunFadingCoverageNoExtraPreemptTest(void) {
+    printf("Running fading coverage no-extra-preempt test...\n");
+
+    EngineConfig_t config = GetBaselineConfig();
+    config.droplet_enable = 0;
+    SoundBubbles_Init(&engine, delay_buffer_memory, &config);
+
+    engine.env_follower_state = 0.2f;
+    engine.spawn_accumulator = 1.0f;
+    engine.pending_spawn_head = 0;
+    engine.pending_spawn_count = 1;
+    engine.pending_spawns[0].bubble_class = BUBBLE_CLASS_SHORT_INTERMEDIATE;
+    engine.pending_spawns[0].generation = 0;
+
+    for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
+        BubbleVoice_t* v = &engine.voices[i];
+        v->state = (i < 2) ? VOICE_STATE_PREEMPT_FADING : VOICE_STATE_PLAYING;
+        v->bubble_class = (i % 3 == 0) ? BUBBLE_CLASS_MICRO_ATTACK : BUBBLE_CLASS_SUSTAIN_BODY;
+        v->read_ptr_float = 10000.0f + (float)(i * 128);
+        v->rate = 0.0f;
+        v->phase = 0.5f;
+        v->phase_inc = 0.0f;
+        v->amp = 1.0f;
+        v->gain = 0.0f;
+        v->pan_l = 1.0f;
+        v->pan_r = 0.0f;
+        v->envelope_variant = 0;
+        v->tone_profile = 0;
+        v->source_region_id = 0;
+        v->generation = 0;
+        v->fade_counter = BUBBLES_FADE_SAMPLES;
+    }
+
+    float in_buffer[BLOCK_SIZE];
+    float out_l_buffer[BLOCK_SIZE] = {0.0f};
+    float out_r_buffer[BLOCK_SIZE] = {0.0f};
+    for (int i = 0; i < BLOCK_SIZE; i++) {
+        in_buffer[i] = 0.2f;
+    }
+
+    SoundBubbles_ProcessBlock(&engine, in_buffer, out_l_buffer, out_r_buffer, BLOCK_SIZE);
+    ValidateEngineState(&engine);
+
+    assert(CountVoicesInState(&engine, VOICE_STATE_PREEMPT_FADING) == 2);
+    assert(CountVoicesInState(&engine, VOICE_STATE_PLAYING) == BUBBLES_MAX_VOICES - 2);
+    assert(engine.pending_spawn_count == 2);
+    assert(engine.metrics_last_block.spawn_count == 0);
+    printf("  Fading voices reused for pending coverage: %d fading, %d pending\n",
+           CountVoicesInState(&engine, VOICE_STATE_PREEMPT_FADING), engine.pending_spawn_count);
+}
+
 static void RunVoiceSaturationContinuityTest(void) {
     printf("Running saturated voice continuity test...\n");
 
@@ -455,7 +545,9 @@ int main(void) {
     // Stereo bus filter state isolation validation
     RunMonoCenterCrosstalkTest();
 
-    // Saturated voice stealing/pending-spawn continuity validation
+    // Saturated voice stealing/pending-spawn validation
+    RunPendingSpawnBudgetTest();
+    RunFadingCoverageNoExtraPreemptTest();
     RunVoiceSaturationContinuityTest();
 
     printf("All tests completed successfully. No assertions failed.\n");
