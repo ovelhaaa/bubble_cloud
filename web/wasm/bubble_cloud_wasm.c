@@ -10,6 +10,9 @@ EMSCRIPTEN_KEEPALIVE
 void wasm_init() {
     if (delay_buffer == NULL) {
         delay_buffer = (int16_t*)calloc(BUBBLES_BUFFER_SIZE_SAMPLES, sizeof(int16_t));
+        if (delay_buffer == NULL) {
+            return;
+        }
     }
 
     bubble_engine_init(&engine, delay_buffer, NULL);

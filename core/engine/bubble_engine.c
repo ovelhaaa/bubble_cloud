@@ -84,6 +84,10 @@ void bubble_engine_default_config(BubbleEngineConfig_t* config) {
 }
 
 void bubble_engine_init(BubbleEngine_t* engine, int16_t* delay_buffer_memory, const BubbleEngineConfig_t* initial_config) {
+    if (engine == NULL || delay_buffer_memory == NULL) {
+        return;
+    }
+
     BubbleEngineConfig_t default_config;
     if (initial_config == NULL) {
         bubble_engine_default_config(&default_config);
@@ -112,6 +116,10 @@ void bubble_engine_reset(BubbleEngine_t* engine) {
 }
 
 void bubble_engine_process(BubbleEngine_t* engine, const float* in_mono, float* out_left, float* out_right, int num_samples) {
+    if (engine == NULL || in_mono == NULL || out_left == NULL || out_right == NULL || num_samples <= 0) {
+        return;
+    }
+
     SoundBubbles_ProcessBlock(engine, in_mono, out_left, out_right, num_samples);
 }
 
@@ -280,5 +288,9 @@ bool bubble_engine_save_preset(const BubbleEngine_t* engine, BubbleEnginePreset_
 }
 
 void bubble_engine_set_metrics_callback(BubbleEngine_t* engine, BubbleEngineMetricsCallback_t callback, void* user_data) {
+    if (engine == NULL) {
+        return;
+    }
+
     SoundBubbles_SetMetricsCallback(engine, callback, user_data);
 }
