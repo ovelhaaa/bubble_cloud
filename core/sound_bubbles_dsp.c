@@ -713,45 +713,34 @@ static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, 
     // Attack-oriented contexts read from attack/body. Tail-oriented contexts read from memory.
     ReadRegionChoice_t choice;
 
-    switch (bubble_class) {
-        case BUBBLE_CLASS_MICRO_ATTACK:
-            choice.region = &engine->config.attack_region;
-            choice.region_id = 0;
-            return choice;
+    if (bubble_class == BUBBLE_CLASS_MICRO_ATTACK) {
+        choice.region = &engine->config.attack_region;
+        choice.region_id = 0;
+        return choice;
+    }
 
-        case BUBBLE_CLASS_SHORT_INTERMEDIATE:
-        {
-            float mem_bias = Clamp01(engine->config.memory_mix);
-            if (engine_state == ENGINE_STATE_SUSTAIN_BODY || engine_state == ENGINE_STATE_SPARSE_DECAY) {
-                mem_bias = Clamp01(mem_bias + engine->config.memory_pull * 0.35f);
-            }
-            if (RandomFloat01(engine) < mem_bias) {
-                choice.region = &engine->config.memory_region;
-                choice.region_id = 2;
-            } else {
-                choice.region = &engine->config.body_region;
-                choice.region_id = 1;
-            }
-            return choice;
+    float mem_bias = 0.0f;
+    if (bubble_class == BUBBLE_CLASS_SHORT_INTERMEDIATE) {
+        mem_bias = Clamp01(engine->config.memory_mix);
+        if (engine_state == ENGINE_STATE_SUSTAIN_BODY || engine_state == ENGINE_STATE_SPARSE_DECAY) {
+            mem_bias = Clamp01(mem_bias + engine->config.memory_pull * 0.35f);
         }
-
-        case BUBBLE_CLASS_SUSTAIN_BODY:
-        default:
-        {
-            float mem_bias = Clamp01(engine->config.memory_mix + engine->config.memory_pull);
-            if (engine_state == ENGINE_STATE_TRANSIENT_BURST || engine_state == ENGINE_STATE_ATTACK_ONGOING) {
-                mem_bias *= 0.35f;
-            }
-            if (RandomFloat01(engine) < mem_bias) {
-                choice.region = &engine->config.memory_region;
-                choice.region_id = 2;
-            } else {
-                choice.region = &engine->config.body_region;
-                choice.region_id = 1;
-            }
-            return choice;
+    } else {
+        mem_bias = Clamp01(engine->config.memory_mix + engine->config.memory_pull);
+        if (engine_state == ENGINE_STATE_TRANSIENT_BURST || engine_state == ENGINE_STATE_ATTACK_ONGOING) {
+            mem_bias *= 0.35f;
         }
     }
+
+    if (RandomFloat01(engine) < mem_bias) {
+        choice.region = &engine->config.memory_region;
+        choice.region_id = 2;
+    } else {
+        choice.region = &engine->config.body_region;
+        choice.region_id = 1;
+    }
+
+    return choice;
 }
 
 static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadRegionConfig_t* region) {
