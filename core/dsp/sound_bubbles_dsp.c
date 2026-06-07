@@ -1,3 +1,4 @@
+#define SOUND_BUBBLES_DSP_INTERNAL 1
 #include "sound_bubbles_dsp.h"
 #include <float.h>
 #include <math.h>
