@@ -6,8 +6,8 @@ This document outlines the validation, testing, and profiling methodology for th
 The following must be verified in the current DSP core:
 *   **Functional correctness:** Verify that the core processes mono audio input into stereo audio output without producing artifacts, DC offsets, or mathematically invalid values (NaN/Inf). Ensure that linear interpolation, LUT windowing, and 1-pole IIR filters operate within expected bounds.
 *   **State machine correctness:** Validate that `EngineState` transitions occur exactly as defined by the envelope tracker and timing thresholds (`transient_delta`, `sustain_thresh`, `tracking_thresh`, `noise_floor`). Ensure no invalid states are entered and timers (`burst_timer_ticks`) behave deterministically.
-*   **Scheduler correctness:** Confirm that control-rate ticks (every 32 samples) accurately accumulate spawns based on `target_density` and that `Scheduler_SpawnImmediateBurst` and `Scheduler_RunTick` correctly bound spawns per tick to `SCHED_MAX_SPAWNS_PER_TICK`.
-*   **Voice stealing behavior:** Ensure that when all 12 voices are active, new allocations strictly follow the deterministic stealing policy (oldest sustain -> oldest short -> oldest micro) and that young voices are protected by `STEAL_MIN_PHASE_THRESHOLD`.
+*   **Scheduler correctness:** Confirm that control-rate ticks (every 32 samples) accurately accumulate spawns based on `target_density` and that `Scheduler_SpawnImmediateBurst` and `Scheduler_RunTick` correctly bound regular plus pending-flush spawns per tick to `SCHED_MAX_SPAWNS_PER_TICK`.
+*   **Voice stealing and pending-spawn behavior:** Ensure that when all 12 voices are active, new allocations strictly follow the deterministic stealing policy (oldest sustain -> oldest short -> oldest micro), transition the selected active victim to `VOICE_STATE_PREEMPT_FADING`, and leave its read/phase fields untouched until the fade completes. New spawns must enter the deterministic pending queue/slot and initialize only when an inactive slot is available.
 *   **Write-head guard behavior:** Verify that `CheckGuardZoneDirectional` accurately detects when a read pointer approaches the write head and correctly forces a `VOICE_STATE_PREEMPT_FADING` state to prevent read/write collisions.
 *   **Ducking behavior:** Validate that `smoothed_ducking_gain` reacts immediately to transient states (`duck_burst_level`, `duck_attack_coef`) and recovers smoothly during sustain/decay (`duck_release_coef`). Ensure the DSP natively owns this ducking target.
 *   **Output stability:** Confirm that the final dry/wet mix in `ProcessBlock` (`master_dry_gain`, `master_wet_gain`) remains stable, bound between [-1.0, 1.0], and free of severe clipping or runaway gain.
@@ -17,12 +17,12 @@ The following must be verified in the current DSP core:
 The hottest and riskiest parts of the current implementation include:
 *   **Per-sample hot path:** The inner loop inside `ProcessBlock` where up to 12 voices are processed per sample. Operations here include `WrapFloatIndex`, `LinearInterpolate`, `LookupWindow`, and `CheckGuardZoneDirectional`. This loop dictates the baseline CPU cost.
 *   **PSRAM-sensitive accesses:** The 2-second (88200 samples) `int16_t` circular buffer will likely reside in PSRAM on the ESP32-S3. Cache misses during scattered voice reads (especially for widely distributed `read_idx`) pose a significant memory bandwidth risk.
-*   **Control-rate logic:** `Scheduler_RunTick` runs every 32 samples. While cheaper than per-sample processing, managing up to 12 active voices, updating ducking smoothing, and performing state transitions can introduce jitter if the tick takes longer than the remaining sample budget.
+*   **Control-rate logic:** `Scheduler_RunTick` runs every 32 samples. While cheaper than per-sample processing, managing up to 12 active voices, flushing pending spawns under the shared spawn cap, updating ducking smoothing, and performing state transitions can introduce jitter if the tick takes longer than the remaining sample budget.
 *   **Filter behavior:** The 3 global 1-pole IIR filters (Attack HPF, Flat Passthrough, Sustain LPF). The HPF is calculated as (input - LPF). Coefficient calculations (`expf`) are currently simplified but must remain strictly bounded to avoid instability.
 *   **Burst spawning:** `Scheduler_SpawnImmediateBurst` is called on transient detection and can attempt to spawn multiple micro-bubbles simultaneously. The handling of `burst_immediate_count` and bounded loop execution is critical to avoid stalling the audio thread.
 *   **LUT usage:** `LookupWindow` relies on explicit initialization of `grain_window_lut`. Incorrect initialization or out-of-bounds indexing (despite clamping) could lead to subtle audio artifacts or hard faults.
 *   **Randomization:** The placeholder RNG (`RandomFloat()`/`rand()`) is currently used for pitch jitter, position offset jitter, and panning. If called frequently in the hot path, `rand()` can be slow and non-deterministic. It needs to be evaluated for performance impact.
-*   **Edge conditions:** Buffer wrap-around logic (`WrapIntIndex`, `WrapFloatIndex`), exact zero-crossing behavior during voice preemption fading, and behavior when input completely saturates the envelope tracker.
+*   **Edge conditions:** Buffer wrap-around logic (`WrapIntIndex`, `WrapFloatIndex`), exact zero-crossing behavior during voice preemption fading, pending-spawn draining after a stolen voice reaches inactive, and behavior when input completely saturates the envelope tracker.
 
 ## 3. Test harness architecture
 To validate the C implementation offline, a minimal desktop test harness should be constructed:
@@ -94,10 +94,13 @@ Tests verifying transitions of `engine_state`:
 ## 6. Scheduler and voice-allocation test plan
 *   **Spawn accumulator behavior:** Feed a constant SUSTAIN state. Verify that `spawn_accumulator` correctly accumulates fractional spawns per tick and triggers exactly the right number of spawns over 1 second.
 *   **Immediate burst spawning:** Trigger a TRANSIENT state. Verify `Scheduler_SpawnImmediateBurst` executes immediately and bypasses the slow accumulator logic.
-*   **Bounded spawning:** Force a configuration where required spawns exceed `SCHED_MAX_SPAWNS_PER_TICK`. Verify the scheduler caps the spawns per tick and defers the rest, preventing CPU spikes.
-*   **Dropping spawns:** Fill all 12 voices with protected young voices (`phase < STEAL_MIN_PHASE_THRESHOLD`). Attempt to spawn a new voice. Verify the spawn is cleanly dropped without attempting an invalid allocation.
-*   **Deterministic stealing policy:** Fill all 12 voices (mix of Body, Short, Micro). Trigger a new spawn. Verify the allocation function correctly selects the oldest Sustain/Body bubble, then oldest Short, then oldest Micro.
-*   **Protection of young voices:** Verify that `STEAL_MIN_PHASE_THRESHOLD` successfully prevents clicks by rejecting stealing candidates that have just been spawned.
+*   **Bounded spawning:** Force a configuration where required spawns exceed `SCHED_MAX_SPAWNS_PER_TICK`. Verify the scheduler caps regular spawns plus pending flushes per tick and defers the rest, preventing CPU spikes.
+*   **Pending flush budget:** Preload the pending queue above `SCHED_MAX_SPAWNS_PER_TICK` with inactive slots available. Process one control tick and verify only `SCHED_MAX_SPAWNS_PER_TICK` queued voices are initialized while the remainder stays pending.
+*   **Pending spawns under saturation:** Configure sustained high-density spawning until all 12 voices are occupied. Attempt additional spawns and verify active victims are first moved to `VOICE_STATE_PREEMPT_FADING` with `fade_counter = BUBBLES_FADE_SAMPLES`, while the requested replacement is stored in the deterministic pending queue instead of overwriting the victim immediately.
+*   **Deterministic stealing policy:** Fill all 12 voices (mix of Body, Short, Micro). Trigger a new spawn. Verify the allocation function correctly selects the preferred victim deterministically, starts the victim fade, and returns no writable slot until a voice is inactive.
+*   **Fading coverage reuse:** With existing `VOICE_STATE_PREEMPT_FADING` voices already sufficient to cover the pending queue plus one new request, verify the new request is queued without preempting another `VOICE_STATE_PLAYING` voice.
+*   **Protection of young voices:** Verify that `STEAL_MIN_PHASE_THRESHOLD` biases stealing away from voices that have just been spawned before falling back to the deterministic global candidate.
+*   **Saturation continuity:** Run the offline saturation vector and assert that adjacent-sample deltas remain below the continuity threshold while active voice count reaches `BUBBLES_MAX_VOICES` and the pending queue is exercised.
 
 ## 7. Write-head guard test plan
 *   **Forced early release:** Deliberately configure a long Body bubble with an offset that places its read pointer dangerously close to the `write_idx`.
@@ -134,10 +137,10 @@ To support the profiling plan, minimal and removable instrumentation should be a
 ## 11. Pass/fail criteria
 The current baseline implementation passes validation if:
 *   **No invalid state transitions:** The state machine strictly follows the defined paths; timers always expire correctly.
-*   **No runaway spawning:** The spawn accumulator never spirals out of control; bounds checks (`SCHED_MAX_SPAWNS_PER_TICK`) hold.
-*   **No voices stuck active forever:** Every spawned voice eventually reaches `VOICE_STATE_IDLE`, either naturally or via preemption.
+*   **No runaway spawning:** The spawn accumulator never spirals out of control; bounds checks (`SCHED_MAX_SPAWNS_PER_TICK`) and `BUBBLES_PENDING_SPAWN_CAPACITY` hold, and pending flushes consume the same per-tick spawn budget as regular scheduler spawns.
+*   **No voices stuck active forever:** Every spawned voice eventually reaches `VOICE_STATE_INACTIVE`, either naturally or via preemption, and pending spawns drain when inactive slots become available.
 *   **No NaN/Inf behavior:** The output stream contains 100% valid finite floats.
-*   **No guard-zone runaway behavior:** The guard zone successfully prevents audio glitches without causing a chain reaction of infinite preemption loops.
+*   **No guard-zone/preemption runaway behavior:** The guard zone and voice-stealing fade path prevent audio glitches without causing a chain reaction of infinite preemption loops or immediate read/phase discontinuities.
 *   **Acceptable ducking recovery:** Ducking recovers smoothly to 1.0f without overshooting.
 *   **Acceptable scheduler boundedness:** The worst-case control tick execution time is bounded and predictable.
 
@@ -145,7 +148,7 @@ The current baseline implementation passes validation if:
 If the validation tests expose bugs, follow this prioritized diagnostic checklist (do not redesign the algorithm):
 1.  **NaN/Inf in Output:** Check the 1-pole filter coefficients. Ensure `expf` inputs are sane. Check for division by zero in `LinearInterpolate` or window phase calculations.
 2.  **Voices Not Spawning:** Check the envelope tracker constants. Ensure the input signal is actually crossing `noise_floor` and `tracking_thresh`. Verify `burst_immediate_count` is not zero.
-3.  **Harsh Clicks/Pops:** Investigate voice stealing. Ensure `VOICE_STATE_PREEMPT_FADING` actually executes a fast fade-out and doesn't immediately jump to IDLE. Verify `CheckGuardZoneDirectional` is functioning.
+3.  **Harsh Clicks/Pops:** Investigate voice stealing and pending-spawn draining. Ensure `VOICE_STATE_PREEMPT_FADING` actually executes a fast fade-out, does not immediately jump to inactive, and does not overwrite read/phase fields before the replacement spawn initializes. Verify `CheckGuardZoneDirectional` is functioning.
 4.  **Audio Stutter/Dropouts:** This indicates `ProcessBlock` is taking too long. Check the complexity of the RNG (`rand()`) in the hot loop. Check if `Scheduler_SpawnImmediateBurst` is trying to spawn too many voices synchronously.
 5.  **State Machine Stuck:** Check `burst_timer_ticks` incrementation in the control-rate tick. Ensure hysteresis between `sustain_thresh` and `tracking_thresh` is wide enough to prevent rapid oscillation.
 

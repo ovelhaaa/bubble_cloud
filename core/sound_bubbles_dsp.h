@@ -12,6 +12,7 @@
 #define BUBBLES_FADE_SAMPLES 44           // ~1ms preemption fade at 44.1kHz
 #define BUBBLES_GUARD_ZONE_SAMPLES 64
 #define SCHED_MAX_SPAWNS_PER_TICK 3
+#define BUBBLES_PENDING_SPAWN_CAPACITY 4
 #define BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY 96
 
 // --- Enums ---
@@ -168,6 +169,11 @@ typedef struct {
 } Filter1Pole_t;
 
 typedef struct {
+    BubbleClass_t bubble_class;
+    uint8_t generation;
+} PendingSpawn_t;
+
+typedef struct {
     int32_t spawn_count;
     int32_t active_voices;
     int32_t engine_state;
@@ -187,6 +193,10 @@ typedef struct {
     BubbleVoice_t voices[BUBBLES_MAX_VOICES];
 
     // Control-Rate state tracking
+    PendingSpawn_t pending_spawns[BUBBLES_PENDING_SPAWN_CAPACITY];
+    int32_t pending_spawn_head;
+    int32_t pending_spawn_count;
+
     EngineState_t engine_state;
     float env_follower_state;
     float env_derivative;

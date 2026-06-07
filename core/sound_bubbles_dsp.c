@@ -55,7 +55,12 @@ static float UpdateEnvelope(float prev_state, float input_peak, float attack_coe
 static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_peak);
 static void Scheduler_SpawnImmediateBurst(SoundBubblesEngine_t* engine);
 static void Scheduler_RunTick(SoundBubblesEngine_t* engine);
+static int Voice_FindInactiveSlot(SoundBubblesEngine_t* engine);
 static int Voice_Allocate(SoundBubblesEngine_t* engine);
+static bool Voice_QueuePendingSpawn(SoundBubblesEngine_t* engine, BubbleClass_t b_class, int generation);
+static int32_t Voice_CountFadingVoices(const SoundBubblesEngine_t* engine);
+static int Voice_FlushPendingSpawns(SoundBubblesEngine_t* engine, int max_spawns);
+static bool Voice_RequestSpawn(SoundBubblesEngine_t* engine, BubbleClass_t b_class, int generation);
 static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleClass_t b_class, int generation);
 static float LookupWindow(float phase, WindowType_t type);
 static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state);
@@ -110,6 +115,8 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     engine->metrics_last_block.ducking_gain = 1.0f;
     engine->metrics_last_block.envelope = 0.0f;
     engine->metrics_tick_spawn_count = 0;
+    engine->pending_spawn_head = 0;
+    engine->pending_spawn_count = 0;
 
     for (int i = 0; i < BUBBLES_BUFFER_SIZE_SAMPLES; i++) {
         engine->delay_buffer[i] = 0;
@@ -497,15 +504,15 @@ static void Scheduler_SpawnImmediateBurst(SoundBubblesEngine_t* engine) {
     if (burst_count > BUBBLES_MAX_VOICES) burst_count = BUBBLES_MAX_VOICES;
 
     for (int i = 0; i < burst_count; i++) {
-        int v_idx = Voice_Allocate(engine);
-        if (v_idx >= 0) {
-            Voice_SpawnInit(engine, v_idx, BUBBLE_CLASS_MICRO_ATTACK, 0);
+        if (Voice_RequestSpawn(engine, BUBBLE_CLASS_MICRO_ATTACK, 0)) {
             engine->metrics_tick_spawn_count++;
         }
     }
 }
 
 static void Scheduler_RunTick(SoundBubblesEngine_t* engine) {
+    int spawns_this_tick = Voice_FlushPendingSpawns(engine, SCHED_MAX_SPAWNS_PER_TICK);
+
     if (engine->engine_state == ENGINE_STATE_SILENCE) {
         engine->spawn_accumulator = 0.0f;
         return;
@@ -515,7 +522,6 @@ static void Scheduler_RunTick(SoundBubblesEngine_t* engine) {
     float spawns_per_tick = engine->target_density * ((float)BUBBLES_BLOCK_SIZE / (float)BUBBLES_SAMPLE_RATE);
     engine->spawn_accumulator += spawns_per_tick;
 
-    int spawns_this_tick = 0;
     while (engine->spawn_accumulator >= 1.0f && spawns_this_tick < SCHED_MAX_SPAWNS_PER_TICK) {
         BubbleClass_t selected_class;
         float r = RandomFloat01(engine);
@@ -538,9 +544,7 @@ static void Scheduler_RunTick(SoundBubblesEngine_t* engine) {
                 break;
         }
 
-        int voice_idx = Voice_Allocate(engine);
-        if (voice_idx >= 0) {
-            Voice_SpawnInit(engine, voice_idx, selected_class, 0);
+        if (Voice_RequestSpawn(engine, selected_class, 0)) {
             engine->metrics_tick_spawn_count++;
         }
 
@@ -553,19 +557,32 @@ static void Scheduler_RunTick(SoundBubblesEngine_t* engine) {
     }
 }
 
-static int Voice_Allocate(SoundBubblesEngine_t* engine) {
-    // 1. Return an inactive slot immediately if available
+static int Voice_FindInactiveSlot(SoundBubblesEngine_t* engine) {
     for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
         if (engine->voices[i].state == VOICE_STATE_INACTIVE) return i;
     }
 
+    return -1;
+}
+
+static int Voice_Allocate(SoundBubblesEngine_t* engine) {
+    // 1. Return an inactive slot immediately if available. Inactive slots are the
+    // only allocation result that callers may initialize immediately.
+    int inactive_idx = Voice_FindInactiveSlot(engine);
+    if (inactive_idx >= 0) {
+        return inactive_idx;
+    }
+
     // 2. Stealing policy when fully occupied (deterministic, bounded, musically protective):
     //    - Class priority is MICRO first, then SHORT, then SUSTAIN/BODY.
-    //    - Inside a class, steal the "least useful" voice: older phase and lower remaining contribution
-    //      are preferred (score = phase + (1 - amp) + (1 - phase) for PREEMPT_FADING voices).
+    //    - Inside a class, steal the "least useful" voice: older phase and lower remaining contribution.
     //    - Young-voice protection threshold is respected first. If every voice is still young,
-    //      deterministically fall back to the best global candidate so a spawn never stalls.
+    //      deterministically fall back to the best global candidate so a spawn request can queue.
     //    - Tie-breaks are resolved by lower voice index for fixed-seed reproducibility.
+    //
+    // Active victims are never returned as ready-to-write slots. They are moved into
+    // PREEMPT_FADING and keep their read pointer/phase fields intact until the fade
+    // reaches INACTIVE, at which point queued spawns can consume the slot on a later tick.
     int best_protected_idx = -1;
     int best_fallback_idx = -1;
     int best_protected_rank = 99;
@@ -575,7 +592,7 @@ static int Voice_Allocate(SoundBubblesEngine_t* engine) {
 
     for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
         BubbleVoice_t* v = &engine->voices[i];
-        if (v->state == VOICE_STATE_INACTIVE) {
+        if (v->state != VOICE_STATE_PLAYING) {
             continue;
         }
 
@@ -587,8 +604,7 @@ static int Voice_Allocate(SoundBubblesEngine_t* engine) {
         }
 
         float remaining_contrib = (1.0f - Clamp01(v->phase)) * Clamp01(v->amp);
-        float fade_bonus = (v->state == VOICE_STATE_PREEMPT_FADING) ? (1.0f - Clamp01(v->phase)) : 0.0f;
-        float usefulness_score = Clamp01(v->phase) + (1.0f - Clamp01(remaining_contrib)) + fade_bonus;
+        float usefulness_score = Clamp01(v->phase) + (1.0f - Clamp01(remaining_contrib));
         bool old_enough = (v->phase > STEAL_MIN_PHASE_THRESHOLD);
 
         bool better_than_best_protected =
@@ -596,7 +612,7 @@ static int Voice_Allocate(SoundBubblesEngine_t* engine) {
             (class_rank == best_protected_rank &&
              (usefulness_score > best_protected_score ||
               (usefulness_score == best_protected_score &&
-               i < best_protected_idx)));
+               (best_protected_idx < 0 || i < best_protected_idx))));
 
         if (old_enough && better_than_best_protected) {
             best_protected_rank = class_rank;
@@ -609,7 +625,7 @@ static int Voice_Allocate(SoundBubblesEngine_t* engine) {
             (class_rank == best_fallback_rank &&
              (usefulness_score > best_fallback_score ||
               (usefulness_score == best_fallback_score &&
-               i < best_fallback_idx)));
+               (best_fallback_idx < 0 || i < best_fallback_idx))));
 
         if (better_than_best_fallback) {
             best_fallback_rank = class_rank;
@@ -620,11 +636,85 @@ static int Voice_Allocate(SoundBubblesEngine_t* engine) {
 
     int victim_idx = (best_protected_idx >= 0) ? best_protected_idx : best_fallback_idx;
     if (victim_idx >= 0) {
-        // Deterministic immediate replacement path: return a slot now rather than stalling spawn.
-        return victim_idx;
+        BubbleVoice_t* victim = &engine->voices[victim_idx];
+        victim->state = VOICE_STATE_PREEMPT_FADING;
+        victim->fade_counter = BUBBLES_FADE_SAMPLES;
     }
 
     return -1;
+}
+
+static bool Voice_QueuePendingSpawn(SoundBubblesEngine_t* engine, BubbleClass_t b_class, int generation) {
+    if (engine->pending_spawn_count >= BUBBLES_PENDING_SPAWN_CAPACITY) {
+        return false;
+    }
+
+    int tail = (engine->pending_spawn_head + engine->pending_spawn_count) % BUBBLES_PENDING_SPAWN_CAPACITY;
+    engine->pending_spawns[tail].bubble_class = b_class;
+    engine->pending_spawns[tail].generation = (uint8_t)((generation <= 0) ? 0 : 1);
+    engine->pending_spawn_count++;
+    return true;
+}
+
+static int32_t Voice_CountFadingVoices(const SoundBubblesEngine_t* engine) {
+    int32_t fading_count = 0;
+
+    for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
+        if (engine->voices[i].state == VOICE_STATE_PREEMPT_FADING) {
+            fading_count++;
+        }
+    }
+
+    return fading_count;
+}
+
+static int Voice_FlushPendingSpawns(SoundBubblesEngine_t* engine, int max_spawns) {
+    int spawned_count = 0;
+
+    while (engine->pending_spawn_count > 0 && spawned_count < max_spawns) {
+        int voice_idx = Voice_FindInactiveSlot(engine);
+        if (voice_idx < 0) {
+            break;
+        }
+
+        PendingSpawn_t request = engine->pending_spawns[engine->pending_spawn_head];
+        engine->pending_spawn_head = (engine->pending_spawn_head + 1) % BUBBLES_PENDING_SPAWN_CAPACITY;
+        engine->pending_spawn_count--;
+
+        Voice_SpawnInit(engine, voice_idx, request.bubble_class, request.generation);
+        engine->metrics_tick_spawn_count++;
+        spawned_count++;
+    }
+
+    if (engine->pending_spawn_count == 0) {
+        engine->pending_spawn_head = 0;
+    }
+
+    return spawned_count;
+}
+
+static bool Voice_RequestSpawn(SoundBubblesEngine_t* engine, BubbleClass_t b_class, int generation) {
+    int inactive_idx = Voice_FindInactiveSlot(engine);
+    if (inactive_idx >= 0) {
+        Voice_SpawnInit(engine, inactive_idx, b_class, generation);
+        return true;
+    }
+
+    if (engine->pending_spawn_count >= BUBBLES_PENDING_SPAWN_CAPACITY) {
+        return false;
+    }
+
+    // Only preempt a new victim when currently fading voices cannot already cover
+    // all queued spawns plus this new request. Existing PREEMPT_FADING voices are
+    // guaranteed future inactive slots, so reusing their pending capacity avoids
+    // unnecessary polyphony loss.
+    int32_t fading_count = Voice_CountFadingVoices(engine);
+    if (fading_count <= engine->pending_spawn_count) {
+        (void)Voice_Allocate(engine);
+    }
+
+    Voice_QueuePendingSpawn(engine, b_class, generation);
+    return false;
 }
 
 static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleClass_t b_class, int generation) {
@@ -698,9 +788,7 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
                 prob *= 0.35f;
             }
             if (RandomFloat01(engine) < prob) {
-                int child_idx = Voice_Allocate(engine);
-                if (child_idx >= 0 && child_idx != voice_idx) {
-                    Voice_SpawnInit(engine, child_idx, BUBBLE_CLASS_SHORT_INTERMEDIATE, 1);
+                if (Voice_RequestSpawn(engine, BUBBLE_CLASS_SHORT_INTERMEDIATE, 1)) {
                     engine->metrics_tick_spawn_count++;
                 }
             }
