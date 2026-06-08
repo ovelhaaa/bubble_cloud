@@ -86,8 +86,11 @@
     const parsedValue = Number(normalizedValue);
     const safeValue = Number.isFinite(parsedValue) ? parsedValue : neutralMacroValue;
     const centered = clamp(safeValue - neutralMacroValue, -0.5, 0.5) * 2;
-    if (curve === 'softExp') {
+    if (curve === 'softExp' || curve === 'exp') {
       return Math.sign(centered) * (Math.exp(Math.abs(centered)) - 1) / (Math.E - 1);
+    }
+    if (curve === 'log') {
+      return Math.sign(centered) * Math.log1p(Math.abs(centered) * 9) / Math.log(10);
     }
     if (curve === 'sCurve') {
       return centered * (1.25 - 0.25 * Math.abs(centered));
