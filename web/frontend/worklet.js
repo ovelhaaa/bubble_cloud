@@ -1,14 +1,12 @@
 import createBubbleCloudModule from './bubble_cloud_wasm.js';
 
-const QUALITY_PROFILE_VOICE_LIMITS = [8, 16, 24, 32];
-
 class SoundBubblesWorklet extends AudioWorkletProcessor {
   constructor() {
     super();
 
     this.ready = false;
     this.bypass = false;
-    this.metrics = { envelope: 0, state: 0, voices: 0, voiceLimit: QUALITY_PROFILE_VOICE_LIMITS[2] };
+    this.metrics = { envelope: 0, state: 0, voices: 0, voiceLimit: 24 };
     this.qualityProfile = 2;
 
     this.wasm = null;
@@ -21,6 +19,8 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
     this.wasmGetEnvelope = null;
     this.wasmGetState = null;
     this.wasmGetVoices = null;
+    this.wasmSetQualityProfile = null;
+    this.wasmGetActiveVoiceLimit = null;
 
     this.bufferSize = 0;
     this.defaultBlockSize = 128;
@@ -44,9 +44,12 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
       if (!this.ready) return;
       if (data.type === 'quality-profile') {
         try {
-          this.qualityProfile = data.profile | 0;
-          this.wasmSetParam(54, this.qualityProfile);
-          this.metrics.voiceLimit = QUALITY_PROFILE_VOICE_LIMITS[this.qualityProfile] || QUALITY_PROFILE_VOICE_LIMITS[2];
+          const nextProfile = data.profile | 0;
+          this.wasmSetQualityProfile(nextProfile);
+          const nextVoiceLimit = this.wasmGetActiveVoiceLimit();
+
+          this.qualityProfile = nextProfile;
+          this.metrics.voiceLimit = nextVoiceLimit;
         } catch (err) {
           this.postError('set_quality_profile failed', err);
         }
@@ -145,8 +148,11 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
       this.wasmGetEnvelope = this.wasm.cwrap('wasm_get_envelope', 'number', []);
       this.wasmGetState = this.wasm.cwrap('wasm_get_state', 'number', []);
       this.wasmGetVoices = this.wasm.cwrap('wasm_get_active_voices', 'number', []);
+      this.wasmSetQualityProfile = this.wasm.cwrap('wasm_set_quality_profile', null, ['number']);
+      this.wasmGetActiveVoiceLimit = this.wasm.cwrap('wasm_get_active_voice_limit', 'number', []);
 
       this.wasmInit();
+      this.metrics.voiceLimit = this.wasmGetActiveVoiceLimit();
       this.ensureBuffers(this.defaultBlockSize);
       this.ready = true;
       this.port.postMessage({ type: 'ready' });

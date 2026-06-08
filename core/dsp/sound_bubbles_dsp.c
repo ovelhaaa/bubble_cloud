@@ -199,10 +199,13 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
         float bus_flat_l = 0.0f, bus_flat_r = 0.0f;
         float bus_sustain_l = 0.0f, bus_sustain_r = 0.0f;
 
-        // Process active voices
-        for (int v_idx = 0; v_idx < engine->active_voice_limit; v_idx++) {
+        // Process active voices, plus any retired voices above the active limit
+        // that are draining through the normal preempt-fade path after a profile
+        // downgrade. No new voices are allocated outside active_voice_limit.
+        for (int v_idx = 0; v_idx < BUBBLES_MAX_VOICES; v_idx++) {
             BubbleVoice_t* v = &engine->voices[v_idx];
             if (v->state == VOICE_STATE_INACTIVE) continue;
+            if (v_idx >= engine->active_voice_limit && v->state != VOICE_STATE_PREEMPT_FADING) continue;
 
             // Handle preemption and forced release fading
             if (v->state == VOICE_STATE_PREEMPT_FADING) {
@@ -1055,14 +1058,17 @@ static int32_t ResolveProfileVoiceLimit(BubbleQualityProfile profile) {
             return BUBBLE_QUALITY_PROFILE_LIMITS[i].voice_limit;
         }
     }
-    return BUBBLE_QUALITY_PROFILE_LIMITS[BUBBLE_QUALITY_PROFILE_WEB_STANDARD].voice_limit;
+    return BUBBLE_QUALITY_DEFAULT_VOICE_LIMIT;
 }
 
 static void DeactivateVoicesAboveActiveLimit(SoundBubblesEngine_t* engine) {
     for (int i = engine->active_voice_limit; i < BUBBLES_MAX_VOICES; i++) {
-        engine->voices[i].state = VOICE_STATE_INACTIVE;
-        engine->voices[i].fade_counter = 0;
-        engine->voices[i].amp = 0.0f;
+        BubbleVoice_t* voice = &engine->voices[i];
+        if (voice->state == VOICE_STATE_INACTIVE) continue;
+        voice->state = VOICE_STATE_PREEMPT_FADING;
+        if (voice->fade_counter <= 0 || voice->fade_counter > BUBBLES_FADE_SAMPLES) {
+            voice->fade_counter = BUBBLES_FADE_SAMPLES;
+        }
     }
 }
 
@@ -1071,6 +1077,12 @@ static void ApplyQualityTierDefaults(EngineConfig_t* cfg) {
         cfg->quality_profile = BUBBLE_QUALITY_PROFILE_WEB_STANDARD;
     }
     if (cfg->active_voice_limit <= 0) {
+        // A zero-initialized legacy config has quality_profile == MCU_SAFE because
+        // that enum value is 0. Treat the absent voice limit as the legacy full
+        // pool instead of silently reducing old direct-DSP callers to 8 voices.
+        if (cfg->quality_profile == BUBBLE_QUALITY_PROFILE_MCU_SAFE) {
+            cfg->quality_profile = BUBBLE_QUALITY_PROFILE_WEB_ULTRA;
+        }
         cfg->active_voice_limit = ResolveProfileVoiceLimit(cfg->quality_profile);
     } else {
         cfg->active_voice_limit = ClampActiveVoiceLimit(cfg->active_voice_limit);

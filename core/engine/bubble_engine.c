@@ -4,6 +4,13 @@
 #include <stddef.h>
 #include <string.h>
 
+const BubbleQualityProfileLimits_t BUBBLE_QUALITY_PROFILE_LIMITS[BUBBLE_QUALITY_PROFILE_COUNT] = {
+    { BUBBLE_QUALITY_PROFILE_MCU_SAFE,     "MCU_SAFE",      35, 256,  8 },
+    { BUBBLE_QUALITY_PROFILE_MCU_PLUS,     "MCU_PLUS",      50, 384, 16 },
+    { BUBBLE_QUALITY_PROFILE_WEB_STANDARD, "WEB_STANDARD",  60, 512, 24 },
+    { BUBBLE_QUALITY_PROFILE_WEB_ULTRA,    "WEB_ULTRA",     75, 768, 32 },
+};
+
 static int32_t CountActiveVoices(const BubbleEngine_t* engine) {
     int32_t count = 0;
     for (int i = 0; i < engine->active_voice_limit; i++) {
@@ -70,7 +77,7 @@ void bubble_engine_default_config(BubbleEngineConfig_t* config) {
     config->attack_rate_jitter = 0;
     config->attack_rate_jitter_depth = 0.02f;
     config->quality_profile = BUBBLE_QUALITY_PROFILE_WEB_STANDARD;
-    config->active_voice_limit = BUBBLE_QUALITY_PROFILE_LIMITS[BUBBLE_QUALITY_PROFILE_WEB_STANDARD].voice_limit;
+    config->active_voice_limit = BUBBLE_QUALITY_DEFAULT_VOICE_LIMIT;
 
     config->class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_min = 5.0f;
     config->class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_max = 15.0f;

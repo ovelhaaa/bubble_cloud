@@ -36,14 +36,10 @@ typedef struct {
 // upper real-time audio callback budget for the target class; RAM limits cover
 // the engine-owned fixed delay/voice working set expected by hosts choosing the
 // profile. The DSP algorithm remains identical: only active_voice_limit changes.
-static const BubbleQualityProfileLimits_t BUBBLE_QUALITY_PROFILE_LIMITS[] = {
-    { BUBBLE_QUALITY_PROFILE_MCU_SAFE,     "MCU_SAFE",      35, 256,  8 },
-    { BUBBLE_QUALITY_PROFILE_MCU_PLUS,     "MCU_PLUS",      50, 384, 16 },
-    { BUBBLE_QUALITY_PROFILE_WEB_STANDARD, "WEB_STANDARD",  60, 512, 24 },
-    { BUBBLE_QUALITY_PROFILE_WEB_ULTRA,    "WEB_ULTRA",     75, 768, 32 },
-};
+extern const BubbleQualityProfileLimits_t BUBBLE_QUALITY_PROFILE_LIMITS[4];
 
-#define BUBBLE_QUALITY_PROFILE_COUNT ((int32_t)(sizeof(BUBBLE_QUALITY_PROFILE_LIMITS) / sizeof(BUBBLE_QUALITY_PROFILE_LIMITS[0])))
+#define BUBBLE_QUALITY_PROFILE_COUNT 4
+#define BUBBLE_QUALITY_DEFAULT_VOICE_LIMIT 24
 
 #ifdef __cplusplus
 }
