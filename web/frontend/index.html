@@ -234,7 +234,7 @@
                             <button class="btn btn-secondary" :class="{ 'is-active': compareMode }" @click="toggleCompareMode()">Compare</button>
                         </div>
                     </div>
-                    <p class="helper-text">Main: Mix, Impact, Bloom, Smoothness, Memory, Response • Secondary: Width, Scatter</p>
+                    <p class="helper-text">Simple: Density, Bloom, Texture, Motion, Space, Mix • Advanced: Gravity, Memory, Clarity, Freeze, Sparkle, Warmth</p>
                     <div class="macro-grid">
                         <template x-for="macroKey in displayedMacroKeys" :key="macroKey">
                             <div class="macro-tile">
@@ -243,7 +243,7 @@
                                 <input type="range" min="0" max="1" :step="macroSliderStep" class="slider" x-model.number="macroValues[macroKey]" @input="onMacroInput(macroKey)">
                             </div>
                         </template>
-                        <template x-if="activeMacroPage === 1">
+                        <template x-if="activeMacroPage === 1 && displayedMacroKeys.length < 6">
                             <div class="macro-slot-placeholders">
                                 <div class="macro-slot">Reserved Slot A</div>
                                 <div class="macro-slot">Reserved Slot B</div>

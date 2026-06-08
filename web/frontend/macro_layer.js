@@ -173,7 +173,7 @@
     console.warn('[MacroLayer] fallback para configuração vazia:', error);
     matrixConfig = buildMatrixConfig({
       neutral_macro_value: 0.5,
-      application: { global_order: ['response', 'impact', 'bloom', 'smoothness', 'memory', 'width', 'scatter', 'mix'] },
+      application: { global_order: ['density', 'bloom', 'motion', 'texture', 'space', 'gravity', 'memory', 'clarity', 'freeze', 'sparkle', 'warmth', 'mix'] },
       macros: {},
       performance_ranges: {},
       canonical_presets: [],
@@ -195,17 +195,30 @@
     const fallbackWidthScatter = Number.isFinite(Number(input.width_scatter)) ? Number(input.width_scatter) : null;
 
     if (fallbackImpactBloom !== null) {
-      normalized.impact = fallbackImpactBloom;
-      normalized.bloom = fallbackImpactBloom;
+      if ('density' in normalized) normalized.density = fallbackImpactBloom;
+      if ('bloom' in normalized) normalized.bloom = fallbackImpactBloom;
     }
     if (fallbackSmoothMemory !== null) {
-      normalized.smoothness = fallbackSmoothMemory;
-      normalized.memory = fallbackSmoothMemory;
+      if ('warmth' in normalized) normalized.warmth = fallbackSmoothMemory;
+      if ('memory' in normalized) normalized.memory = fallbackSmoothMemory;
     }
     if (fallbackWidthScatter !== null) {
-      normalized.width = fallbackWidthScatter;
-      normalized.scatter = fallbackWidthScatter;
+      if ('space' in normalized) normalized.space = fallbackWidthScatter;
+      if ('texture' in normalized) normalized.texture = fallbackWidthScatter;
     }
+
+    const legacyMacroAliases = {
+      response: 'motion',
+      impact: 'density',
+      smoothness: 'warmth',
+      width: 'space',
+      scatter: 'texture',
+    };
+    Object.entries(legacyMacroAliases).forEach(([legacyKey, macroKey]) => {
+      if (macroKey in normalized && legacyKey in input && Number.isFinite(Number(input[legacyKey]))) {
+        normalized[macroKey] = Number(input[legacyKey]);
+      }
+    });
 
     Object.keys(normalized).forEach((macroKey) => {
       if (macroKey in input && Number.isFinite(Number(input[macroKey]))) {
