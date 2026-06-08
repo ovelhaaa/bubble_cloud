@@ -6,7 +6,8 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
 
     this.ready = false;
     this.bypass = false;
-    this.metrics = { envelope: 0, state: 0, voices: 0 };
+    this.metrics = { envelope: 0, state: 0, voices: 0, voiceLimit: 24 };
+    this.qualityProfile = 2;
 
     this.wasm = null;
     this.wasmInit = null;
@@ -18,6 +19,8 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
     this.wasmGetEnvelope = null;
     this.wasmGetState = null;
     this.wasmGetVoices = null;
+    this.wasmSetQualityProfile = null;
+    this.wasmGetActiveVoiceLimit = null;
 
     this.bufferSize = 0;
     this.defaultBlockSize = 128;
@@ -39,6 +42,18 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
         return;
       }
       if (!this.ready) return;
+      if (data.type === 'quality-profile') {
+        try {
+          const nextProfile = data.profile | 0;
+          this.wasmSetQualityProfile(nextProfile);
+          const nextVoiceLimit = this.wasmGetActiveVoiceLimit();
+
+          this.qualityProfile = nextProfile;
+          this.metrics.voiceLimit = nextVoiceLimit;
+        } catch (err) {
+          this.postError('set_quality_profile failed', err);
+        }
+      }
       if (data.type === 'param') {
         try {
           this.wasmSetParam(data.id | 0, Number(data.value));
@@ -133,8 +148,11 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
       this.wasmGetEnvelope = this.wasm.cwrap('wasm_get_envelope', 'number', []);
       this.wasmGetState = this.wasm.cwrap('wasm_get_state', 'number', []);
       this.wasmGetVoices = this.wasm.cwrap('wasm_get_active_voices', 'number', []);
+      this.wasmSetQualityProfile = this.wasm.cwrap('wasm_set_quality_profile', null, ['number']);
+      this.wasmGetActiveVoiceLimit = this.wasm.cwrap('wasm_get_active_voice_limit', 'number', []);
 
       this.wasmInit();
+      this.metrics.voiceLimit = this.wasmGetActiveVoiceLimit();
       this.ensureBuffers(this.defaultBlockSize);
       this.ready = true;
       this.port.postMessage({ type: 'ready' });

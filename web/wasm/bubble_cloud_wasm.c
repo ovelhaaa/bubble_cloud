@@ -40,6 +40,18 @@ void wasm_set_param(int param_id, float value) {
 }
 
 EMSCRIPTEN_KEEPALIVE
+void wasm_set_quality_profile(int profile) {
+    (void)bubble_engine_set_quality_profile(&engine, (BubbleQualityProfile)profile);
+}
+
+EMSCRIPTEN_KEEPALIVE
+int wasm_get_active_voice_limit() {
+    float value = 0.0f;
+    (void)bubble_engine_get_parameter(&engine, BUBBLE_ENGINE_PARAM_ACTIVE_VOICE_LIMIT, &value);
+    return (int)value;
+}
+
+EMSCRIPTEN_KEEPALIVE
 uintptr_t wasm_alloc(size_t size) {
     return (uintptr_t)malloc(size);
 }

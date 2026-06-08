@@ -4,9 +4,16 @@
 #include <stddef.h>
 #include <string.h>
 
+const BubbleQualityProfileLimits_t BUBBLE_QUALITY_PROFILE_LIMITS[BUBBLE_QUALITY_PROFILE_COUNT] = {
+    { BUBBLE_QUALITY_PROFILE_MCU_SAFE,     "MCU_SAFE",      35, 256,  8 },
+    { BUBBLE_QUALITY_PROFILE_MCU_PLUS,     "MCU_PLUS",      50, 384, 16 },
+    { BUBBLE_QUALITY_PROFILE_WEB_STANDARD, "WEB_STANDARD",  60, 512, 24 },
+    { BUBBLE_QUALITY_PROFILE_WEB_ULTRA,    "WEB_ULTRA",     75, 768, 32 },
+};
+
 static int32_t CountActiveVoices(const BubbleEngine_t* engine) {
     int32_t count = 0;
-    for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
+    for (int i = 0; i < engine->active_voice_limit; i++) {
         if (engine->voices[i].state != VOICE_STATE_INACTIVE) {
             count++;
         }
@@ -69,6 +76,8 @@ void bubble_engine_default_config(BubbleEngineConfig_t* config) {
     config->sustain_darkness = 0.25f;
     config->attack_rate_jitter = 0;
     config->attack_rate_jitter_depth = 0.02f;
+    config->quality_profile = BUBBLE_QUALITY_PROFILE_WEB_STANDARD;
+    config->active_voice_limit = BUBBLE_QUALITY_DEFAULT_VOICE_LIMIT;
 
     config->class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_min = 5.0f;
     config->class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_max = 15.0f;
@@ -186,6 +195,9 @@ bool bubble_engine_set_parameter(BubbleEngine_t* engine, BubbleEngineParameterId
         case BUBBLE_ENGINE_PARAM_SUSTAIN_DARKNESS: config.sustain_darkness = value; break;
         case BUBBLE_ENGINE_PARAM_ATTACK_RATE_JITTER: config.attack_rate_jitter = (int32_t)value; break;
         case BUBBLE_ENGINE_PARAM_ATTACK_RATE_JITTER_DEPTH: config.attack_rate_jitter_depth = value; break;
+        case BUBBLE_ENGINE_PARAM_QUALITY_PROFILE:
+            return bubble_engine_set_quality_profile(engine, (BubbleQualityProfile)((int32_t)value));
+        case BUBBLE_ENGINE_PARAM_ACTIVE_VOICE_LIMIT: config.active_voice_limit = (int32_t)value; break;
         default: return false;
     }
 
@@ -256,6 +268,8 @@ bool bubble_engine_get_parameter(const BubbleEngine_t* engine, BubbleEngineParam
         case BUBBLE_ENGINE_PARAM_SUSTAIN_DARKNESS: *value = config->sustain_darkness; break;
         case BUBBLE_ENGINE_PARAM_ATTACK_RATE_JITTER: *value = (float)config->attack_rate_jitter; break;
         case BUBBLE_ENGINE_PARAM_ATTACK_RATE_JITTER_DEPTH: *value = config->attack_rate_jitter_depth; break;
+        case BUBBLE_ENGINE_PARAM_QUALITY_PROFILE: *value = (float)config->quality_profile; break;
+        case BUBBLE_ENGINE_PARAM_ACTIVE_VOICE_LIMIT: *value = (float)config->active_voice_limit; break;
         case BUBBLE_ENGINE_PARAM_RUNTIME_ENVELOPE: *value = engine->env_follower_state; break;
         case BUBBLE_ENGINE_PARAM_RUNTIME_STATE: *value = (float)engine->engine_state; break;
         case BUBBLE_ENGINE_PARAM_RUNTIME_ACTIVE_VOICES: *value = (float)CountActiveVoices(engine); break;
@@ -284,6 +298,32 @@ bool bubble_engine_save_preset(const BubbleEngine_t* engine, BubbleEnginePreset_
     preset->config = engine->config;
     preset->master_dry_gain = engine->master_dry_gain;
     preset->master_wet_gain = engine->master_wet_gain;
+    return true;
+}
+
+const BubbleQualityProfileLimits_t* bubble_engine_get_quality_profile_limits(BubbleQualityProfile profile) {
+    for (int i = 0; i < BUBBLE_QUALITY_PROFILE_COUNT; i++) {
+        if (BUBBLE_QUALITY_PROFILE_LIMITS[i].profile == profile) {
+            return &BUBBLE_QUALITY_PROFILE_LIMITS[i];
+        }
+    }
+    return NULL;
+}
+
+bool bubble_engine_set_quality_profile(BubbleEngine_t* engine, BubbleQualityProfile profile) {
+    if (engine == NULL) {
+        return false;
+    }
+
+    const BubbleQualityProfileLimits_t* limits = bubble_engine_get_quality_profile_limits(profile);
+    if (limits == NULL) {
+        return false;
+    }
+
+    BubbleEngineConfig_t config = engine->config;
+    config.quality_profile = profile;
+    config.active_voice_limit = limits->voice_limit;
+    SoundBubbles_UpdateConfig(engine, &config);
     return true;
 }
 
