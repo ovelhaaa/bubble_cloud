@@ -46,7 +46,8 @@ static float RandomFloat01(SoundBubblesEngine_t* engine);
 static inline int32_t WrapIntIndex(int32_t index, int32_t size);
 static inline float WrapFloatIndex(float index, float size);
 static inline float LinearInterpolate(const int16_t* buffer, float index_float);
-static inline bool CheckGuardZoneDirectional(int32_t write_ptr, float read_ptr_float);
+static inline bool CheckGuardZoneDirectional(int32_t write_ptr, float read_ptr_float, float rate);
+static float ResolvePitchModeRate(SoundBubblesEngine_t* engine);
 
 static void CalculateFilterCoeffsLPF(Filter1Pole_t* f, float cutoff_hz);
 static inline float Filter1Pole_ProcessLPF(Filter1Pole_t* f, float input);
@@ -190,9 +191,13 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
             block_peak = in_abs;
         }
 
-        // Clamp input to [-1.0f, 1.0f] before conversion
+        // Clamp input to [-1.0f, 1.0f] before conversion. Freeze keeps the
+        // granular memory write head locked while voices continue processing.
         float clamped_sample = fmaxf(-1.0f, fminf(1.0f, dry_sample));
-        engine->delay_buffer[engine->write_ptr] = (int16_t)(clamped_sample * 32767.0f);
+        bool freeze_write = (engine->config.freeze_enabled != 0) || (engine->config.freeze_amount >= 0.5f);
+        if (!freeze_write) {
+            engine->delay_buffer[engine->write_ptr] = (int16_t)(clamped_sample * 32767.0f);
+        }
 
         // Zero audio busses
         float bus_attack_l = 0.0f, bus_attack_r = 0.0f;
@@ -230,8 +235,10 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
             v->read_ptr_float += v->rate;
             v->read_ptr_float = WrapFloatIndex(v->read_ptr_float, (float)BUBBLES_BUFFER_SIZE_SAMPLES);
 
-            // Directional write-head guard
-            if (v->state == VOICE_STATE_PLAYING && CheckGuardZoneDirectional(engine->write_ptr, v->read_ptr_float)) {
+            // Directional write-head guard. Reverse voices also reject the
+            // opposite-side guard band so interpolation cannot wrap into the
+            // frozen/live write head neighborhood.
+            if (v->state == VOICE_STATE_PLAYING && CheckGuardZoneDirectional(engine->write_ptr, v->read_ptr_float, v->rate)) {
                 v->state = VOICE_STATE_PREEMPT_FADING;
                 v->fade_counter = BUBBLES_FADE_SAMPLES;
             }
@@ -324,8 +331,10 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
             }
         }
 
-        // Advance write pointer
-        engine->write_ptr = WrapIntIndex(engine->write_ptr + 1, BUBBLES_BUFFER_SIZE_SAMPLES);
+        // Advance write pointer unless freeze has locked the granular memory.
+        if (!freeze_write) {
+            engine->write_ptr = WrapIntIndex(engine->write_ptr + 1, BUBBLES_BUFFER_SIZE_SAMPLES);
+        }
 
         // Execute Control-Rate Tick
         if (++engine->block_counter >= BUBBLES_BLOCK_SIZE) {
@@ -504,6 +513,13 @@ static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_
         default:
             engine->target_density = 0.0f;
             break;
+    }
+
+    // Shimmer increases upper-octave cloud density in a bounded way while
+    // preserving the existing scheduler cap.
+    float shimmer = Clamp01(engine->config.shimmer_amount);
+    if (engine->config.pitch_mode == BUBBLE_PITCH_MODE_SHIMMER || shimmer > 0.0f) {
+        engine->target_density *= 1.0f + (0.5f * shimmer);
     }
 }
 
@@ -736,7 +752,9 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     v->generation = (uint8_t)((generation <= 0) ? 0 : 1);
     v->phase = 0.0f;
     v->amp = 1.0f;
-    v->rate = 1.0f;
+    v->quantized_rate = ResolvePitchModeRate(engine);
+    v->read_direction = (RandomFloat01(engine) < Clamp01(engine->config.reverse_probability)) ? 1u : 0u;
+    v->rate = (v->read_direction != 0u) ? -v->quantized_rate : v->quantized_rate;
     v->gain = 1.0f;
 
     float duration_ms = class_cfg->duration_ms_min + (RandomFloat01(engine) * (class_cfg->duration_ms_max - class_cfg->duration_ms_min));
@@ -754,6 +772,25 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
 
     ReadRegionChoice_t region_choice = ResolveReadRegionChoice(engine, b_class, engine->engine_state);
     int32_t read_offset_samples = ChooseReadOffsetSamples(engine, region_choice.region);
+
+    // Clamp spawn offsets so reverse and high-rate reads have a guard-banded
+    // path through the ring buffer for the expected voice duration. Forward
+    // voices are also kept far enough behind the write head for their pitch
+    // rate when possible. Runtime guards still handle pathological parameter
+    // updates and long frozen reads.
+    int32_t projected_span = (int32_t)ceilf(duration_samples * fabsf(v->rate));
+    if (projected_span < 0) projected_span = 0;
+    int32_t max_guarded_offset = BUBBLES_BUFFER_SIZE_SAMPLES - BUBBLES_GUARD_ZONE_SAMPLES - 1;
+    if (v->rate < 0.0f) {
+        int32_t reverse_max = max_guarded_offset - projected_span;
+        if (reverse_max < BUBBLES_GUARD_ZONE_SAMPLES) reverse_max = BUBBLES_GUARD_ZONE_SAMPLES;
+        if (read_offset_samples > reverse_max) read_offset_samples = reverse_max;
+    } else if (v->rate > 1.0f) {
+        int32_t forward_min = BUBBLES_GUARD_ZONE_SAMPLES + projected_span;
+        if (forward_min > max_guarded_offset) forward_min = max_guarded_offset;
+        if (read_offset_samples < forward_min) read_offset_samples = forward_min;
+    }
+
     if (engine->config.smart_start_enable) {
         read_offset_samples = RefineReadOffsetSmartStart(engine, read_offset_samples, engine->config.smart_start_range);
     }
@@ -785,7 +822,8 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     if (engine->config.attack_rate_jitter && b_class == BUBBLE_CLASS_MICRO_ATTACK) {
         float d = Clamp(engine->config.attack_rate_jitter_depth, 0.0f, 0.2f);
         float j = (RandomFloat01(engine) * 2.0f - 1.0f) * d;
-        v->rate = 1.0f + j;
+        v->quantized_rate = Clamp(v->quantized_rate + j, 0.25f, 4.0f);
+        v->rate = (v->read_direction != 0u) ? -v->quantized_rate : v->quantized_rate;
     }
 
     // Optional hard-limited 2nd-generation droplet (single child, no recursive chain).
@@ -983,11 +1021,41 @@ static inline float LinearInterpolate(const int16_t* buffer, float index_float) 
     return val1 + frac * (val2 - val1);
 }
 
-static inline bool CheckGuardZoneDirectional(int32_t write_ptr, float read_ptr_float) {
+static inline bool CheckGuardZoneDirectional(int32_t write_ptr, float read_ptr_float, float rate) {
     int32_t read_ptr = (int32_t)read_ptr_float;
-    int32_t dist_to_write = write_ptr - read_ptr;
-    if (dist_to_write < 0) dist_to_write += BUBBLES_BUFFER_SIZE_SAMPLES;
-    return (dist_to_write > 0 && dist_to_write < BUBBLES_GUARD_ZONE_SAMPLES);
+    int32_t dist_behind_write = write_ptr - read_ptr;
+    if (dist_behind_write < 0) dist_behind_write += BUBBLES_BUFFER_SIZE_SAMPLES;
+
+    if (dist_behind_write > 0 && dist_behind_write < BUBBLES_GUARD_ZONE_SAMPLES) {
+        return true;
+    }
+
+    if (rate < 0.0f) {
+        int32_t dist_ahead_of_write = read_ptr - write_ptr;
+        if (dist_ahead_of_write < 0) dist_ahead_of_write += BUBBLES_BUFFER_SIZE_SAMPLES;
+        return (dist_ahead_of_write > 0 && dist_ahead_of_write < BUBBLES_GUARD_ZONE_SAMPLES);
+    }
+
+    return false;
+}
+
+static float ResolvePitchModeRate(SoundBubblesEngine_t* engine) {
+    switch (engine->config.pitch_mode) {
+        case BUBBLE_PITCH_MODE_OCTAVE_UP:
+            return 2.0f;
+        case BUBBLE_PITCH_MODE_OCTAVE_DOWN:
+            return 0.5f;
+        case BUBBLE_PITCH_MODE_FIFTH:
+            return 1.5f;
+        case BUBBLE_PITCH_MODE_SHIMMER:
+        {
+            float shimmer = Clamp01(engine->config.shimmer_amount);
+            return (RandomFloat01(engine) < shimmer) ? 2.0f : 1.0f;
+        }
+        case BUBBLE_PITCH_MODE_UNISON:
+        default:
+            return 1.0f;
+    }
 }
 
 static float UpdateEnvelope(float prev_state, float input_peak, float attack_coef, float release_coef) {
@@ -1095,6 +1163,13 @@ static void ApplyQualityTierDefaults(EngineConfig_t* cfg) {
     if (cfg->sustain_diffusion_delay == 0) cfg->sustain_diffusion_delay = 18;
     if (cfg->droplet_length_scale <= 0.0f) cfg->droplet_length_scale = 0.6f;
     if (cfg->attack_brightness <= 0.0f) cfg->attack_brightness = 1.15f;
+    cfg->freeze_amount = Clamp01(cfg->freeze_amount);
+    cfg->freeze_enabled = (cfg->freeze_enabled != 0) ? 1 : 0;
+    cfg->reverse_probability = Clamp01(cfg->reverse_probability);
+    cfg->shimmer_amount = Clamp01(cfg->shimmer_amount);
+    if (cfg->pitch_mode < BUBBLE_PITCH_MODE_UNISON || cfg->pitch_mode > BUBBLE_PITCH_MODE_SHIMMER) {
+        cfg->pitch_mode = BUBBLE_PITCH_MODE_UNISON;
+    }
 
 #if defined(BUBBLES_QUALITY_ESP32_SAFE)
     cfg->sustain_diffusion_stages = 1;

@@ -76,6 +76,11 @@ void bubble_engine_default_config(BubbleEngineConfig_t* config) {
     config->sustain_darkness = 0.25f;
     config->attack_rate_jitter = 0;
     config->attack_rate_jitter_depth = 0.02f;
+    config->freeze_amount = 0.0f;
+    config->freeze_enabled = 0;
+    config->reverse_probability = 0.0f;
+    config->pitch_mode = BUBBLE_PITCH_MODE_UNISON;
+    config->shimmer_amount = 0.0f;
     config->quality_profile = BUBBLE_QUALITY_PROFILE_WEB_STANDARD;
     config->active_voice_limit = BUBBLE_QUALITY_DEFAULT_VOICE_LIMIT;
 
@@ -195,6 +200,11 @@ bool bubble_engine_set_parameter(BubbleEngine_t* engine, BubbleEngineParameterId
         case BUBBLE_ENGINE_PARAM_SUSTAIN_DARKNESS: config.sustain_darkness = value; break;
         case BUBBLE_ENGINE_PARAM_ATTACK_RATE_JITTER: config.attack_rate_jitter = (int32_t)value; break;
         case BUBBLE_ENGINE_PARAM_ATTACK_RATE_JITTER_DEPTH: config.attack_rate_jitter_depth = value; break;
+        case BUBBLE_ENGINE_PARAM_FREEZE_AMOUNT: config.freeze_amount = value; break;
+        case BUBBLE_ENGINE_PARAM_FREEZE_ENABLED: config.freeze_enabled = (int32_t)value; break;
+        case BUBBLE_ENGINE_PARAM_REVERSE_PROBABILITY: config.reverse_probability = value; break;
+        case BUBBLE_ENGINE_PARAM_PITCH_MODE: config.pitch_mode = (int32_t)value; break;
+        case BUBBLE_ENGINE_PARAM_SHIMMER_AMOUNT: config.shimmer_amount = value; break;
         case BUBBLE_ENGINE_PARAM_QUALITY_PROFILE:
             return bubble_engine_set_quality_profile(engine, (BubbleQualityProfile)((int32_t)value));
         case BUBBLE_ENGINE_PARAM_ACTIVE_VOICE_LIMIT: config.active_voice_limit = (int32_t)value; break;
@@ -268,6 +278,11 @@ bool bubble_engine_get_parameter(const BubbleEngine_t* engine, BubbleEngineParam
         case BUBBLE_ENGINE_PARAM_SUSTAIN_DARKNESS: *value = config->sustain_darkness; break;
         case BUBBLE_ENGINE_PARAM_ATTACK_RATE_JITTER: *value = (float)config->attack_rate_jitter; break;
         case BUBBLE_ENGINE_PARAM_ATTACK_RATE_JITTER_DEPTH: *value = config->attack_rate_jitter_depth; break;
+        case BUBBLE_ENGINE_PARAM_FREEZE_AMOUNT: *value = config->freeze_amount; break;
+        case BUBBLE_ENGINE_PARAM_FREEZE_ENABLED: *value = (float)config->freeze_enabled; break;
+        case BUBBLE_ENGINE_PARAM_REVERSE_PROBABILITY: *value = config->reverse_probability; break;
+        case BUBBLE_ENGINE_PARAM_PITCH_MODE: *value = (float)config->pitch_mode; break;
+        case BUBBLE_ENGINE_PARAM_SHIMMER_AMOUNT: *value = config->shimmer_amount; break;
         case BUBBLE_ENGINE_PARAM_QUALITY_PROFILE: *value = (float)config->quality_profile; break;
         case BUBBLE_ENGINE_PARAM_ACTIVE_VOICE_LIMIT: *value = (float)config->active_voice_limit; break;
         case BUBBLE_ENGINE_PARAM_RUNTIME_ENVELOPE: *value = engine->env_follower_state; break;
