@@ -268,17 +268,21 @@ document.addEventListener('alpine:init', () => {
     macroDestinations: window.BubbleCloudMacroLayer.MACRO_DESTINATIONS,
     macroPerfHint: 1.0,
     macroLabels: {
-      mix: 'Mix',
-      impact: 'Impact',
+      density: 'Density',
       bloom: 'Bloom',
-      smoothness: 'Smoothness',
+      motion: 'Motion',
+      texture: 'Texture',
+      space: 'Space',
+      gravity: 'Gravity',
       memory: 'Memory',
-      response: 'Response',
-      width: 'Width',
-      scatter: 'Scatter',
+      clarity: 'Clarity',
+      freeze: 'Freeze',
+      sparkle: 'Sparkle',
+      warmth: 'Warmth',
+      mix: 'Mix',
     },
-    macroPrimaryPage: ['mix', 'impact', 'bloom', 'smoothness', 'memory', 'response'],
-    macroSecondaryPage: ['width', 'scatter'],
+    macroPrimaryPage: ['density', 'bloom', 'texture', 'motion', 'space', 'mix'],
+    macroSecondaryPage: ['gravity', 'memory', 'clarity', 'freeze', 'sparkle', 'warmth'],
     activeMacroPage: 0,
     shiftMode: false,
     compareMode: false,
@@ -399,7 +403,7 @@ document.addEventListener('alpine:init', () => {
     },
 
     get macroPageTitle() {
-      return this.activeMacroPage === 0 ? 'Main Macros' : 'Width / Scatter';
+      return this.activeMacroPage === 0 ? 'Simple Macros' : 'Advanced Macros';
     },
 
     get macroSliderStep() {
