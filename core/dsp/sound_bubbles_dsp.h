@@ -3,11 +3,12 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "../engine/bubble_quality.h"
 
 // --- System & Algorithmic Constants ---
 #define BUBBLES_SAMPLE_RATE 44100
 #define BUBBLES_BLOCK_SIZE 32
-#define BUBBLES_MAX_VOICES 12
+#define BUBBLES_MAX_VOICES BUBBLE_ENGINE_MAX_VOICES
 #define BUBBLES_BUFFER_SIZE_SAMPLES 88200 // Exactly 2 seconds at 44.1kHz
 #define BUBBLES_FADE_SAMPLES 44           // ~1ms preemption fade at 44.1kHz
 #define BUBBLES_GUARD_ZONE_SAMPLES 64
@@ -133,6 +134,11 @@ typedef struct {
     int32_t attack_rate_jitter;
     float attack_rate_jitter_depth;
 
+    // Product/runtime quality profile. It selects an active subset of the
+    // compiled voice pool without changing per-voice DSP behavior.
+    BubbleQualityProfile quality_profile;
+    int32_t active_voice_limit;
+
     BubbleClassConfig_t class_configs[BUBBLE_CLASS_COUNT];
 } EngineConfig_t;
 
@@ -233,6 +239,7 @@ typedef struct {
 
     // Global Config & Block tracking
     EngineConfig_t config;
+    int32_t active_voice_limit;
     int32_t block_counter;         // Triggers control ticks every 32 samples
     uint32_t rng_state;            // Internal deterministic PRNG state
 

@@ -58,6 +58,16 @@
                     <img src="logo.png" alt="Bubbles Logo" class="app-logo card-logo">
                 </div>
 
+                <div class="quality-profile-row">
+                    <label for="quality-profile">Quality Profile</label>
+                    <select id="quality-profile" x-model.number="selectedQualityProfile" @change="setQualityProfile(selectedQualityProfile)">
+                        <template x-for="profile in qualityProfiles" :key="profile.id">
+                            <option :value="profile.id" x-text="`${profile.label} · ${profile.voices} voices`"></option>
+                        </template>
+                    </select>
+                    <span class="quality-budget" x-text="`${activeQualityProfile.cpu}% CPU / ${activeQualityProfile.ramKb}KB RAM`"></span>
+                </div>
+
                 <div x-show="!audioInitialized" class="audio-init-overlay">
                     <button class="btn btn-primary btn-large" @click="initAudio()">Ativar Áudio</button>
                     <p class="disclaimer">Clique para iniciar o Web Audio API</p>
@@ -354,7 +364,7 @@
                         </div>
                         <div class="metric-box">
                             <span class="metric-label">Voices</span>
-                            <span class="metric-value"><strong x-text="metrics.voices"></strong> / 12</span>
+                            <span class="metric-value"><strong x-text="metrics.voices"></strong> / <span x-text="activeVoiceLimit"></span></span>
                         </div>
                     </div>
                     <div class="macro-health-grid">

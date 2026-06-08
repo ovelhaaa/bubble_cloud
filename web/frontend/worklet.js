@@ -1,12 +1,15 @@
 import createBubbleCloudModule from './bubble_cloud_wasm.js';
 
+const QUALITY_PROFILE_VOICE_LIMITS = [8, 16, 24, 32];
+
 class SoundBubblesWorklet extends AudioWorkletProcessor {
   constructor() {
     super();
 
     this.ready = false;
     this.bypass = false;
-    this.metrics = { envelope: 0, state: 0, voices: 0 };
+    this.metrics = { envelope: 0, state: 0, voices: 0, voiceLimit: QUALITY_PROFILE_VOICE_LIMITS[2] };
+    this.qualityProfile = 2;
 
     this.wasm = null;
     this.wasmInit = null;
@@ -39,6 +42,15 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
         return;
       }
       if (!this.ready) return;
+      if (data.type === 'quality-profile') {
+        try {
+          this.qualityProfile = data.profile | 0;
+          this.wasmSetParam(54, this.qualityProfile);
+          this.metrics.voiceLimit = QUALITY_PROFILE_VOICE_LIMITS[this.qualityProfile] || QUALITY_PROFILE_VOICE_LIMITS[2];
+        } catch (err) {
+          this.postError('set_quality_profile failed', err);
+        }
+      }
       if (data.type === 'param') {
         try {
           this.wasmSetParam(data.id | 0, Number(data.value));

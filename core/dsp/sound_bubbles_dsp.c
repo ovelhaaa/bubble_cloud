@@ -71,6 +71,9 @@ static float EnvelopeVariantGain(float phase, uint8_t variant, int family);
 static float SoftClip(float x, float amount);
 static float ProcessSustainDiffusionSample(SoundBubblesEngine_t* engine, float in, float* delay_line, int delay_samples);
 static void ApplyQualityTierDefaults(EngineConfig_t* cfg);
+static int32_t ClampActiveVoiceLimit(int32_t requested_limit);
+static int32_t ResolveProfileVoiceLimit(BubbleQualityProfile profile);
+static void DeactivateVoicesAboveActiveLimit(SoundBubblesEngine_t* engine);
 static inline float Clamp01(float x);
 static inline float Clamp(float x, float lo, float hi);
 static inline float Lerp(float a, float b, float t);
@@ -84,6 +87,7 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     engine->delay_buffer = delay_buffer_memory;
     engine->config = *initial_config;
     ApplyQualityTierDefaults(&engine->config);
+    engine->active_voice_limit = engine->config.active_voice_limit;
     SoundBubbles_SetRngSeed(engine, engine->config.rng_seed);
 
     engine->write_ptr = 0;
@@ -155,6 +159,8 @@ void SoundBubbles_UpdateConfig(SoundBubblesEngine_t* engine, const EngineConfig_
     bool rng_seed_changed = (engine->config.rng_seed != new_config->rng_seed);
     engine->config = *new_config;
     ApplyQualityTierDefaults(&engine->config);
+    engine->active_voice_limit = engine->config.active_voice_limit;
+    DeactivateVoicesAboveActiveLimit(engine);
     if (rng_seed_changed) {
         SoundBubbles_SetRngSeed(engine, engine->config.rng_seed);
     }
@@ -194,7 +200,7 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
         float bus_sustain_l = 0.0f, bus_sustain_r = 0.0f;
 
         // Process active voices
-        for (int v_idx = 0; v_idx < BUBBLES_MAX_VOICES; v_idx++) {
+        for (int v_idx = 0; v_idx < engine->active_voice_limit; v_idx++) {
             BubbleVoice_t* v = &engine->voices[v_idx];
             if (v->state == VOICE_STATE_INACTIVE) continue;
 
@@ -502,7 +508,7 @@ static void Scheduler_SpawnImmediateBurst(SoundBubblesEngine_t* engine) {
     // Defensively clamp immediate burst count
     int burst_count = engine->config.burst_immediate_count;
     if (burst_count < 0) burst_count = 0;
-    if (burst_count > BUBBLES_MAX_VOICES) burst_count = BUBBLES_MAX_VOICES;
+    if (burst_count > engine->active_voice_limit) burst_count = engine->active_voice_limit;
 
     for (int i = 0; i < burst_count; i++) {
         if (Voice_RequestSpawn(engine, BUBBLE_CLASS_MICRO_ATTACK, 0)) {
@@ -559,7 +565,7 @@ static void Scheduler_RunTick(SoundBubblesEngine_t* engine) {
 }
 
 static int Voice_FindInactiveSlot(SoundBubblesEngine_t* engine) {
-    for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
+    for (int i = 0; i < engine->active_voice_limit; i++) {
         if (engine->voices[i].state == VOICE_STATE_INACTIVE) return i;
     }
 
@@ -591,7 +597,7 @@ static int Voice_Allocate(SoundBubblesEngine_t* engine) {
     float best_protected_score = -1.0f;
     float best_fallback_score = -1.0f;
 
-    for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
+    for (int i = 0; i < engine->active_voice_limit; i++) {
         BubbleVoice_t* v = &engine->voices[i];
         if (v->state != VOICE_STATE_PLAYING) {
             continue;
@@ -660,7 +666,7 @@ static bool Voice_QueuePendingSpawn(SoundBubblesEngine_t* engine, BubbleClass_t 
 static int32_t Voice_CountFadingVoices(const SoundBubblesEngine_t* engine) {
     int32_t fading_count = 0;
 
-    for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
+    for (int i = 0; i < engine->active_voice_limit; i++) {
         if (engine->voices[i].state == VOICE_STATE_PREEMPT_FADING) {
             fading_count++;
         }
@@ -782,7 +788,7 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     // Optional hard-limited 2nd-generation droplet (single child, no recursive chain).
     if (engine->config.droplet_enable && v->generation == 0 && b_class == BUBBLE_CLASS_MICRO_ATTACK) {
         int active = CountActiveVoices(engine);
-        float occupancy = (float)active / (float)BUBBLES_MAX_VOICES;
+        float occupancy = (float)active / (float)engine->active_voice_limit;
         if (occupancy < DROPLET_OCCUPANCY_DISABLE) {
             float prob = Clamp01(engine->config.droplet_probability);
             if (occupancy > DROPLET_OCCUPANCY_REDUCE) {
@@ -944,7 +950,7 @@ static inline float Lerp(float a, float b, float t) {
 
 static int32_t CountActiveVoices(const SoundBubblesEngine_t* engine) {
     int32_t count = 0;
-    for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
+    for (int i = 0; i < engine->active_voice_limit; i++) {
         if (engine->voices[i].state != VOICE_STATE_INACTIVE) {
             count++;
         }
@@ -1037,7 +1043,39 @@ static float ProcessSustainDiffusionSample(SoundBubblesEngine_t* engine, float i
     return y;
 }
 
+static int32_t ClampActiveVoiceLimit(int32_t requested_limit) {
+    if (requested_limit < 1) return 1;
+    if (requested_limit > BUBBLE_ENGINE_MAX_VOICES) return BUBBLE_ENGINE_MAX_VOICES;
+    return requested_limit;
+}
+
+static int32_t ResolveProfileVoiceLimit(BubbleQualityProfile profile) {
+    for (int i = 0; i < BUBBLE_QUALITY_PROFILE_COUNT; i++) {
+        if (BUBBLE_QUALITY_PROFILE_LIMITS[i].profile == profile) {
+            return BUBBLE_QUALITY_PROFILE_LIMITS[i].voice_limit;
+        }
+    }
+    return BUBBLE_QUALITY_PROFILE_LIMITS[BUBBLE_QUALITY_PROFILE_WEB_STANDARD].voice_limit;
+}
+
+static void DeactivateVoicesAboveActiveLimit(SoundBubblesEngine_t* engine) {
+    for (int i = engine->active_voice_limit; i < BUBBLES_MAX_VOICES; i++) {
+        engine->voices[i].state = VOICE_STATE_INACTIVE;
+        engine->voices[i].fade_counter = 0;
+        engine->voices[i].amp = 0.0f;
+    }
+}
+
 static void ApplyQualityTierDefaults(EngineConfig_t* cfg) {
+    if (cfg->quality_profile < BUBBLE_QUALITY_PROFILE_MCU_SAFE || cfg->quality_profile > BUBBLE_QUALITY_PROFILE_WEB_ULTRA) {
+        cfg->quality_profile = BUBBLE_QUALITY_PROFILE_WEB_STANDARD;
+    }
+    if (cfg->active_voice_limit <= 0) {
+        cfg->active_voice_limit = ResolveProfileVoiceLimit(cfg->quality_profile);
+    } else {
+        cfg->active_voice_limit = ClampActiveVoiceLimit(cfg->active_voice_limit);
+    }
+
     if (cfg->smart_start_range == 0) cfg->smart_start_range = 12;
     if (cfg->wet_drive <= 0.0f) cfg->wet_drive = 1.0f;
     if (cfg->wet_output_trim <= 0.0f) cfg->wet_output_trim = 1.0f;

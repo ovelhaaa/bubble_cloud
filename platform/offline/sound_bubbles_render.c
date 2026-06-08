@@ -60,10 +60,31 @@ typedef struct {
 static void PrintUsage(const char* progName) {
     fprintf(stderr,
         "Usage:\n"
-        "  %s <input.wav> <preset.json> <output.wav> [--metrics-out <metrics.csv>] [--repro-check]\n"
+        "  %s <input.wav> <preset.json> <output.wav> [--quality-profile <MCU_SAFE|MCU_PLUS|WEB_STANDARD|WEB_ULTRA>] [--metrics-out <metrics.csv>] [--repro-check]\n"
         "  %s compare <reference_metrics.csv> <candidate_metrics.csv> [--max-threshold <value>] [--mean-threshold <value>]\n",
         progName,
         progName);
+}
+
+static bool ParseQualityProfileName(const char* value, BubbleQualityProfile* profile) {
+    if (value == NULL || profile == NULL) return false;
+    for (int i = 0; i < BUBBLE_QUALITY_PROFILE_COUNT; i++) {
+        if (strcmp(value, BUBBLE_QUALITY_PROFILE_LIMITS[i].name) == 0) {
+            *profile = BUBBLE_QUALITY_PROFILE_LIMITS[i].profile;
+            return true;
+        }
+    }
+    return false;
+}
+
+static void ApplyQualityProfileToConfig(EngineConfig_t* config, BubbleQualityProfile profile) {
+    for (int i = 0; i < BUBBLE_QUALITY_PROFILE_COUNT; i++) {
+        if (BUBBLE_QUALITY_PROFILE_LIMITS[i].profile == profile) {
+            config->quality_profile = profile;
+            config->active_voice_limit = BUBBLE_QUALITY_PROFILE_LIMITS[i].voice_limit;
+            return;
+        }
+    }
 }
 
 static void ErrorExit(const char* message) {
@@ -151,6 +172,9 @@ static void ValidateConfig(const EngineConfig_t* config, float master_dry, float
 
     if (!isfinite(master_dry) || master_dry < 0.0f || !isfinite(master_wet) || master_wet < 0.0f) {
         ErrorExit("Preset validation failed: master_dry and master_wet must be finite and >= 0.");
+    }
+    if (config->active_voice_limit < 1 || config->active_voice_limit > BUBBLE_ENGINE_MAX_VOICES) {
+        ErrorExit("Preset validation failed: active_voice_limit is outside the compiled voice pool.");
     }
 
     for (int i = 0; i < BUBBLE_CLASS_COUNT; i++) {
@@ -549,6 +573,8 @@ static void LoadPreset(const char* filename, EngineConfig_t* config, float* mast
     config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_max = GetJsonFloat(json_str, "body_duration_ms_max", 200.0f);
     config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].window_type = WINDOW_TYPE_TUKEY_LIKE;
 
+    config->active_voice_limit = GetJsonInt(json_str, "active_voice_limit", config->active_voice_limit);
+
     // Canonical mix keys with legacy fallback.
     *master_dry = GetJsonFloatLegacyFallback(json_str, "mix_dry_gain", "master_dry_gain", 1.0f);
     *master_wet = GetJsonFloatLegacyFallback(json_str, "mix_wet_gain", "master_wet_gain", 1.0f);
@@ -739,9 +765,17 @@ int main(int argc, char** argv) {
     const char* output_wav_file = argv[3];
     const char* metrics_out_file = NULL;
     bool repro_check = false;
+    bool cli_quality_profile_set = false;
+    BubbleQualityProfile cli_quality_profile = BUBBLE_QUALITY_PROFILE_WEB_STANDARD;
 
     for (int i = 4; i < argc; i++) {
-        if (strcmp(argv[i], "--metrics-out") == 0 && i + 1 < argc) {
+        if (strcmp(argv[i], "--quality-profile") == 0 && i + 1 < argc) {
+            if (!ParseQualityProfileName(argv[++i], &cli_quality_profile)) {
+                PrintUsage(argv[0]);
+                return EXIT_FAILURE;
+            }
+            cli_quality_profile_set = true;
+        } else if (strcmp(argv[i], "--metrics-out") == 0 && i + 1 < argc) {
             metrics_out_file = argv[++i];
         } else if (strcmp(argv[i], "--repro-check") == 0) {
             repro_check = true;
@@ -753,9 +787,13 @@ int main(int argc, char** argv) {
 
     // Load DSP Configuration
     EngineConfig_t config = {0};
+    bubble_engine_default_config(&config);
     float master_dry = 1.0f;
     float master_wet = 1.0f;
     LoadPreset(preset_json_file, &config, &master_dry, &master_wet);
+    if (cli_quality_profile_set) {
+        ApplyQualityProfileToConfig(&config, cli_quality_profile);
+    }
     ValidateConfig(&config, master_dry, master_wet);
 
     // Read Input Audio

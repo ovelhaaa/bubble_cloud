@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "bubble_quality.h"
 #include "../dsp/sound_bubbles_dsp.h"
 
 #ifdef __cplusplus
@@ -75,6 +76,8 @@ typedef enum {
     BUBBLE_ENGINE_PARAM_SUSTAIN_DARKNESS = 51,
     BUBBLE_ENGINE_PARAM_ATTACK_RATE_JITTER = 52,
     BUBBLE_ENGINE_PARAM_ATTACK_RATE_JITTER_DEPTH = 53,
+    BUBBLE_ENGINE_PARAM_QUALITY_PROFILE = 54,
+    BUBBLE_ENGINE_PARAM_ACTIVE_VOICE_LIMIT = 55,
 
     BUBBLE_ENGINE_PARAM_RUNTIME_ENVELOPE = 1000,
     BUBBLE_ENGINE_PARAM_RUNTIME_STATE = 1001,
@@ -89,6 +92,8 @@ bool bubble_engine_set_parameter(BubbleEngine_t* engine, BubbleEngineParameterId
 bool bubble_engine_get_parameter(const BubbleEngine_t* engine, BubbleEngineParameterId_t parameter, float* value);
 bool bubble_engine_load_preset(BubbleEngine_t* engine, const BubbleEnginePreset_t* preset);
 bool bubble_engine_save_preset(const BubbleEngine_t* engine, BubbleEnginePreset_t* preset);
+bool bubble_engine_set_quality_profile(BubbleEngine_t* engine, BubbleQualityProfile profile);
+const BubbleQualityProfileLimits_t* bubble_engine_get_quality_profile_limits(BubbleQualityProfile profile);
 void bubble_engine_set_metrics_callback(BubbleEngine_t* engine, BubbleEngineMetricsCallback_t callback, void* user_data);
 
 #ifdef __cplusplus

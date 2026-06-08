@@ -57,6 +57,13 @@ const BASELINE = {
   attack_rate_jitter_depth: 0.02,
 };
 
+const QUALITY_PROFILES = Object.freeze([
+  { id: 0, key: 'MCU_SAFE', label: 'MCU Safe', voices: 8, cpu: 35, ramKb: 256 },
+  { id: 1, key: 'MCU_PLUS', label: 'MCU Plus', voices: 16, cpu: 50, ramKb: 384 },
+  { id: 2, key: 'WEB_STANDARD', label: 'Web Standard', voices: 24, cpu: 60, ramKb: 512 },
+  { id: 3, key: 'WEB_ULTRA', label: 'Web Ultra', voices: 32, cpu: 75, ramKb: 768 },
+]);
+
 const PARAM_DEFINITIONS = {
   noise_floor: { min: 0, max: 0.1, step: 0.0005, label: 'Noise Floor' },
   tracking_thresh: { min: 0, max: 0.2, step: 0.001, label: 'Tracking Threshold' },
@@ -295,6 +302,8 @@ document.addEventListener('alpine:init', () => {
     isDraft: false,
     hasUnexportedChanges: false,
     parityNote: 'Paridade sonora: mesma engine DSP para modo synth e modo file.',
+    qualityProfiles: QUALITY_PROFILES,
+    selectedQualityProfile: 2,
 
     audioInitialized: false,
     audioContext: null,
@@ -326,7 +335,7 @@ document.addEventListener('alpine:init', () => {
     seekTime: 0,
     duration: 0,
 
-    metrics: { envelope: 0, state: 0, voices: 0 },
+    metrics: { envelope: 0, state: 0, voices: 0, voiceLimit: 24 },
     telemetry: {
       targetDensity: { value: 0, ratio: 0, available: false },
       wetDuckAmount: { value: 0, ratio: 0, available: false },
@@ -812,6 +821,7 @@ document.addEventListener('alpine:init', () => {
             this.audioInitialized = true;
             this.workletReady = true;
             this.setAudioStatus('Áudio pronto');
+            this.pushQualityProfileToAudio();
             this.pushAllParamsToAudio();
             this.startMetricsPolling();
             this.toast('Engine inicializado com sucesso.', 'success');
@@ -819,6 +829,7 @@ document.addEventListener('alpine:init', () => {
             this.metrics.envelope = Number(data.envelope) || 0;
             this.metrics.state = Number(data.state) || 0;
             this.metrics.voices = Number(data.voices) || 0;
+            this.metrics.voiceLimit = Number(data.voiceLimit) || this.activeVoiceLimit;
             this.updateTelemetryIndicators();
           } else if (data.type === 'init-failed' || data.type === 'wasm-error' || data.type === 'processor-error') {
             this.workletReady = false;
@@ -830,6 +841,27 @@ document.addEventListener('alpine:init', () => {
         this.setAudioStatus(`Falha ao iniciar áudio: ${err.message || err}`, true);
         this.toast(this.audioStatusMsg, 'error');
       }
+    },
+
+    get activeQualityProfile() {
+      return QUALITY_PROFILES.find((profile) => profile.id === Number(this.selectedQualityProfile)) || QUALITY_PROFILES[2];
+    },
+
+    get activeVoiceLimit() {
+      return Number(this.metrics.voiceLimit) || this.activeQualityProfile.voices;
+    },
+
+    setQualityProfile(profileId) {
+      this.selectedQualityProfile = Number(profileId);
+      this.metrics.voiceLimit = this.activeQualityProfile.voices;
+      this.pushQualityProfileToAudio();
+      this.updateTelemetryIndicators();
+      this.toast(`Perfil de qualidade: ${this.activeQualityProfile.label}`, 'info');
+    },
+
+    pushQualityProfileToAudio() {
+      if (!this.workletReady || !this.workletNode) return;
+      this.workletNode.port.postMessage({ type: 'quality-profile', profile: Number(this.selectedQualityProfile) });
     },
 
     pushParamToAudio(key) {
@@ -904,7 +936,7 @@ document.addEventListener('alpine:init', () => {
 
     estimateSchedulerPressure(voices, targetDensityEstimate) {
       if (!Number.isFinite(voices) || !Number.isFinite(targetDensityEstimate)) return null;
-      const voiceRatio = clamp(voices / 12, 0, 1);
+      const voiceRatio = clamp(voices / this.activeVoiceLimit, 0, 1);
       const densityCap = Math.max(
         Number(this.resolvedParams.density_burst) || 0,
         Number(this.resolvedParams.density_sustain) || 0,
@@ -1209,6 +1241,7 @@ document.addEventListener('alpine:init', () => {
     },
 
     pushAllParamsToPort(port) {
+      port.postMessage({ type: 'quality-profile', profile: Number(this.selectedQualityProfile) });
       Object.keys(this.resolvedParams).forEach((key) => {
         const id = WASM_PARAM_ID_MAP[key];
         if (id === undefined) return;
