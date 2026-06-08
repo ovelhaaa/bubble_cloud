@@ -6,7 +6,7 @@
 #include <string.h>
 #include <math.h>
 
-#include "sound_bubbles_dsp.h"
+#include "engine/bubble_engine.h"
 
 // --- 1. Design Summary ---
 // This file is a minimal, self-contained CLI renderer for the Sound Bubbles DSP core.
@@ -566,13 +566,13 @@ static MetricsDigest_t RenderWithMetrics(const EngineConfig_t* config, float mas
         ErrorExit("Failed to allocate DSP delay buffer.");
     }
 
-    SoundBubblesEngine_t engine;
-    SoundBubbles_Init(&engine, delay_buffer, config);
-    engine.master_dry_gain = master_dry;
-    engine.master_wet_gain = master_wet;
+    BubbleEngine_t engine;
+    bubble_engine_init(&engine, delay_buffer, config);
+    bubble_engine_set_parameter(&engine, BUBBLE_ENGINE_PARAM_MIX_DRY_GAIN, master_dry);
+    bubble_engine_set_parameter(&engine, BUBBLE_ENGINE_PARAM_MIX_WET_GAIN, master_wet);
 
     MetricsCallbackState_t metrics_state = {0};
-    SoundBubbles_SetMetricsCallback(&engine, MetricsCallback, &metrics_state);
+    bubble_engine_set_metrics_callback(&engine, MetricsCallback, &metrics_state);
 
     uint32_t processed = 0;
     while (processed < num_frames) {
@@ -581,7 +581,7 @@ static MetricsDigest_t RenderWithMetrics(const EngineConfig_t* config, float mas
             chunk = num_frames - processed;
         }
         uint32_t callback_count_before = metrics_state.callback_count;
-        SoundBubbles_ProcessBlock(&engine, &mono_in[processed], &out_left[processed], &out_right[processed], chunk);
+        bubble_engine_process(&engine, &mono_in[processed], &out_left[processed], &out_right[processed], chunk);
         processed += chunk;
 
         if (metrics_state.callback_count == callback_count_before) {
