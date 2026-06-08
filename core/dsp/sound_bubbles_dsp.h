@@ -49,6 +49,14 @@ typedef enum {
     ENVELOPE_FAMILY_SOFT = 1
 } EnvelopeFamily_t;
 
+typedef enum {
+    BUBBLE_PITCH_MODE_UNISON = 0,
+    BUBBLE_PITCH_MODE_OCTAVE_UP = 1,
+    BUBBLE_PITCH_MODE_OCTAVE_DOWN = 2,
+    BUBBLE_PITCH_MODE_FIFTH = 3,
+    BUBBLE_PITCH_MODE_SHIMMER = 4
+} BubblePitchMode_t;
+
 // --- Configuration Structs ---
 
 typedef struct {
@@ -134,6 +142,13 @@ typedef struct {
     int32_t attack_rate_jitter;
     float attack_rate_jitter_depth;
 
+    // Internal freeze/reverse/pitch extension controls.
+    float freeze_amount;
+    int32_t freeze_enabled;
+    float reverse_probability;
+    int32_t pitch_mode;
+    float shimmer_amount;
+
     // Product/runtime quality profile. It selects an active subset of the
     // compiled voice pool without changing per-voice DSP behavior.
     BubbleQualityProfile quality_profile;
@@ -144,14 +159,15 @@ typedef struct {
 
 // --- Runtime Structs ---
 
-// State of a single bubble voice (Strictly 1.0x playback, no pitch fields)
+// State of a single bubble voice
 typedef struct {
     VoiceState_t state;
     BubbleClass_t bubble_class;
 
     // Hot-path critical fields
-    float read_ptr_float; // Advances precisely 1.0f per sample
-    float rate;           // Spawn-time playback rate, optional and deterministic
+    float read_ptr_float; // Advances by signed spawn-time rate per sample
+    float rate;           // Signed playback rate after pitch and reverse decisions
+    float quantized_rate; // Absolute quantized pitch rate selected at spawn
     float phase;          // Window phase (0.0 to 1.0)
     float phase_inc;      // Phase step per sample based on class duration
     float amp;            // Amplitude multiplier for preemption fade
@@ -161,6 +177,7 @@ typedef struct {
     uint8_t envelope_variant;
     uint8_t tone_profile;
     uint8_t source_region_id;
+    uint8_t read_direction; // 0 = forward, 1 = reverse
     uint8_t generation;
 
     // Preemption tracking
