@@ -31,11 +31,11 @@ jobs:
         uses: mymindstorm/setup-emsdk@v14
 
       - name: Build wasm target
-        run: make -B wasm
+        run: make -B wasm WASM_OUT="$RUNNER_TEMP/build/bubble_cloud_wasm.js"
 
       - name: Verify wasm outputs
         run: |
-          test -f web/frontend/bubble_cloud_wasm.js
+          test -f "$RUNNER_TEMP/build/bubble_cloud_wasm.js"
 
       - name: Build offline target
-        run: make -B offline
+        run: make -B offline OFFLINE_RENDERER="$RUNNER_TEMP/build/sound_bubbles_render"

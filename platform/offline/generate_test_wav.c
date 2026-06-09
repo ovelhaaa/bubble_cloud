@@ -188,9 +188,9 @@ int main() {
     // 8. Final silence (2s)
     current_sample += 2 * SAMPLE_RATE; // Leaves buffer empty at end
 
-    write_wav("sample/test_in.wav", buffer, current_sample); // Write exact duration ~ 28 seconds
+    write_wav("tests/fixtures/audio/test_in.wav", buffer, current_sample); // Write exact duration ~ 28 seconds
 
     free(buffer);
-    printf("Successfully generated sample/test_in.wav (%d samples, %.2f seconds)\n", current_sample, (float)current_sample / SAMPLE_RATE);
+    printf("Successfully generated tests/fixtures/audio/test_in.wav (%d samples, %.2f seconds)\n", current_sample, (float)current_sample / SAMPLE_RATE);
     return 0;
 }

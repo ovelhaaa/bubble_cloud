@@ -25,15 +25,17 @@ jobs:
 
       - name: Build harness
         run: |
-          gcc platform/offline/test_harness.c core/dsp/sound_bubbles_dsp.c -O2 -Wall -Wextra -std=c11 -lm -Icore -Icore/dsp -o test_harness
+          mkdir -p "$RUNNER_TEMP/bin" "$RUNNER_TEMP/harness"
+          gcc platform/offline/test_harness.c core/dsp/sound_bubbles_dsp.c -O2 -Wall -Wextra -std=c11 -lm -Icore -Icore/dsp -o "$RUNNER_TEMP/bin/test_harness"
 
       - name: Run harness
         run: |
-          ./test_harness
+          cd "$RUNNER_TEMP/harness"
+          "$RUNNER_TEMP/bin/test_harness"
 
       - name: Show generated raw files
         run: |
-          find . -maxdepth 1 -type f -name "*.raw" -ls
+          find "$RUNNER_TEMP/harness" -maxdepth 1 -type f -name "*.raw" -ls
 
       - name: Convert raw float32 stereo to wav
         run: |
@@ -46,7 +48,7 @@ jobs:
           SAMPLE_RATE = 44100
           CHANNELS = 2
 
-          raw_files = sorted(glob.glob("*.raw"))
+          raw_files = sorted(glob.glob(os.path.join(os.environ["RUNNER_TEMP"], "harness", "*.raw")))
           if not raw_files:
               raise SystemExit("No .raw files found to convert.")
 
@@ -90,18 +92,18 @@ jobs:
 
       - name: Show generated wav files
         run: |
-          find . -maxdepth 1 -type f -name "*.wav" -ls
+          find "$RUNNER_TEMP/harness" -maxdepth 1 -type f -name "*.wav" -ls
 
       - name: Upload raw audio artifacts
         uses: actions/upload-artifact@v4
         with:
           name: sound-bubbles-raw-audio
-          path: "*.raw"
+          path: ${{ runner.temp }}/harness/*.raw
           if-no-files-found: error
 
       - name: Upload wav audio artifacts
         uses: actions/upload-artifact@v4
         with:
           name: sound-bubbles-wav-audio
-          path: "*.wav"
+          path: ${{ runner.temp }}/harness/*.wav
           if-no-files-found: error

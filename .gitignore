@@ -1,2 +1,31 @@
-test_harness
+# Local build products
+build/
+out/
+dist/
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Project binaries
+/test_harness
+/test_json
+/sound_bubbles_render
+/platform/offline/sound_bubbles_render
+/platform/offline/sound_bubbles_synth
+
+# Logs
+*.log
+
+# Generated audio outputs
 *.raw
+*.wav
+renders/
+outputs/
+
+# Versioned audio fixtures/samples are allowed explicitly.
+!tests/fixtures/audio/*.wav
+!assets/samples/*.wav
