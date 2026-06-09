@@ -11,7 +11,7 @@ This repository now includes an ESP-IDF reference port under `platform/esp32/`. 
 | I2S sample format | 16-bit stereo, Philips standard | Input is summed to mono before `bubble_engine_process`; output remains stereo. |
 | Default quality profile | `BUBBLE_QUALITY_PROFILE_MCU_SAFE` | The reference app caps active voices to 8 for ESP32-class targets. |
 
-If a board must run at another codec rate, keep the hardware codec and I2S rate synchronized and add an explicit resampler before calling the core engine. Do not silently run the engine at a mismatched sample rate.
+If a board must run at another codec rate, keep the hardware codec and I2S rate synchronized and add an explicit resampler before calling the core engine. Do not silently run the engine at a mismatched sample rate. Control changes are queued from the UI task and applied only by the audio task between blocks, keeping `BubbleEngine_t` mutation serialized with `bubble_engine_process`.
 
 ## Reference pin map
 
@@ -69,7 +69,7 @@ The reference status page shows preset slot/name, estimated CPU percentage per a
 
 ## Porting checklist
 
-1. Choose the target ESP32 variant and confirm available internal RAM/PSRAM for the engine delay buffer.
+1. Choose the target ESP32 variant and confirm available internal RAM/PSRAM for the engine delay buffer. The reference app places the delay buffer in external RAM when `CONFIG_SPIRAM` is enabled.
 2. Replace the placeholder codec register sequence with board-specific codec initialization.
 3. Confirm I2S MCLK/BCLK/LRCLK polarity and slot format on a scope or logic analyzer.
 4. Update the pin map tables above and the config passed to `bubble_esp32_i2s_init`, `bubble_esp32_codec_init`, `bubble_esp32_controls_init`, and `bubble_esp32_oled_init`.

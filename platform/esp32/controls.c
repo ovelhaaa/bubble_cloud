@@ -116,6 +116,8 @@ esp_err_t bubble_esp32_controls_init(const BubbleEsp32ControlsConfig* config) {
         for (size_t i = 0; i < s_config.pot_count; ++i) {
             err = adc_oneshot_config_channel(s_adc, s_pots[i].channel, &channel_config);
             if (err != ESP_OK) {
+                (void)adc_oneshot_del_unit(s_adc);
+                s_adc = NULL;
                 return err;
             }
         }

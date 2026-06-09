@@ -117,13 +117,13 @@ esp_err_t bubble_esp32_i2s_deinit(void) {
 
     if (s_rx_channel != NULL) {
         esp_err_t err = i2s_channel_disable(s_rx_channel);
-        if (err != ESP_OK && result == ESP_OK) {
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE && result == ESP_OK) {
             result = err;
         }
     }
     if (s_tx_channel != NULL) {
         esp_err_t err = i2s_channel_disable(s_tx_channel);
-        if (err != ESP_OK && result == ESP_OK) {
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE && result == ESP_OK) {
             result = err;
         }
     }

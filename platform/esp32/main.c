@@ -11,15 +11,21 @@
 
 #include "core/engine/bubble_engine.h"
 
+#include "esp_attr.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 
 static const char* TAG = "bubble_main";
 
+#ifdef CONFIG_SPIRAM
+static EXT_RAM_ATTR int16_t s_delay_buffer[BUBBLES_BUFFER_SIZE_SAMPLES];
+#else
 static int16_t s_delay_buffer[BUBBLES_BUFFER_SIZE_SAMPLES];
+#endif
 static BubbleEngine_t s_engine;
 static float s_input_block[BUBBLE_ESP32_AUDIO_BLOCK_FRAMES];
 static float s_output_left[BUBBLE_ESP32_AUDIO_BLOCK_FRAMES];
@@ -31,6 +37,7 @@ static volatile float s_cpu_percent;
 static volatile bool s_clipped;
 static uint8_t s_preset_slot;
 static char s_preset_name[32] = "DEFAULT";
+static QueueHandle_t s_controls_queue;
 
 static void metrics_callback(const BubbleEngineBlockMetrics_t* metrics, void* user_data) {
     (void)user_data;
@@ -74,6 +81,17 @@ static void load_boot_preset_or_default(void) {
     }
 }
 
+static void apply_pending_control_updates(void) {
+    if (s_controls_queue == NULL) {
+        return;
+    }
+
+    BubbleEsp32ControlsState state;
+    while (xQueueReceive(s_controls_queue, &state, 0) == pdTRUE) {
+        (void)bubble_esp32_controls_apply(&s_engine, &state);
+    }
+}
+
 static void audio_task(void* arg) {
     (void)arg;
 
@@ -82,8 +100,11 @@ static void audio_task(void* arg) {
         esp_err_t err = bubble_esp32_i2s_read(s_i2s_rx, BUBBLE_ESP32_AUDIO_BLOCK_FRAMES, &frames_read);
         if (err != ESP_OK || frames_read == 0) {
             ESP_LOGW(TAG, "I2S read failed: %s", esp_err_to_name(err));
+            vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
+
+        apply_pending_control_updates();
 
         for (size_t i = 0; i < frames_read; ++i) {
             const float left = (float)s_i2s_rx[i * 2U] / 32768.0f;
@@ -116,8 +137,8 @@ static void controls_task(void* arg) {
     BubbleEsp32ControlsState state;
 
     while (true) {
-        if (bubble_esp32_controls_poll(&state) == ESP_OK) {
-            (void)bubble_esp32_controls_apply(&s_engine, &state);
+        if (bubble_esp32_controls_poll(&state) == ESP_OK && s_controls_queue != NULL) {
+            (void)xQueueOverwrite(s_controls_queue, &state);
         }
         vTaskDelay(pdMS_TO_TICKS(5));
     }
@@ -160,6 +181,9 @@ void app_main(void) {
         .footswitch_gpio = 4,
         .freeze_switch_gpio = 5,
     };
+
+    s_controls_queue = xQueueCreate(1, sizeof(BubbleEsp32ControlsState));
+    ESP_ERROR_CHECK(s_controls_queue != NULL ? ESP_OK : ESP_ERR_NO_MEM);
 
     ESP_ERROR_CHECK(bubble_esp32_codec_init(NULL));
     ESP_ERROR_CHECK(bubble_esp32_i2s_init(NULL));
