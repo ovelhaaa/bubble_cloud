@@ -4,6 +4,13 @@
 #include <math.h>
 #include <stddef.h>
 
+const BubbleQualityProfileLimits_t BUBBLE_QUALITY_PROFILE_LIMITS[BUBBLE_QUALITY_PROFILE_COUNT] = {
+    { BUBBLE_QUALITY_PROFILE_MCU_SAFE,     "MCU_SAFE",      35, 256,  8 },
+    { BUBBLE_QUALITY_PROFILE_MCU_PLUS,     "MCU_PLUS",      50, 384, 16 },
+    { BUBBLE_QUALITY_PROFILE_WEB_STANDARD, "WEB_STANDARD",  60, 512, 24 },
+    { BUBBLE_QUALITY_PROFILE_WEB_ULTRA,    "WEB_ULTRA",     75, 768, 32 },
+};
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f
 #endif
@@ -163,7 +170,7 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     engine->macro_targets[8] = 0.0f;
     engine->macro_values[9] = 0.0f;
     engine->macro_targets[9] = 0.0f;
-    engine->macro_dirty_mask = 0u;
+    engine->macro_dirty_mask = (1u << BUBBLES_MACRO_COUNT) - 1u;
     engine->developer_mode = 0;
     engine->final_limiter_gain = 1.0f;
     engine->final_limiter_ceiling_linear = 1.0f;

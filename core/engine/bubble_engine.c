@@ -63,7 +63,6 @@ static BubbleParameterId MacroForDeveloperParameter(BubbleParameterId parameter)
         case BUBBLE_ENGINE_PARAM_DENSITY_DECAY:
         case BUBBLE_ENGINE_PARAM_BURST_IMMEDIATE_COUNT: return BUBBLE_PARAM_DENSITY;
         case BUBBLE_ENGINE_PARAM_WET_DRIVE:
-        case BUBBLE_ENGINE_PARAM_WET_CLIP_AMOUNT:
         case BUBBLE_ENGINE_PARAM_WET_OUTPUT_TRIM:
         case BUBBLE_ENGINE_PARAM_SUSTAIN_DIFFUSION_AMOUNT:
         case BUBBLE_ENGINE_PARAM_SUSTAIN_DIFFUSION_DELAY:
@@ -97,6 +96,7 @@ static BubbleParameterId MacroForDeveloperParameter(BubbleParameterId parameter)
         case BUBBLE_ENGINE_PARAM_MEMORY_REGION_MAX_OFFSET_SAMPLES: return BUBBLE_PARAM_MEMORY;
         case BUBBLE_ENGINE_PARAM_ATTACK_BRIGHTNESS:
         case BUBBLE_ENGINE_PARAM_SUSTAIN_DARKNESS: return BUBBLE_PARAM_CLARITY;
+        case BUBBLE_ENGINE_PARAM_WET_CLIP_AMOUNT: return BUBBLE_PARAM_WARMTH;
         case BUBBLE_ENGINE_PARAM_FREEZE_AMOUNT:
         case BUBBLE_ENGINE_PARAM_FREEZE_ENABLED: return BUBBLE_PARAM_FREEZE;
         case BUBBLE_ENGINE_PARAM_SHIMMER_AMOUNT:
@@ -105,6 +105,13 @@ static BubbleParameterId MacroForDeveloperParameter(BubbleParameterId parameter)
         case BUBBLE_ENGINE_PARAM_MIX_WET_GAIN: return BUBBLE_PARAM_MIX;
         default: return (BubbleParameterId)-1;
     }
+}
+
+static bool IsDeveloperOnlyParameter(BubbleParameterId parameter) {
+    return parameter >= BUBBLE_ENGINE_PARAM_NOISE_FLOOR &&
+           parameter <= BUBBLE_ENGINE_PARAM_FINAL_LIMITER_RELEASE_MS &&
+           parameter != BUBBLE_ENGINE_PARAM_QUALITY_PROFILE &&
+           parameter != BUBBLE_ENGINE_PARAM_ACTIVE_VOICE_LIMIT;
 }
 
 static void ApplyMacroConfig(BubbleEngine_t* engine) {
@@ -205,13 +212,6 @@ static void ApplyMacroControlRate(BubbleEngine_t* engine) {
 }
 
 
-const BubbleQualityProfileLimits_t BUBBLE_QUALITY_PROFILE_LIMITS[BUBBLE_QUALITY_PROFILE_COUNT] = {
-    { BUBBLE_QUALITY_PROFILE_MCU_SAFE,     "MCU_SAFE",      35, 256,  8 },
-    { BUBBLE_QUALITY_PROFILE_MCU_PLUS,     "MCU_PLUS",      50, 384, 16 },
-    { BUBBLE_QUALITY_PROFILE_WEB_STANDARD, "WEB_STANDARD",  60, 512, 24 },
-    { BUBBLE_QUALITY_PROFILE_WEB_ULTRA,    "WEB_ULTRA",     75, 768, 32 },
-};
-
 static int32_t CountActiveVoices(const BubbleEngine_t* engine) {
     int32_t count = 0;
     for (int i = 0; i < engine->active_voice_limit; i++) {
@@ -306,11 +306,17 @@ void bubble_engine_init(BubbleEngine_t* engine, int16_t* delay_buffer_memory, co
     }
 
     BubbleEngineConfig_t default_config;
+    bool use_macro_defaults = false;
     if (initial_config == NULL) {
         bubble_engine_default_config(&default_config);
         initial_config = &default_config;
+        use_macro_defaults = true;
     }
     SoundBubbles_Init(engine, delay_buffer_memory, initial_config);
+    if (use_macro_defaults) {
+        ApplyMacroConfig(engine);
+        engine->macro_dirty_mask = 0u;
+    }
 }
 
 void bubble_engine_reset(BubbleEngine_t* engine) {
@@ -479,7 +485,8 @@ bool bubble_engine_get_parameter(const BubbleEngine_t* engine, BubbleEngineParam
         return true;
     }
 
-    if (!engine->developer_mode && MacroIndex(MacroForDeveloperParameter(parameter)) >= 0) {
+    if (!engine->developer_mode && IsDeveloperOnlyParameter(parameter)) {
+        (void)MacroForDeveloperParameter(parameter);
         return false;
     }
 
@@ -569,6 +576,12 @@ bool bubble_engine_load_preset(BubbleEngine_t* engine, const BubbleEnginePreset_
     SoundBubbles_UpdateConfig(engine, &preset->config);
     engine->master_dry_gain = preset->master_dry_gain;
     engine->master_wet_gain = preset->master_wet_gain;
+    for (int i = 0; i < BUBBLES_MACRO_COUNT; i++) {
+        engine->macro_values[i] = preset->macro_values[i];
+        engine->macro_targets[i] = preset->macro_targets[i];
+    }
+    engine->macro_dirty_mask = preset->macro_dirty_mask;
+    engine->developer_mode = preset->developer_mode;
     return true;
 }
 
@@ -580,6 +593,12 @@ bool bubble_engine_save_preset(const BubbleEngine_t* engine, BubbleEnginePreset_
     preset->config = engine->config;
     preset->master_dry_gain = engine->master_dry_gain;
     preset->master_wet_gain = engine->master_wet_gain;
+    for (int i = 0; i < BUBBLES_MACRO_COUNT; i++) {
+        preset->macro_values[i] = engine->macro_values[i];
+        preset->macro_targets[i] = engine->macro_targets[i];
+    }
+    preset->macro_dirty_mask = engine->macro_dirty_mask;
+    preset->developer_mode = engine->developer_mode;
     return true;
 }
 

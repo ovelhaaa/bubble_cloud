@@ -19,6 +19,10 @@ typedef struct {
     BubbleEngineConfig_t config;
     float master_dry_gain;
     float master_wet_gain;
+    float macro_values[BUBBLES_MACRO_COUNT];
+    float macro_targets[BUBBLES_MACRO_COUNT];
+    uint32_t macro_dirty_mask;
+    int32_t developer_mode;
 } BubbleEnginePreset_t;
 
 typedef enum BubbleParameterCurve {

@@ -321,6 +321,16 @@ bool bubble_preset_load_json(const char* json, BubbleEnginePreset_t* preset, cha
     bubble_engine_default_config(&preset->config);
     preset->master_dry_gain = 1.0f;
     preset->master_wet_gain = 1.0f;
+    for (int i = 0; i < BUBBLES_MACRO_COUNT; i++) {
+        preset->macro_values[i] = 0.5f;
+        preset->macro_targets[i] = 0.5f;
+    }
+    preset->macro_values[((int)BUBBLE_PARAM_FREEZE - (int)BUBBLE_PARAM_DENSITY)] = 0.0f;
+    preset->macro_targets[((int)BUBBLE_PARAM_FREEZE - (int)BUBBLE_PARAM_DENSITY)] = 0.0f;
+    preset->macro_values[((int)BUBBLE_PARAM_SPARKLE - (int)BUBBLE_PARAM_DENSITY)] = 0.0f;
+    preset->macro_targets[((int)BUBBLE_PARAM_SPARKLE - (int)BUBBLE_PARAM_DENSITY)] = 0.0f;
+    preset->macro_dirty_mask = 0u;
+    preset->developer_mode = 0;
 
     const char* params_begin = NULL;
     const char* params_end = NULL;
