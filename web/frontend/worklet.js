@@ -6,7 +6,7 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
 
     this.ready = false;
     this.bypass = false;
-    this.metrics = { envelope: 0, state: 0, voices: 0, voiceLimit: 24 };
+    this.metrics = { envelope: 0, state: 0, voices: 0, voiceLimit: 24, peakL: 0, peakR: 0, clipCount: 0, limiterGain: 1 };
     this.qualityProfile = 2;
 
     this.wasm = null;
@@ -21,6 +21,10 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
     this.wasmGetVoices = null;
     this.wasmSetQualityProfile = null;
     this.wasmGetActiveVoiceLimit = null;
+    this.wasmGetPeakL = null;
+    this.wasmGetPeakR = null;
+    this.wasmGetClipCount = null;
+    this.wasmGetLimiterGain = null;
 
     this.bufferSize = 0;
     this.defaultBlockSize = 128;
@@ -135,6 +139,10 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
     }
   }
 
+  optionalCwrap(name, returnType, argTypes, fallback) {
+    return this.wasm[`_${name}`] ? this.wasm.cwrap(name, returnType, argTypes) : fallback;
+  }
+
   async initialize() {
     this.port.postMessage({ type: 'loading' });
     try {
@@ -150,6 +158,10 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
       this.wasmGetVoices = this.wasm.cwrap('wasm_get_active_voices', 'number', []);
       this.wasmSetQualityProfile = this.wasm.cwrap('wasm_set_quality_profile', null, ['number']);
       this.wasmGetActiveVoiceLimit = this.wasm.cwrap('wasm_get_active_voice_limit', 'number', []);
+      this.wasmGetPeakL = this.optionalCwrap('wasm_get_peak_l', 'number', [], () => 0);
+      this.wasmGetPeakR = this.optionalCwrap('wasm_get_peak_r', 'number', [], () => 0);
+      this.wasmGetClipCount = this.optionalCwrap('wasm_get_clip_count', 'number', [], () => 0);
+      this.wasmGetLimiterGain = this.optionalCwrap('wasm_get_limiter_gain', 'number', [], () => 1);
 
       this.wasmInit();
       this.metrics.voiceLimit = this.wasmGetActiveVoiceLimit();
@@ -213,6 +225,10 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
       this.metrics.envelope = this.wasmGetEnvelope();
       this.metrics.state = this.wasmGetState();
       this.metrics.voices = this.wasmGetVoices();
+      this.metrics.peakL = this.wasmGetPeakL();
+      this.metrics.peakR = this.wasmGetPeakR();
+      this.metrics.clipCount = this.wasmGetClipCount();
+      this.metrics.limiterGain = this.wasmGetLimiterGain();
     } catch (err) {
       if (outL) outL.fill(0);
       if (outR) outR.fill(0);

@@ -115,6 +115,10 @@ typedef struct {
     float wet_clip_amount;
     float wet_output_trim;
 
+    // Final output limiter after dry + wet mix. Ceiling is in dBFS.
+    float final_limiter_ceiling_db;
+    float final_limiter_release_ms;
+
     // Sustain bus diffusion controls (1st-order all-pass bus stages).
     int32_t sustain_diffusion_enable;
     float sustain_diffusion_amount;
@@ -202,6 +206,10 @@ typedef struct {
     int32_t engine_state;
     float ducking_gain;
     float envelope;
+    float peak_l;
+    float peak_r;
+    int32_t clip_count;
+    float limiter_gain;
 } SoundBubblesBlockMetrics_t;
 
 typedef void (*SoundBubblesMetricsCallback_t)(const SoundBubblesBlockMetrics_t* metrics, void* user_data);
@@ -263,6 +271,13 @@ typedef struct {
     // Final output mix gains of the DSP module (not product-layer macro controls)
     float master_dry_gain;
     float master_wet_gain;
+
+    // MCU-safe no-lookahead final limiter state and block telemetry accumulators.
+    float final_limiter_gain;
+    float metrics_peak_l_accum;
+    float metrics_peak_r_accum;
+    int32_t metrics_clip_count_accum;
+    float metrics_limiter_gain_min;
 
     // Optional per-control-block metrics hook (for offline validation/telemetry)
     SoundBubblesMetricsCallback_t metrics_callback;

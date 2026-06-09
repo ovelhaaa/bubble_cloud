@@ -366,6 +366,18 @@
                             <span class="metric-label">Voices</span>
                             <span class="metric-value"><strong x-text="metrics.voices"></strong> / <span x-text="activeVoiceLimit"></span></span>
                         </div>
+                        <div class="metric-box">
+                            <span class="metric-label">Peak L/R</span>
+                            <span class="metric-value" x-text="`${metrics.peakL.toFixed(3)} / ${metrics.peakR.toFixed(3)}`"></span>
+                        </div>
+                        <div class="metric-box">
+                            <span class="metric-label">Limiter Gain</span>
+                            <span class="metric-value" x-text="metrics.limiterGain.toFixed(3)"></span>
+                        </div>
+                        <div class="metric-box" :class="{ 'metric-box-clip': (metrics.clipCount || 0) > 0 }">
+                            <span class="metric-label">Clipping</span>
+                            <span class="metric-value" :class="clippingIndicatorClass()" x-text="(metrics.clipCount || 0) > 0 ? `${metrics.clipCount} limited` : 'OK'"></span>
+                        </div>
                     </div>
                     <div class="macro-health-grid">
                         <div class="health-box">
@@ -393,6 +405,15 @@
                             </div>
                             <div class="health-meter" :class="{ 'is-na': !telemetry.schedulerPressure.available }">
                                 <span class="health-fill" :style="`width: ${telemetry.schedulerPressure.ratio * 100}%`"></span>
+                            </div>
+                        </div>
+                        <div class="health-box">
+                            <div class="health-header">
+                                <span>Clipping / limiter events</span>
+                                <span :class="clippingIndicatorClass()" x-text="(metrics.clipCount || 0) > 0 ? `${metrics.clipCount} events` : 'clear'"></span>
+                            </div>
+                            <div class="health-meter" :class="{ 'is-na': !telemetry.clipping.available, 'is-clip': (metrics.clipCount || 0) > 0 }">
+                                <span class="health-fill" :style="`width: ${telemetry.clipping.ratio * 100}%`"></span>
                             </div>
                         </div>
                     </div>

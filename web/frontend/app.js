@@ -38,6 +38,8 @@ const BASELINE = {
   wet_drive: 1.0,
   wet_clip_amount: 0.2,
   wet_output_trim: 1.0,
+  final_limiter_ceiling_db: -1.0,
+  final_limiter_release_ms: 50,
   sustain_diffusion_enable: 0,
   sustain_diffusion_amount: 0.35,
   sustain_diffusion_stages: 1,
@@ -102,6 +104,8 @@ const PARAM_DEFINITIONS = {
   wet_drive: { min: 0.1, max: 2, step: 0.01, label: 'Wet Drive' },
   wet_clip_amount: { min: 0, max: 1, step: 0.01, label: 'Wet Clip Amount' },
   wet_output_trim: { min: 0, max: 1.5, step: 0.01, label: 'Wet Output Trim' },
+  final_limiter_ceiling_db: { min: -24, max: 0, step: 0.1, label: 'Limiter Ceiling (dBFS)' },
+  final_limiter_release_ms: { min: 5, max: 500, step: 1, label: 'Limiter Release (ms)' },
   sustain_diffusion_enable: { min: 0, max: 1, step: 1, label: 'Sustain Diffusion Enable' },
   sustain_diffusion_amount: { min: 0, max: 1, step: 0.01, label: 'Sustain Diffusion Amount' },
   sustain_diffusion_stages: { min: 1, max: 2, step: 1, label: 'Sustain Diffusion Stages' },
@@ -159,6 +163,8 @@ const PARAM_HELP = {
   wet_drive: { musical: 'Empurra o bus wet na saturação leve.', technical: 'Empurra o bus wet na saturação leve.', increase: 'intensifica o efeito.', decrease: 'suaviza o efeito.' },
   wet_clip_amount: { musical: 'Define quanto soft-clip aplicar.', technical: 'Define quanto soft-clip aplicar.', increase: 'intensifica o efeito.', decrease: 'suaviza o efeito.' },
   wet_output_trim: { musical: 'Compensa nível após clip.', technical: 'Compensa nível após clip.', increase: 'intensifica o efeito.', decrease: 'suaviza o efeito.' },
+  final_limiter_ceiling_db: { musical: 'Define o teto final de saída para evitar clipping digital.', technical: 'Ceiling dBFS do limiter peak sem lookahead após dry + wet.', increase: 'saída mais alta, com menos margem.', decrease: 'mais headroom e proteção.' },
+  final_limiter_release_ms: { musical: 'Controla quão rápido o limiter volta ao ganho normal.', technical: 'Tempo de release do envelope/gain do limiter final.', increase: 'release mais suave.', decrease: 'recuperação mais rápida.' },
   sustain_diffusion_enable: { musical: 'Liga difusão all-pass no sustain.', technical: 'Liga difusão all-pass no sustain.', increase: 'intensifica o efeito.', decrease: 'suaviza o efeito.' },
   sustain_diffusion_amount: { musical: 'Quanto sustain difuso entra no mix.', technical: 'Quanto sustain difuso entra no mix.', increase: 'intensifica o efeito.', decrease: 'suaviza o efeito.' },
   sustain_diffusion_stages: { musical: 'Número de estágios all-pass.', technical: 'Número de estágios all-pass.', increase: 'intensifica o efeito.', decrease: 'suaviza o efeito.' },
@@ -181,7 +187,7 @@ const PARAM_HELP = {
 const PARAMETER_GROUPS = [
   { name: 'Stereo', params: ['stereo_width', 'attack_pan_spread', 'sustain_pan_spread'] },
   { name: 'Texture', params: ['smart_start_enable', 'smart_start_range', 'envelope_variation', 'envelope_family', 'droplet_enable', 'droplet_probability', 'droplet_gain', 'droplet_length_scale', 'attack_rate_jitter', 'attack_rate_jitter_depth'] },
-  { name: 'Diffusion', params: ['wet_drive', 'wet_clip_amount', 'wet_output_trim', 'sustain_diffusion_enable', 'sustain_diffusion_amount', 'sustain_diffusion_stages', 'sustain_diffusion_delay', 'sustain_diffusion_feedback'] },
+  { name: 'Diffusion', params: ['wet_drive', 'wet_clip_amount', 'wet_output_trim', 'final_limiter_ceiling_db', 'final_limiter_release_ms', 'sustain_diffusion_enable', 'sustain_diffusion_amount', 'sustain_diffusion_stages', 'sustain_diffusion_delay', 'sustain_diffusion_feedback'] },
   { name: 'Tone', params: ['tone_variation', 'attack_brightness', 'sustain_darkness'] },
   { name: 'Memory', params: ['memory_mix', 'memory_pull', 'memory_darkening', 'attack_region_min_offset_samples', 'attack_region_max_offset_samples', 'body_region_min_offset_samples', 'body_region_max_offset_samples', 'memory_region_min_offset_samples', 'memory_region_max_offset_samples'] },
   { name: 'Dynamics', params: ['noise_floor', 'tracking_thresh', 'sustain_thresh', 'transient_delta', 'duck_burst_level', 'duck_attack_coef', 'duck_release_coef', 'burst_duration_ticks', 'burst_immediate_count', 'density_burst', 'density_sustain', 'density_decay'] },
@@ -248,6 +254,8 @@ const WASM_PARAM_ID_MAP = Object.freeze({
   reverse_probability: 58,
   pitch_mode: 59,
   shimmer_amount: 60,
+  final_limiter_ceiling_db: 61,
+  final_limiter_release_ms: 62,
 });
 
 function clamp(value, min, max) {
@@ -344,11 +352,12 @@ document.addEventListener('alpine:init', () => {
     seekTime: 0,
     duration: 0,
 
-    metrics: { envelope: 0, state: 0, voices: 0, voiceLimit: 24 },
+    metrics: { envelope: 0, state: 0, voices: 0, voiceLimit: 24, peakL: 0, peakR: 0, clipCount: 0, limiterGain: 1 },
     telemetry: {
       targetDensity: { value: 0, ratio: 0, available: false },
       wetDuckAmount: { value: 0, ratio: 0, available: false },
       schedulerPressure: { value: 0, ratio: 0, available: false },
+      clipping: { value: 0, ratio: 0, available: false },
     },
     recentStateTransition: 'N/A → N/A',
     previousEngineState: null,
@@ -839,6 +848,10 @@ document.addEventListener('alpine:init', () => {
             this.metrics.state = Number(data.state) || 0;
             this.metrics.voices = Number(data.voices) || 0;
             this.metrics.voiceLimit = Number(data.voiceLimit) || this.activeVoiceLimit;
+            this.metrics.peakL = Number(data.peakL) || 0;
+            this.metrics.peakR = Number(data.peakR) || 0;
+            this.metrics.clipCount = Number(data.clipCount) || 0;
+            this.metrics.limiterGain = Number(data.limiterGain) || 1;
             this.updateTelemetryIndicators();
           } else if (data.type === 'init-failed' || data.type === 'wasm-error' || data.type === 'processor-error') {
             this.workletReady = false;
@@ -914,10 +927,12 @@ document.addEventListener('alpine:init', () => {
       const targetDensityEstimate = this.estimateTargetDensity(currentState, Number(this.metrics.envelope));
       const wetDuckEstimate = this.estimateWetDuckAmount(currentState, Number(this.metrics.envelope));
       const schedulerPressure = this.estimateSchedulerPressure(Number(this.metrics.voices), targetDensityEstimate);
+      const clipEvents = Number(this.metrics.clipCount) || 0;
 
       this.telemetry.targetDensity = this.createSmoothedIndicator(this.telemetry.targetDensity, targetDensityEstimate, 160);
       this.telemetry.wetDuckAmount = this.createSmoothedIndicator(this.telemetry.wetDuckAmount, wetDuckEstimate, 1);
       this.telemetry.schedulerPressure = this.createSmoothedIndicator(this.telemetry.schedulerPressure, schedulerPressure, 1);
+      this.telemetry.clipping = this.createSmoothedIndicator(this.telemetry.clipping, clipEvents, 8);
     },
 
     estimateTargetDensity(state, envelope) {
@@ -974,6 +989,11 @@ document.addEventListener('alpine:init', () => {
 
     indicatorClass(available) {
       return available ? 'indicator-live' : 'indicator-na';
+    },
+
+    clippingIndicatorClass() {
+      if (!this.telemetry.clipping.available) return 'indicator-na';
+      return (Number(this.metrics.clipCount) || 0) > 0 ? 'indicator-clip' : 'indicator-live';
     },
 
     handleModeSwitch() {

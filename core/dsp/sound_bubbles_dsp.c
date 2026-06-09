@@ -23,6 +23,8 @@
 #define DROPLET_OCCUPANCY_DISABLE 0.75f
 #define DROPLET_OCCUPANCY_REDUCE 0.50f
 #define SMART_START_ENERGY_RADIUS 3
+#define FINAL_LIMITER_DEFAULT_CEILING_DB -1.0f
+#define FINAL_LIMITER_DEFAULT_RELEASE_MS 50.0f
 
 #if !defined(BUBBLES_QUALITY_ESP32_SAFE) && !defined(BUBBLES_QUALITY_WASM_FULL)
 #define BUBBLES_QUALITY_STANDARD 1
@@ -70,6 +72,40 @@ static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadR
 static int32_t RefineReadOffsetSmartStart(const SoundBubblesEngine_t* engine, int32_t read_offset_samples, int32_t range);
 static float EnvelopeVariantGain(float phase, uint8_t variant, int family);
 static float SoftClip(float x, float amount);
+static inline float DbToLinear(float db);
+static inline float ProcessFinalLimiterSample(SoundBubblesEngine_t* engine, float* l, float* r);
+static inline float DbToLinear(float db) {
+    return powf(10.0f, db * 0.05f);
+}
+
+static inline float ProcessFinalLimiterSample(SoundBubblesEngine_t* engine, float* l, float* r) {
+    float ceiling = DbToLinear(engine->config.final_limiter_ceiling_db);
+    if (!isfinite(ceiling) || ceiling <= 0.0f) ceiling = DbToLinear(FINAL_LIMITER_DEFAULT_CEILING_DB);
+    if (ceiling > 1.0f) ceiling = 1.0f;
+
+    float peak = fmaxf(fabsf(*l), fabsf(*r));
+    float target_gain = 1.0f;
+    if (peak > ceiling) {
+        target_gain = ceiling / peak;
+        engine->metrics_clip_count_accum++;
+    }
+
+    if (target_gain < engine->final_limiter_gain) {
+        engine->final_limiter_gain = target_gain;
+    } else {
+        float release_ms = engine->config.final_limiter_release_ms;
+        if (!isfinite(release_ms) || release_ms <= 0.0f) release_ms = FINAL_LIMITER_DEFAULT_RELEASE_MS;
+        float release_samples = release_ms * 0.001f * (float)BUBBLES_SAMPLE_RATE;
+        float release_coef = 1.0f / fmaxf(1.0f, release_samples);
+        engine->final_limiter_gain += (1.0f - engine->final_limiter_gain) * release_coef;
+        if (engine->final_limiter_gain > 1.0f) engine->final_limiter_gain = 1.0f;
+    }
+
+    *l *= engine->final_limiter_gain;
+    *r *= engine->final_limiter_gain;
+    return engine->final_limiter_gain;
+}
+
 static float ProcessSustainDiffusionSample(SoundBubblesEngine_t* engine, float in, float* delay_line, int delay_samples);
 static void ApplyQualityTierDefaults(EngineConfig_t* cfg);
 static int32_t ClampActiveVoiceLimit(int32_t requested_limit);
@@ -113,6 +149,11 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
 
     engine->master_dry_gain = 1.0f;
     engine->master_wet_gain = 1.0f;
+    engine->final_limiter_gain = 1.0f;
+    engine->metrics_peak_l_accum = 0.0f;
+    engine->metrics_peak_r_accum = 0.0f;
+    engine->metrics_clip_count_accum = 0;
+    engine->metrics_limiter_gain_min = 1.0f;
     engine->metrics_callback = NULL;
     engine->metrics_user_data = NULL;
     engine->metrics_last_block.spawn_count = 0;
@@ -120,6 +161,10 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     engine->metrics_last_block.engine_state = ENGINE_STATE_SILENCE;
     engine->metrics_last_block.ducking_gain = 1.0f;
     engine->metrics_last_block.envelope = 0.0f;
+    engine->metrics_last_block.peak_l = 0.0f;
+    engine->metrics_last_block.peak_r = 0.0f;
+    engine->metrics_last_block.clip_count = 0;
+    engine->metrics_last_block.limiter_gain = 1.0f;
     engine->metrics_tick_spawn_count = 0;
     engine->pending_spawn_head = 0;
     engine->pending_spawn_count = 0;
@@ -321,8 +366,18 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
         float wet_mix_r = wet_sum_r * wet_gain;
         float dry_mix = dry_sample * engine->master_dry_gain;
 
-        out_left[i] = dry_mix + wet_mix_l;
-        out_right[i] = dry_mix + wet_mix_r;
+        float final_l = dry_mix + wet_mix_l;
+        float final_r = dry_mix + wet_mix_r;
+        float limiter_gain = ProcessFinalLimiterSample(engine, &final_l, &final_r);
+
+        float out_abs_l = fabsf(final_l);
+        float out_abs_r = fabsf(final_r);
+        if (out_abs_l > engine->metrics_peak_l_accum) engine->metrics_peak_l_accum = out_abs_l;
+        if (out_abs_r > engine->metrics_peak_r_accum) engine->metrics_peak_r_accum = out_abs_r;
+        if (limiter_gain < engine->metrics_limiter_gain_min) engine->metrics_limiter_gain_min = limiter_gain;
+
+        out_left[i] = final_l;
+        out_right[i] = final_r;
 
         if (engine->config.sustain_diffusion_enable) {
             engine->sustain_diffusion_write_idx++;
@@ -348,6 +403,14 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
             engine->metrics_last_block.engine_state = (int32_t)engine->engine_state;
             engine->metrics_last_block.ducking_gain = engine->smoothed_ducking_gain;
             engine->metrics_last_block.envelope = engine->env_follower_state;
+            engine->metrics_last_block.peak_l = engine->metrics_peak_l_accum;
+            engine->metrics_last_block.peak_r = engine->metrics_peak_r_accum;
+            engine->metrics_last_block.clip_count = engine->metrics_clip_count_accum;
+            engine->metrics_last_block.limiter_gain = engine->metrics_limiter_gain_min;
+            engine->metrics_peak_l_accum = 0.0f;
+            engine->metrics_peak_r_accum = 0.0f;
+            engine->metrics_clip_count_accum = 0;
+            engine->metrics_limiter_gain_min = engine->final_limiter_gain;
             if (engine->metrics_callback != NULL) {
                 engine->metrics_callback(&engine->metrics_last_block, engine->metrics_user_data);
             }
@@ -1111,6 +1174,7 @@ static float SoftClip(float x, float amount) {
     return Lerp(x, cubic, a);
 }
 
+
 static float ProcessSustainDiffusionSample(SoundBubblesEngine_t* engine, float in, float* delay_line, int delay_samples) {
     int read_idx = engine->sustain_diffusion_write_idx - delay_samples;
     if (read_idx < 0) read_idx += BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY;
@@ -1166,6 +1230,11 @@ static void ApplyQualityTierDefaults(EngineConfig_t* cfg) {
     if (cfg->smart_start_range == 0) cfg->smart_start_range = 12;
     if (cfg->wet_drive <= 0.0f) cfg->wet_drive = 1.0f;
     if (cfg->wet_output_trim <= 0.0f) cfg->wet_output_trim = 1.0f;
+    bool limiter_config_missing = (cfg->final_limiter_ceiling_db == 0.0f && cfg->final_limiter_release_ms <= 0.0f);
+    if (!isfinite(cfg->final_limiter_ceiling_db) || limiter_config_missing) cfg->final_limiter_ceiling_db = FINAL_LIMITER_DEFAULT_CEILING_DB;
+    cfg->final_limiter_ceiling_db = Clamp(cfg->final_limiter_ceiling_db, -24.0f, 0.0f);
+    if (!isfinite(cfg->final_limiter_release_ms) || cfg->final_limiter_release_ms <= 0.0f) cfg->final_limiter_release_ms = FINAL_LIMITER_DEFAULT_RELEASE_MS;
+    cfg->final_limiter_release_ms = Clamp(cfg->final_limiter_release_ms, 5.0f, 500.0f);
     if (cfg->sustain_diffusion_stages == 0) cfg->sustain_diffusion_stages = 1;
     if (cfg->sustain_diffusion_delay == 0) cfg->sustain_diffusion_delay = 18;
     if (cfg->droplet_length_scale <= 0.0f) cfg->droplet_length_scale = 0.6f;
