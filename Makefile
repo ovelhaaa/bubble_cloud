@@ -15,7 +15,12 @@ $(OFFLINE_RENDERER): platform/offline/sound_bubbles_render.c core/engine/bubble_
 	mkdir -p $(dir $@)
 	$(CC) $^ $(CFLAGS) -o $@
 
-wasm: $(WASM_OUT)
+wasm: macro-matrix $(WASM_OUT)
+
+macro-matrix: web/frontend/macro_matrix.js
+
+web/frontend/macro_matrix.js: docs/macro_matrix.yaml scripts/generate_macro_matrix_js.py
+	python3 scripts/generate_macro_matrix_js.py --source docs/macro_matrix.yaml --output web/frontend/macro_matrix.js
 
 $(WASM_OUT): web/wasm/bubble_cloud_wasm.c core/engine/bubble_engine.c core/dsp/sound_bubbles_dsp.c
 	mkdir -p $(dir $@)
@@ -25,6 +30,6 @@ clean:
 ifneq ($(strip $(BUILD_DIR)),)
 	rm -rf $(BUILD_DIR)
 endif
-	rm -f platform/offline/sound_bubbles_render platform/offline/sound_bubbles_synth
+	rm -f platform/offline/sound_bubbles_render platform/offline/sound_bubbles_synth web/frontend/bubble_cloud_wasm.js web/frontend/macro_matrix.js
 
-.PHONY: all offline wasm clean
+.PHONY: all offline wasm macro-matrix clean
