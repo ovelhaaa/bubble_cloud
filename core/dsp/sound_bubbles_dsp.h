@@ -274,6 +274,8 @@ typedef struct {
 
     // MCU-safe no-lookahead final limiter state and block telemetry accumulators.
     float final_limiter_gain;
+    float final_limiter_ceiling_linear;
+    float final_limiter_release_coef;
     float metrics_peak_l_accum;
     float metrics_peak_r_accum;
     int32_t metrics_clip_count_accum;

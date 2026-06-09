@@ -712,7 +712,7 @@ static void CompareMetricsFiles(const char* ref_file, const char* cand_file, dou
             &block_ref, &ref_vals[0], &ref_vals[1], &ref_vals[2], &ref_vals[3], &ref_vals[4], &ref_vals[5], &ref_vals[6], &ref_vals[7], &ref_vals[8], &ref_vals[9], &ref_vals[10], &ref_vals[11], &ref_vals[12]);
         int cand_fields = sscanf(cand_line, "%u,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf",
             &block_cand, &cand_vals[0], &cand_vals[1], &cand_vals[2], &cand_vals[3], &cand_vals[4], &cand_vals[5], &cand_vals[6], &cand_vals[7], &cand_vals[8], &cand_vals[9], &cand_vals[10], &cand_vals[11], &cand_vals[12]);
-        if (!((ref_fields == 10 || ref_fields == 14) && (cand_fields == 10 || cand_fields == 14))) {
+        if (ref_fields != cand_fields || (ref_fields != 10 && ref_fields != 14)) {
             fclose(ref);
             fclose(cand);
             ErrorExit("Invalid metrics CSV row format.");

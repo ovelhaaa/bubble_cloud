@@ -73,16 +73,26 @@ static int32_t RefineReadOffsetSmartStart(const SoundBubblesEngine_t* engine, in
 static float EnvelopeVariantGain(float phase, uint8_t variant, int family);
 static float SoftClip(float x, float amount);
 static inline float DbToLinear(float db);
+static inline void CacheFinalLimiterBlockParams(SoundBubblesEngine_t* engine);
 static inline float ProcessFinalLimiterSample(SoundBubblesEngine_t* engine, float* l, float* r);
 static inline float DbToLinear(float db) {
     return powf(10.0f, db * 0.05f);
 }
 
-static inline float ProcessFinalLimiterSample(SoundBubblesEngine_t* engine, float* l, float* r) {
+static inline void CacheFinalLimiterBlockParams(SoundBubblesEngine_t* engine) {
     float ceiling = DbToLinear(engine->config.final_limiter_ceiling_db);
     if (!isfinite(ceiling) || ceiling <= 0.0f) ceiling = DbToLinear(FINAL_LIMITER_DEFAULT_CEILING_DB);
     if (ceiling > 1.0f) ceiling = 1.0f;
+    engine->final_limiter_ceiling_linear = ceiling;
 
+    float release_ms = engine->config.final_limiter_release_ms;
+    if (!isfinite(release_ms) || release_ms <= 0.0f) release_ms = FINAL_LIMITER_DEFAULT_RELEASE_MS;
+    float release_samples = release_ms * 0.001f * (float)BUBBLES_SAMPLE_RATE;
+    engine->final_limiter_release_coef = 1.0f / fmaxf(1.0f, release_samples);
+}
+
+static inline float ProcessFinalLimiterSample(SoundBubblesEngine_t* engine, float* l, float* r) {
+    float ceiling = engine->final_limiter_ceiling_linear;
     float peak = fmaxf(fabsf(*l), fabsf(*r));
     float target_gain = 1.0f;
     if (peak > ceiling) {
@@ -93,11 +103,7 @@ static inline float ProcessFinalLimiterSample(SoundBubblesEngine_t* engine, floa
     if (target_gain < engine->final_limiter_gain) {
         engine->final_limiter_gain = target_gain;
     } else {
-        float release_ms = engine->config.final_limiter_release_ms;
-        if (!isfinite(release_ms) || release_ms <= 0.0f) release_ms = FINAL_LIMITER_DEFAULT_RELEASE_MS;
-        float release_samples = release_ms * 0.001f * (float)BUBBLES_SAMPLE_RATE;
-        float release_coef = 1.0f / fmaxf(1.0f, release_samples);
-        engine->final_limiter_gain += (1.0f - engine->final_limiter_gain) * release_coef;
+        engine->final_limiter_gain += (1.0f - engine->final_limiter_gain) * engine->final_limiter_release_coef;
         if (engine->final_limiter_gain > 1.0f) engine->final_limiter_gain = 1.0f;
     }
 
@@ -150,6 +156,8 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     engine->master_dry_gain = 1.0f;
     engine->master_wet_gain = 1.0f;
     engine->final_limiter_gain = 1.0f;
+    engine->final_limiter_ceiling_linear = 1.0f;
+    engine->final_limiter_release_coef = 0.0f;
     engine->metrics_peak_l_accum = 0.0f;
     engine->metrics_peak_r_accum = 0.0f;
     engine->metrics_clip_count_accum = 0;
@@ -229,6 +237,10 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
     bool freeze_write = (engine->config.freeze_enabled != 0) || (engine->config.freeze_amount >= 0.5f);
 
     for (int i = 0; i < num_samples; i++) {
+        if (i == 0) {
+            CacheFinalLimiterBlockParams(engine);
+        }
+
         float dry_sample = in_mono[i];
 
         // Track peak for control block envelope
