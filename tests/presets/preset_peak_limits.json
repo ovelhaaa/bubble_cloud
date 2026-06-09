@@ -1,0 +1,54 @@
+{
+  "presets/airy_decay.json": {
+    "max_peak": 1.01,
+    "max_clip_count": 0
+  },
+  "presets/current.json": {
+    "max_peak": 1.01,
+    "max_clip_count": 0
+  },
+  "presets/dense_cloud.json": {
+    "max_peak": 1.01,
+    "max_clip_count": 0
+  },
+  "presets/musical_balanced.json": {
+    "max_peak": 1.01,
+    "max_clip_count": 0
+  },
+  "presets/musical_dense_pad.json": {
+    "max_peak": 1.01,
+    "max_clip_count": 0
+  },
+  "presets/musical_glassy_decay.json": {
+    "max_peak": 1.01,
+    "max_clip_count": 0
+  },
+  "presets/musical_late_bubbles.json": {
+    "max_peak": 1.01,
+    "max_clip_count": 0
+  },
+  "presets/musical_percussive_burst.json": {
+    "max_peak": 1.01,
+    "max_clip_count": 0
+  },
+  "presets/musical_reactive_attack.json": {
+    "max_peak": 1.01,
+    "max_clip_count": 0
+  },
+  "presets/musical_soft_ambient.json": {
+    "max_peak": 1.01,
+    "max_clip_count": 0
+  },
+  "presets/musical_tight_pick.json": {
+    "max_peak": 1.01,
+    "max_clip_count": 0
+  },
+  "presets/neutral.json": {
+    "max_peak": 1.01,
+    "max_clip_count": 0
+  },
+  "presets/reactive_attack.json": {
+    "max_peak": 1.01,
+    "max_clip_count": 0
+  }
+}

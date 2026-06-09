@@ -29,3 +29,8 @@ outputs/
 # Versioned audio fixtures/samples are allowed explicitly.
 !tests/fixtures/audio/*.wav
 !assets/samples/*.wav
+
+# Python test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
