@@ -12,8 +12,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TESTS_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TESTS_ROOT))
 from support_audio import write_core_parity_fixture
-PRESET = REPO_ROOT / "presets" / "neutral.json"
-WASM_MODULE = REPO_ROOT / "web" / "frontend" / "bubble_cloud_wasm.js"
+PRESET = REPO_ROOT / "core" / "presets" / "factory" / "neutral.json"
+WASM_MODULE = REPO_ROOT / "ui" / "web" / "bubble_cloud_wasm.js"
 
 COMMON_COLUMNS = [
     "active_voices",
@@ -40,6 +40,7 @@ def _build_renderer(tmp_path: Path) -> Path:
             "platform/offline/sound_bubbles_render.c",
             "core/engine/bubble_engine.c",
             "core/dsp/sound_bubbles_dsp.c",
+            "core/presets/bubble_preset.c",
             "-O2",
             "-Wall",
             "-Wextra",
@@ -84,7 +85,7 @@ def test_offline_c_and_wasm_metrics_match_with_defined_tolerance(tmp_path: Path)
     )
     if wasm_run.returncode != 0:
         pytest.fail(
-            "WASM parity runner failed; rebuild web/frontend/bubble_cloud_wasm.js with `make wasm` "
+            "WASM parity runner failed; rebuild ui/web/bubble_cloud_wasm.js with `make wasm` "
             "when exports are stale or missing.\n"
             f"stdout:\n{wasm_run.stdout}\n"
             f"stderr:\n{wasm_run.stderr}"

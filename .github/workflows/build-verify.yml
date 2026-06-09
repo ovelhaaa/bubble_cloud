@@ -4,8 +4,8 @@ on:
   pull_request:
     paths:
       - 'core/**'
-      - 'web/**'
-      - 'web/wasm/**'
+      - 'ui/web/**'
+      - 'platform/wasm/**'
       - 'platform/offline/**'
       - 'Makefile'
       - '.github/workflows/build-verify.yml'
@@ -13,8 +13,8 @@ on:
     branches: [main]
     paths:
       - 'core/**'
-      - 'web/**'
-      - 'web/wasm/**'
+      - 'ui/web/**'
+      - 'platform/wasm/**'
       - 'platform/offline/**'
       - 'Makefile'
       - '.github/workflows/build-verify.yml'

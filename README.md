@@ -4,11 +4,16 @@ This repository holds the `bubble_cloud` highly musical, performance-responsive 
 
 ## Architecture
 
-- `core/`: The platform-independent C DSP engine (`sound_bubbles_dsp.c`, `sound_bubbles_dsp.h`). This is strictly pure algorithm code.
-- `platform/offline/`: Offline rendering utilities and test harnesses written in C.
-- `platform/embedded/`: The ESP32 hardware execution layer (to be populated).
-- `web/wasm/`: The C wrapper that exposes the DSP API to the JS world.
-- `web/frontend/`: The static web assets for the GitHub Pages UI, including an `AudioWorklet` processor for real-time browser preview.
+- `core/dsp/`: Platform-independent granular DSP internals, filters, voices, and scheduling (`sound_bubbles_dsp.c`, `sound_bubbles_dsp.h`).
+- `core/engine/`: Public `bubble_engine_*` API, parameter handling, and quality profiles.
+- `core/presets/`: Preset loading/validation code plus factory JSON presets in `core/presets/factory/`.
+- `core/schema/`: Public preset IDs, ranges, defaults, and schema format.
+- `platform/wasm/`: The Emscripten C wrapper that exposes the engine API to JavaScript.
+- `platform/esp32/`: ESP-IDF hardware integration.
+- `platform/offline/`: Offline renderer and harness utilities written in C.
+- `ui/web/`: Static web frontend assets, including the `AudioWorklet` browser preview.
+- `tests/`: Automated tests and audio fixtures.
+- `docs/`: Project documentation, contracts, and implementation notes.
 
 ## Running the Web Version Locally
 
@@ -18,9 +23,9 @@ The web interface is composed purely of static HTML, CSS, JS, and a single `.js`
    ```sh
    make wasm
    ```
-2. Serve the `web/frontend/` directory. For example, using Python:
+2. Serve the `ui/web/` directory. For example, using Python:
    ```sh
-   cd web/frontend
+   cd ui/web
    python3 -m http.server 8000
    ```
 3. Open `http://localhost:8000` in your browser. Click **Start Audio** to begin the AudioContext, and **Play Test Signal** to hear simulated pluck sounds passing through the WASM-powered DSP engine in real time. Adjusting sliders will update the DSP parameters instantly.
@@ -28,7 +33,7 @@ The web interface is composed purely of static HTML, CSS, JS, and a single `.js`
 ## Limitations & Next Steps
 
 - **Audio Inputs**: The browser demo currently only supports playing a synthesized sawtooth "pluck" sound to test transients. Live mic input (`getUserMedia`) or file upload playback are natural next steps for a full testing environment.
-- **Embedded Implementation**: The `platform/embedded` module is currently a stub placeholder and needs the I2S audio drivers and UI mapping to the ESP32 hardware to be fully realized.
+- **Embedded Implementation**: The ESP32 hardware layer lives in `platform/esp32/` and remains a thin integration around the shared core engine.
 - **Real-Time CPU constraints**: Running a complex DSP in the browser using WASM handles well for this algorithm, but on very low-end mobile devices it might drop frames.
 
 ## Building
@@ -98,7 +103,7 @@ All options remain deterministic for fixed `rng_seed`, avoid dynamic allocation 
 
 The project contains several GitHub Actions workflows with separated responsibilities:
 
-- **`.github/workflows/deploy-pages.yml`**: Automatically builds the WebAssembly `.js` file, creates a `dist/` directory containing the frontend code from `web/frontend/`, and deploys the web interface to GitHub Pages. It runs on push to `main` or manual trigger.
+- **`.github/workflows/deploy-pages.yml`**: Automatically builds the WebAssembly `.js` file, creates a `dist/` directory containing the frontend code from `ui/web/`, and deploys the web interface to GitHub Pages. It runs on push to `main` or manual trigger.
 - **`.github/workflows/main.yaml` (DSP Harness)**: Runs offline C tests to ensure the core DSP engine compiles and correctly synthesizes raw audio.
-- **`.github/workflows/render_all.yml`**: An offline renderer that processes all JSON preset configurations in `presets/` against an input WAV file and uploads output WAV artifacts for downloading.
+- **`.github/workflows/render_all.yml`**: An offline renderer that processes all JSON preset configurations in `core/presets/factory/` against an input WAV file and uploads output WAV artifacts for downloading.
 - **`.github/workflows/render_diagnostics.yml`**: Runs the offline synth renderer against multiple diagnostic scenarios (sine, triangle, expressive phrase) to test the engine's response to different waveforms and dynamic tracking, providing unique WAV artifacts per matrix run.

@@ -1,6 +1,6 @@
 # Embedded Porting Notes (ESP32)
 
-This repository now includes an ESP-IDF reference port under `platform/esp32/`. The port is intentionally a thin hardware layer around the shared DSP API in `core/engine/bubble_engine.h`; it must not include or link anything from `web/frontend`.
+This repository now includes an ESP-IDF reference port under `platform/esp32/`. The port is intentionally a thin hardware layer around the shared DSP API in `core/engine/bubble_engine.h`; it must not include or link anything from `ui/web`.
 
 ## Audio format and real-time budget
 

@@ -3,8 +3,8 @@
 This document defines the **single canonical preset/config representation** used across:
 
 - offline renderer (`platform/offline/sound_bubbles_render.c`)
-- DSP-facing JSON presets (`presets/*.json`)
-- WASM/Frontend parameter model (`web/wasm/bubble_cloud_wasm.c`, `web/frontend/app.js`)
+- DSP-facing JSON presets (`core/presets/factory/*.json`)
+- WASM/Frontend parameter model (`platform/wasm/bubble_cloud_wasm.c`, `ui/web/app.js`)
 
 ## Canonical preset keys
 

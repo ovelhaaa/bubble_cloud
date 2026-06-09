@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import createBubbleCloudModule from '../../web/frontend/bubble_cloud_wasm.js';
+import createBubbleCloudModule from '../../ui/web/bubble_cloud_wasm.js';
 
 const PARAMS = {
   noise_floor: 0,

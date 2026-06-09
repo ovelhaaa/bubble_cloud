@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - "core/sound_bubbles_dsp.c"
-      - "core/sound_bubbles_dsp.h"
+      - "core/dsp/sound_bubbles_dsp.c"
+      - "core/dsp/sound_bubbles_dsp.h"
       - "platform/offline/sound_bubbles_synth.c"
-      - "presets/*.json"
+      - "core/presets/factory/*.json"
       - ".github/workflows/render_diagnostics.yml"
 
 jobs:
@@ -18,10 +18,10 @@ jobs:
       fail-fast: false
       matrix:
         preset:
-          - presets/neutral.json
-          - presets/reactive_attack.json
-          - presets/airy_decay.json
-          - presets/dense_cloud.json
+          - core/presets/factory/neutral.json
+          - core/presets/factory/reactive_attack.json
+          - core/presets/factory/airy_decay.json
+          - core/presets/factory/dense_cloud.json
         scenario:
           - sine
           - triangle
@@ -34,7 +34,7 @@ jobs:
       - name: Extract preset basename
         id: vars
         run: |
-          # Extract basename from preset path, e.g., presets/neutral.json -> neutral
+          # Extract basename from preset path, e.g., core/presets/factory/neutral.json -> neutral
           PRESET_PATH="${{ matrix.preset }}"
           BASENAME=$(basename "$PRESET_PATH" .json)
           echo "basename=$BASENAME" >> $GITHUB_OUTPUT
@@ -51,7 +51,7 @@ jobs:
             exit 0
           fi
           mkdir -p "$RUNNER_TEMP/bin" "$RUNNER_TEMP/diagnostics"
-          gcc platform/offline/sound_bubbles_synth.c core/sound_bubbles_dsp.c -O2 -Wall -Wextra -std=c11 -lm -Icore -o "$RUNNER_TEMP/bin/sound_bubbles_synth"
+          gcc platform/offline/sound_bubbles_synth.c core/dsp/sound_bubbles_dsp.c -O2 -Wall -Wextra -std=c11 -lm -Icore -Icore/dsp -o "$RUNNER_TEMP/bin/sound_bubbles_synth"
           echo "Build successful."
           ls -l "$RUNNER_TEMP/bin/sound_bubbles_synth"
 
