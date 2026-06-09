@@ -1,0 +1,19 @@
+idf_component_register(
+    SRCS
+        "audio_i2s.c"
+        "codec.c"
+        "controls.c"
+        "display_oled.c"
+        "preset_storage.c"
+        "main.c"
+        "../../core/engine/bubble_engine.c"
+        "../../core/dsp/sound_bubbles_dsp.c"
+    INCLUDE_DIRS
+        "."
+        "../.."
+    REQUIRES
+        driver
+        esp_adc
+        esp_timer
+        nvs_flash
+)
