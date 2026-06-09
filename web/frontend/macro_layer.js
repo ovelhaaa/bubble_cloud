@@ -1,12 +1,12 @@
 (function initMacroLayer(global) {
   const EMBEDDED_FALLBACK_MATRIX = Object.freeze({
     neutral_macro_value: 0.5,
-    application: {
-      global_order: ['density', 'bloom', 'motion', 'texture', 'space', 'gravity', 'memory', 'clarity', 'freeze', 'sparkle', 'warmth', 'mix'],
-    },
-    macros: {},
-    performance_ranges: {},
-    canonical_presets: [],
+    application: Object.freeze({
+      global_order: Object.freeze(['density', 'bloom', 'motion', 'texture', 'space', 'gravity', 'memory', 'clarity', 'freeze', 'sparkle', 'warmth', 'mix']),
+    }),
+    macros: Object.freeze({}),
+    performance_ranges: Object.freeze({}),
+    canonical_presets: Object.freeze([]),
   });
 
   function clamp(value, min, max) {
