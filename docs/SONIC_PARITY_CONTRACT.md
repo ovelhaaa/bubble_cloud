@@ -5,7 +5,7 @@
 
 ## 1) Shared C core is the only sonic source of truth
 
-The shared DSP implementation in `core/sound_bubbles_dsp.c` and `core/sound_bubbles_dsp.h` is the **single authoritative definition** of sonic behavior across all targets.
+The shared DSP implementation in `core/dsp/sound_bubbles_dsp.c` and `core/dsp/sound_bubbles_dsp.h` is the **single authoritative definition** of sonic behavior across all targets.
 
 - All platform builds (native, web, embedded) must route audio synthesis behavior through the shared C core.
 - Any change that affects audible output (oscillator behavior, envelope curves, modulation, filter behavior, randomization, spawning/class behavior, gains, clipping, etc.) must be implemented in the shared core first.
@@ -25,7 +25,7 @@ These differences must remain within validation thresholds defined in this contr
 
 The following are prohibited:
 
-- **Platform-only DSP:** introducing or altering synthesis/audio-processing behavior on one platform that is not present in `core/sound_bubbles_dsp.c/.h`.
+- **Platform-only DSP:** introducing or altering synthesis/audio-processing behavior on one platform that is not present in `core/dsp/sound_bubbles_dsp.c/.h`.
 - **Web-only widening/modulation:** any browser-specific stereo widening, modulation, enhancement, or other audible embellishment absent from the shared core.
 - **Differing spawn/class logic:** platform-specific changes to event spawning, bubble/class selection, class weighting, lifecycle semantics, or timing rules that affect resulting sound behavior.
 

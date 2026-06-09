@@ -4,9 +4,9 @@ on:
   push:
     branches: [main]
     paths:
-      - 'web/**'
+      - 'ui/web/**'
       - 'core/**'
-      - 'web/wasm/**'
+      - 'platform/wasm/**'
       - 'Makefile'
       - '.github/workflows/deploy-pages.yml'
   workflow_dispatch:
@@ -43,7 +43,7 @@ jobs:
       - name: Prepare distribution directory
         run: |
           mkdir dist
-          cp -r web/frontend/* dist/
+          cp -r ui/web/* dist/
           cp "$RUNNER_TEMP/build/bubble_cloud_wasm.js" dist/bubble_cloud_wasm.js
           touch dist/.nojekyll
 

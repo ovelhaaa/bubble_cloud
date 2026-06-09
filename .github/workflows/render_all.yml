@@ -27,7 +27,7 @@ on:
       - 'core/dsp/sound_bubbles_dsp.h'
       - 'core/sound_bubbles_dsp.h'
       - 'platform/offline/sound_bubbles_render.c'
-      - 'presets/*.json'
+      - 'core/presets/factory/*.json'
       - 'tests/fixtures/audio/*.wav'
       - '.github/workflows/render_all.yml'
 
@@ -71,26 +71,26 @@ jobs:
           fi
 
           echo "Checking presets directory..."
-          if [ ! -d presets ]; then
-            echo "Error: presets directory not found!"
+          if [ ! -d core/presets/factory ]; then
+            echo "Error: core/presets/factory directory not found!"
             exit 1
           fi
 
-          PRESET_COUNT=$(find presets -maxdepth 1 -name '*.json' | wc -l)
+          PRESET_COUNT=$(find core/presets/factory -maxdepth 1 -name '*.json' | wc -l)
           if [ "$PRESET_COUNT" -eq 0 ]; then
-            echo "Error: No preset JSON files found in presets/!"
+            echo "Error: No preset JSON files found in core/presets/factory/!"
             exit 1
           fi
 
           echo "Found $PRESET_COUNT preset(s):"
-          ls -lh presets/*.json
+          ls -lh core/presets/factory/*.json
           echo "Sample files:"
           ls -lh tests/fixtures/audio || true
 
       - name: Compile Offline Renderer
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          gcc platform/offline/sound_bubbles_render.c core/engine/bubble_engine.c core/dsp/sound_bubbles_dsp.c -O2 -Wall -Wextra -std=c11 -lm -Icore -Icore/dsp -o "$RUNNER_TEMP/bin/sound_bubbles_render"
+          gcc platform/offline/sound_bubbles_render.c core/engine/bubble_engine.c core/dsp/sound_bubbles_dsp.c core/presets/bubble_preset.c -O2 -Wall -Wextra -std=c11 -lm -Icore -Icore/dsp -o "$RUNNER_TEMP/bin/sound_bubbles_render"
 
       - name: Render All Presets
         run: |
@@ -102,7 +102,7 @@ jobs:
           echo "Selected input file: $input_file"
           echo "Input basename: $INPUT_BASE"
 
-          for preset in presets/*.json; do
+          for preset in core/presets/factory/*.json; do
             [ -f "$preset" ] || continue
 
             PRESET_BASE="$(basename "$preset" .json)"

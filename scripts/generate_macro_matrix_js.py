@@ -14,7 +14,7 @@ from pathlib import Path
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate macro_matrix.js for the web UI")
     parser.add_argument("--source", default="docs/macro_matrix.yaml", help="JSON-compatible matrix source")
-    parser.add_argument("--output", default="web/frontend/macro_matrix.js", help="Generated JS output")
+    parser.add_argument("--output", default="ui/web/macro_matrix.js", help="Generated JS output")
     return parser.parse_args()
 
 

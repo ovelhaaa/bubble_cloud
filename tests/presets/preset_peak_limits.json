@@ -1,53 +1,53 @@
 {
-  "presets/airy_decay.json": {
+  "core/presets/factory/airy_decay.json": {
     "max_peak": 1.01,
     "max_clip_count": 0
   },
-  "presets/current.json": {
+  "core/presets/factory/current.json": {
     "max_peak": 1.01,
     "max_clip_count": 0
   },
-  "presets/dense_cloud.json": {
+  "core/presets/factory/dense_cloud.json": {
     "max_peak": 1.01,
     "max_clip_count": 0
   },
-  "presets/musical_balanced.json": {
+  "core/presets/factory/musical_balanced.json": {
     "max_peak": 1.01,
     "max_clip_count": 0
   },
-  "presets/musical_dense_pad.json": {
+  "core/presets/factory/musical_dense_pad.json": {
     "max_peak": 1.01,
     "max_clip_count": 0
   },
-  "presets/musical_glassy_decay.json": {
+  "core/presets/factory/musical_glassy_decay.json": {
     "max_peak": 1.01,
     "max_clip_count": 0
   },
-  "presets/musical_late_bubbles.json": {
+  "core/presets/factory/musical_late_bubbles.json": {
     "max_peak": 1.01,
     "max_clip_count": 0
   },
-  "presets/musical_percussive_burst.json": {
+  "core/presets/factory/musical_percussive_burst.json": {
     "max_peak": 1.01,
     "max_clip_count": 0
   },
-  "presets/musical_reactive_attack.json": {
+  "core/presets/factory/musical_reactive_attack.json": {
     "max_peak": 1.01,
     "max_clip_count": 0
   },
-  "presets/musical_soft_ambient.json": {
+  "core/presets/factory/musical_soft_ambient.json": {
     "max_peak": 1.01,
     "max_clip_count": 0
   },
-  "presets/musical_tight_pick.json": {
+  "core/presets/factory/musical_tight_pick.json": {
     "max_peak": 1.01,
     "max_clip_count": 0
   },
-  "presets/neutral.json": {
+  "core/presets/factory/neutral.json": {
     "max_peak": 1.01,
     "max_clip_count": 0
   },
-  "presets/reactive_attack.json": {
+  "core/presets/factory/reactive_attack.json": {
     "max_peak": 1.01,
     "max_clip_count": 0
   }
