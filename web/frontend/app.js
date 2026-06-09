@@ -91,7 +91,7 @@ const PARAM_DEFINITIONS = {
   short_duration_ms_max: { min: 1, max: 300, step: 0.1, label: 'Short Duration Max' },
   body_duration_ms_min: { min: 10, max: 500, step: 0.1, label: 'Body Duration Min' },
   body_duration_ms_max: { min: 20, max: 800, step: 0.1, label: 'Body Duration Max' },
-  rng_seed: { min: 1, max: 2147483647, step: 1, label: 'RNG Seed' },
+  rng_seed: { min: 1, max: 2147483520, step: 1, label: 'RNG Seed' },
   mix_dry_gain: { min: 0, max: 1, step: 0.01, label: 'Dry Gain' },
   mix_wet_gain: { min: 0, max: 1, step: 0.01, label: 'Wet Gain' },
   stereo_width: { min: 0, max: 1, step: 0.01, label: 'Stereo Width' },
