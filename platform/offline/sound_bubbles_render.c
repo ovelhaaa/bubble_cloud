@@ -7,6 +7,7 @@
 #include <math.h>
 
 #include "engine/bubble_engine.h"
+#include "presets/bubble_preset.h"
 
 // --- 1. Design Summary ---
 // This file is a minimal, self-contained CLI renderer for the Sound Bubbles DSP core.
@@ -18,8 +19,9 @@
 // Output: 44100 Hz, 2 channels, 32-bit IEEE Float.
 
 // --- 3. Preset JSON Assumptions ---
-// The JSON file must be a flat object containing numeric values.
-// Keys are matched via simple string searching (`strstr`). Missing keys will leave default values.
+// The JSON file may be a canonical preset with a nested `params` object or a legacy
+// flat numeric object. Parsing happens only in this offline tool, never in the
+// audio processing path, and values are validated against the shared schema table.
 
 // --- 4. CLI Behavior ---
 // Usage: ./sound_bubbles_render input.wav preset.json output.wav
@@ -90,105 +92,6 @@ static void ApplyQualityProfileToConfig(EngineConfig_t* config, BubbleQualityPro
 static void ErrorExit(const char* message) {
     fprintf(stderr, "Error: %s\n", message);
     exit(EXIT_FAILURE);
-}
-
-// Minimal manual JSON parser for flat numeric keys, enhanced to avoid string contents
-static const char* FindJsonKey(const char* json_str, const char* key) {
-    char search_key[256];
-    snprintf(search_key, sizeof(search_key), "\"%s\"", key);
-    size_t key_len = strlen(search_key);
-
-    const char* pos = json_str;
-    while ((pos = strstr(pos, search_key)) != NULL) {
-        // Look ahead to ensure the matched string is used as a JSON key (followed by ':')
-        const char* check_pos = pos + key_len;
-        while (*check_pos == ' ' || *check_pos == '\t' || *check_pos == '\r' || *check_pos == '\n') {
-            check_pos++;
-        }
-        if (*check_pos == ':') {
-            return check_pos + 1; // Return the position immediately after the colon
-        }
-        pos += key_len; // Continue searching
-    }
-    return NULL;
-}
-
-static float GetJsonFloat(const char* json_str, const char* key, float default_val) {
-    const char* pos = FindJsonKey(json_str, key);
-    if (!pos) return default_val;
-
-    float val = default_val;
-    if (sscanf(pos, " %f", &val) == 1) {
-        return val;
-    }
-    return default_val;
-}
-
-static int32_t GetJsonInt(const char* json_str, const char* key, int32_t default_val) {
-    const char* pos = FindJsonKey(json_str, key);
-    if (!pos) return default_val;
-
-    int32_t val = default_val;
-    if (sscanf(pos, " %d", &val) == 1) {
-        return val;
-    }
-    return default_val;
-}
-
-static float GetJsonFloatLegacyFallback(const char* json_str, const char* canonical_key, const char* legacy_key, float default_val) {
-    const char* canonical_pos = FindJsonKey(json_str, canonical_key);
-    if (canonical_pos) {
-        float val = default_val;
-        if (sscanf(canonical_pos, " %f", &val) == 1) {
-            return val;
-        }
-    }
-    return GetJsonFloat(json_str, legacy_key, default_val);
-}
-
-// --- Validation Functions ---
-static void ValidateConfig(const EngineConfig_t* config, float master_dry, float master_wet) {
-    if (config->density_burst < 0.0f || config->density_sustain < 0.0f || config->density_decay < 0.0f) {
-        ErrorExit("Preset validation failed: densities must be >= 0.");
-    }
-    if (config->burst_duration_ticks < 0 || config->burst_immediate_count < 0) {
-        ErrorExit("Preset validation failed: burst_duration_ticks and burst_immediate_count must be >= 0.");
-    }
-    if (config->attack_region.min_offset_samples < 0 || config->attack_region.max_offset_samples < 0 ||
-        config->body_region.min_offset_samples < 0 || config->body_region.max_offset_samples < 0 ||
-        config->memory_region.min_offset_samples < 0 || config->memory_region.max_offset_samples < 0) {
-        ErrorExit("Preset validation failed: region offsets must be >= 0.");
-    }
-
-    if (!isfinite(config->duck_burst_level) || config->duck_burst_level < 0.0f || config->duck_burst_level > 1.0f) {
-        ErrorExit("Preset validation failed: duck_burst_level must be between 0.0 and 1.0.");
-    }
-    if (!isfinite(config->duck_attack_coef) || config->duck_attack_coef < 0.0f || config->duck_attack_coef > 1.0f) {
-        ErrorExit("Preset validation failed: duck_attack_coef must be between 0.0 and 1.0.");
-    }
-    if (!isfinite(config->duck_release_coef) || config->duck_release_coef < 0.0f || config->duck_release_coef > 1.0f) {
-        ErrorExit("Preset validation failed: duck_release_coef must be between 0.0 and 1.0.");
-    }
-
-    if (!isfinite(master_dry) || master_dry < 0.0f || !isfinite(master_wet) || master_wet < 0.0f) {
-        ErrorExit("Preset validation failed: master_dry and master_wet must be finite and >= 0.");
-    }
-    if (!isfinite(config->final_limiter_ceiling_db) || config->final_limiter_ceiling_db < -24.0f || config->final_limiter_ceiling_db > 0.0f) {
-        ErrorExit("Preset validation failed: final_limiter_ceiling_db must be finite and between -24 and 0 dBFS.");
-    }
-    if (!isfinite(config->final_limiter_release_ms) || config->final_limiter_release_ms < 5.0f || config->final_limiter_release_ms > 500.0f) {
-        ErrorExit("Preset validation failed: final_limiter_release_ms must be finite and between 5 and 500 ms.");
-    }
-    if (config->active_voice_limit < 1 || config->active_voice_limit > BUBBLE_ENGINE_MAX_VOICES) {
-        ErrorExit("Preset validation failed: active_voice_limit is outside the compiled voice pool.");
-    }
-
-    for (int i = 0; i < BUBBLE_CLASS_COUNT; i++) {
-        const BubbleClassConfig_t* c = &config->class_configs[i];
-        if (c->duration_ms_min <= 0.0f || c->duration_ms_max <= 0.0f) {
-            ErrorExit("Preset validation failed: class durations must be > 0.");
-        }
-    }
 }
 
 typedef struct {
@@ -492,110 +395,15 @@ static void WriteWav(const char* filename, const float* left, const float* right
 // --- Parsing ---
 
 static void LoadPreset(const char* filename, EngineConfig_t* config, float* master_dry, float* master_wet) {
-    FILE* file = fopen(filename, "rb");
-    if (!file) ErrorExit("Could not open JSON preset file.");
-
-    fseek(file, 0, SEEK_END);
-    long length = ftell(file);
-    fseek(file, 0, SEEK_SET);
-
-    char* json_str = (char*)malloc(length + 1);
-    if (!json_str) {
-        fclose(file);
-        ErrorExit("Failed to allocate memory for JSON parsing.");
+    BubbleEnginePreset_t preset;
+    char error[256];
+    if (!bubble_preset_load_file(filename, &preset, error, sizeof(error))) {
+        ErrorExit(error);
     }
 
-    if (fread(json_str, 1, length, file) != (size_t)length) {
-        free(json_str);
-        fclose(file);
-        ErrorExit("Failed to read JSON preset file.");
-    }
-    json_str[length] = '\0';
-    fclose(file);
-
-    // Parse core parameters
-    config->noise_floor = GetJsonFloat(json_str, "noise_floor", 0.001f);
-    config->tracking_thresh = GetJsonFloat(json_str, "tracking_thresh", 0.01f);
-    config->sustain_thresh = GetJsonFloat(json_str, "sustain_thresh", 0.1f);
-    config->transient_delta = GetJsonFloat(json_str, "transient_delta", 0.05f);
-
-    config->duck_burst_level = GetJsonFloat(json_str, "duck_burst_level", 0.2f);
-    config->duck_attack_coef = GetJsonFloat(json_str, "duck_attack_coef", 0.99f);
-    config->duck_release_coef = GetJsonFloat(json_str, "duck_release_coef", 0.999f);
-
-    config->burst_duration_ticks = GetJsonInt(json_str, "burst_duration_ticks", 10);
-    config->burst_immediate_count = GetJsonInt(json_str, "burst_immediate_count", 3);
-
-    config->density_burst = GetJsonFloat(json_str, "density_burst", 50.0f);
-    config->density_sustain = GetJsonFloat(json_str, "density_sustain", 15.0f);
-    config->density_decay = GetJsonFloat(json_str, "density_decay", 5.0f);
-
-    // Canonical schema (v2):
-    //  - attack/body/memory semantic regions:
-    //      attack_region_min_offset_samples
-    //      attack_region_max_offset_samples
-    //      body_region_min_offset_samples
-    //      body_region_max_offset_samples
-    //      memory_region_min_offset_samples
-    //      memory_region_max_offset_samples
-    //  - class durations:
-    //      micro_duration_ms_min/max
-    //      short_duration_ms_min/max
-    //      body_duration_ms_min/max
-    //  - dynamics/shaping:
-    //      density_*, duck_*, burst_*
-    //  - randomness/mix:
-    //      rng_seed, mix_dry_gain, mix_wet_gain
-    //
-    // Backward compatibility layer:
-    //  - legacy offset+jitter keys are still accepted and translated to regions:
-    //      micro_offset_samples + micro_jitter_samples        -> attack_region_[min/max]
-    //      short_offset_samples + short_jitter_samples        -> body_region_[min/max]
-    //      body_offset_samples + body_jitter_samples          -> memory_region_[min/max]
-    //  - legacy output mix keys remain accepted:
-    //      master_dry_gain / master_wet_gain
-    //
-    // Canonical keys always take precedence when both forms are present.
-    int32_t micro_offset = GetJsonInt(json_str, "micro_offset_samples", 441);
-    int32_t micro_jitter = GetJsonInt(json_str, "micro_jitter_samples", 3087);
-    int32_t short_offset = GetJsonInt(json_str, "short_offset_samples", 3528);
-    int32_t short_jitter = GetJsonInt(json_str, "short_jitter_samples", 7497);
-    int32_t body_offset = GetJsonInt(json_str, "body_offset_samples", 11025);
-    int32_t body_jitter = GetJsonInt(json_str, "body_jitter_samples", 28665);
-
-    config->attack_region.min_offset_samples = GetJsonInt(json_str, "attack_region_min_offset_samples", micro_offset);
-    config->attack_region.max_offset_samples = GetJsonInt(json_str, "attack_region_max_offset_samples", micro_offset + micro_jitter);
-    config->body_region.min_offset_samples = GetJsonInt(json_str, "body_region_min_offset_samples", short_offset);
-    config->body_region.max_offset_samples = GetJsonInt(json_str, "body_region_max_offset_samples", short_offset + short_jitter);
-    config->memory_region.min_offset_samples = GetJsonInt(json_str, "memory_region_min_offset_samples", body_offset);
-    config->memory_region.max_offset_samples = GetJsonInt(json_str, "memory_region_max_offset_samples", body_offset + body_jitter);
-
-    config->rng_seed = (uint32_t)GetJsonInt(json_str, "rng_seed", 1);
-
-    // Micro Attack
-    config->class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_min = GetJsonFloat(json_str, "micro_duration_ms_min", 5.0f);
-    config->class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_max = GetJsonFloat(json_str, "micro_duration_ms_max", 15.0f);
-    config->class_configs[BUBBLE_CLASS_MICRO_ATTACK].window_type = WINDOW_TYPE_HANN;
-
-    // Short Intermediate
-    config->class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].duration_ms_min = GetJsonFloat(json_str, "short_duration_ms_min", 20.0f);
-    config->class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].duration_ms_max = GetJsonFloat(json_str, "short_duration_ms_max", 50.0f);
-    config->class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].window_type = WINDOW_TYPE_HANN;
-
-    // Sustain Body
-    config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_min = GetJsonFloat(json_str, "body_duration_ms_min", 80.0f);
-    config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_max = GetJsonFloat(json_str, "body_duration_ms_max", 200.0f);
-    config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].window_type = WINDOW_TYPE_TUKEY_LIKE;
-
-    config->final_limiter_ceiling_db = GetJsonFloat(json_str, "final_limiter_ceiling_db", -1.0f);
-    config->final_limiter_release_ms = GetJsonFloat(json_str, "final_limiter_release_ms", 50.0f);
-    config->active_voice_limit = GetJsonInt(json_str, "active_voice_limit", config->active_voice_limit);
-
-    // Canonical mix keys with legacy fallback.
-    *master_dry = GetJsonFloatLegacyFallback(json_str, "mix_dry_gain", "master_dry_gain", 1.0f);
-    *master_wet = GetJsonFloatLegacyFallback(json_str, "mix_wet_gain", "master_wet_gain", 1.0f);
-
-    free(json_str);
+    *config = preset.config;
+    *master_dry = preset.master_dry_gain;
+    *master_wet = preset.master_wet_gain;
 }
 
 static MetricsDigest_t RenderWithMetrics(const EngineConfig_t* config, float master_dry, float master_wet, const float* mono_in, uint32_t num_frames, float* out_left, float* out_right, FILE* metrics_log) {
@@ -819,7 +627,6 @@ int main(int argc, char** argv) {
     if (cli_quality_profile_set) {
         ApplyQualityProfileToConfig(&config, cli_quality_profile);
     }
-    ValidateConfig(&config, master_dry, master_wet);
 
     // Read Input Audio
     WavData in_wav = ReadWav(input_wav_file);
