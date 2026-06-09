@@ -243,6 +243,11 @@ const WASM_PARAM_ID_MAP = Object.freeze({
   sustain_darkness: 51,
   attack_rate_jitter: 52,
   attack_rate_jitter_depth: 53,
+  freeze_amount: 56,
+  freeze_enabled: 57,
+  reverse_probability: 58,
+  pitch_mode: 59,
+  shimmer_amount: 60,
 });
 
 function clamp(value, min, max) {
