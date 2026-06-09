@@ -18,19 +18,19 @@
     { id: 'BUBBLE_ENGINE_PARAM_DENSITY_BURST', name: 'density_burst', min: 0, max: 500, defaultValue: 50, type: 'float' },
     { id: 'BUBBLE_ENGINE_PARAM_DENSITY_SUSTAIN', name: 'density_sustain', min: 0, max: 500, defaultValue: 15, type: 'float' },
     { id: 'BUBBLE_ENGINE_PARAM_DENSITY_DECAY', name: 'density_decay', min: 0, max: 500, defaultValue: 5, type: 'float' },
-    { id: 'BUBBLE_ENGINE_PARAM_ATTACK_REGION_MIN_OFFSET_SAMPLES', name: 'attack_region_min_offset_samples', min: 0, max: 88199, defaultValue: 441, type: 'int' },
-    { id: 'BUBBLE_ENGINE_PARAM_ATTACK_REGION_MAX_OFFSET_SAMPLES', name: 'attack_region_max_offset_samples', min: 0, max: 88199, defaultValue: 3528, type: 'int' },
-    { id: 'BUBBLE_ENGINE_PARAM_BODY_REGION_MIN_OFFSET_SAMPLES', name: 'body_region_min_offset_samples', min: 0, max: 88199, defaultValue: 3528, type: 'int' },
-    { id: 'BUBBLE_ENGINE_PARAM_BODY_REGION_MAX_OFFSET_SAMPLES', name: 'body_region_max_offset_samples', min: 0, max: 88199, defaultValue: 11025, type: 'int' },
-    { id: 'BUBBLE_ENGINE_PARAM_MEMORY_REGION_MIN_OFFSET_SAMPLES', name: 'memory_region_min_offset_samples', min: 0, max: 88199, defaultValue: 11025, type: 'int' },
-    { id: 'BUBBLE_ENGINE_PARAM_MEMORY_REGION_MAX_OFFSET_SAMPLES', name: 'memory_region_max_offset_samples', min: 0, max: 88199, defaultValue: 39690, type: 'int' },
+    { id: 'BUBBLE_ENGINE_PARAM_ATTACK_REGION_MIN_OFFSET_SAMPLES', name: 'attack_region_min_offset_samples', min: 0, max: 30000, defaultValue: 441, type: 'int' },
+    { id: 'BUBBLE_ENGINE_PARAM_ATTACK_REGION_MAX_OFFSET_SAMPLES', name: 'attack_region_max_offset_samples', min: 64, max: 60000, defaultValue: 3528, type: 'int' },
+    { id: 'BUBBLE_ENGINE_PARAM_BODY_REGION_MIN_OFFSET_SAMPLES', name: 'body_region_min_offset_samples', min: 128, max: 90000, defaultValue: 3528, type: 'int' },
+    { id: 'BUBBLE_ENGINE_PARAM_BODY_REGION_MAX_OFFSET_SAMPLES', name: 'body_region_max_offset_samples', min: 512, max: 120000, defaultValue: 11025, type: 'int' },
+    { id: 'BUBBLE_ENGINE_PARAM_MEMORY_REGION_MIN_OFFSET_SAMPLES', name: 'memory_region_min_offset_samples', min: 512, max: 150000, defaultValue: 11025, type: 'int' },
+    { id: 'BUBBLE_ENGINE_PARAM_MEMORY_REGION_MAX_OFFSET_SAMPLES', name: 'memory_region_max_offset_samples', min: 1024, max: 220500, defaultValue: 39690, type: 'int' },
     { id: 'BUBBLE_ENGINE_PARAM_MICRO_DURATION_MS_MIN', name: 'micro_duration_ms_min', min: 1, max: 1000, defaultValue: 5, type: 'float' },
     { id: 'BUBBLE_ENGINE_PARAM_MICRO_DURATION_MS_MAX', name: 'micro_duration_ms_max', min: 1, max: 1000, defaultValue: 15, type: 'float' },
     { id: 'BUBBLE_ENGINE_PARAM_SHORT_DURATION_MS_MIN', name: 'short_duration_ms_min', min: 1, max: 2000, defaultValue: 20, type: 'float' },
     { id: 'BUBBLE_ENGINE_PARAM_SHORT_DURATION_MS_MAX', name: 'short_duration_ms_max', min: 1, max: 2000, defaultValue: 50, type: 'float' },
     { id: 'BUBBLE_ENGINE_PARAM_BODY_DURATION_MS_MIN', name: 'body_duration_ms_min', min: 1, max: 5000, defaultValue: 80, type: 'float' },
     { id: 'BUBBLE_ENGINE_PARAM_BODY_DURATION_MS_MAX', name: 'body_duration_ms_max', min: 1, max: 5000, defaultValue: 200, type: 'float' },
-    { id: 'BUBBLE_ENGINE_PARAM_RNG_SEED', name: 'rng_seed', min: 0, max: 4294967295, defaultValue: 1, type: 'int' },
+    { id: 'BUBBLE_ENGINE_PARAM_RNG_SEED', name: 'rng_seed', min: 1, max: 2147483520, defaultValue: 1, type: 'int' },
     { id: 'BUBBLE_ENGINE_PARAM_MIX_DRY_GAIN', name: 'mix_dry_gain', min: 0, max: 2, defaultValue: 1, type: 'float' },
     { id: 'BUBBLE_ENGINE_PARAM_MIX_WET_GAIN', name: 'mix_wet_gain', min: 0, max: 2, defaultValue: 1, type: 'float' },
     { id: 'BUBBLE_ENGINE_PARAM_STEREO_WIDTH', name: 'stereo_width', min: 0, max: 1, defaultValue: 0.7, type: 'float' },
@@ -83,7 +83,6 @@
   }
 
   function normalizeParamValue(spec, value) {
-    if (!Number.isFinite(value)) return spec.defaultValue;
     if (spec.type === 'int' || spec.type === 'bool' || spec.type === 'enum') {
       return Math.trunc(value);
     }
@@ -93,7 +92,11 @@
   function validateParam(name, value) {
     const spec = PARAM_BY_NAME[name];
     if (!spec) return { valid: false, reason: `Unknown preset param: ${name}` };
-    const normalized = normalizeParamValue(spec, Number(value));
+    const num = Number(value);
+    if (!Number.isFinite(num)) {
+      return { valid: false, reason: `${name} must be a valid finite number` };
+    }
+    const normalized = normalizeParamValue(spec, num);
     if (normalized < spec.min || normalized > spec.max) {
       return { valid: false, reason: `${name} must be between ${spec.min} and ${spec.max}` };
     }
@@ -108,7 +111,11 @@
     const params = createDefaultParams();
     if (!inputParams || typeof inputParams !== 'object') return params;
     for (const [name, rawValue] of Object.entries(inputParams)) {
-      const result = validateParam(name, Number(rawValue));
+      if (!PARAM_BY_NAME[name]) {
+        params[name] = rawValue;
+        continue;
+      }
+      const result = validateParam(name, rawValue);
       if (result.valid) params[name] = result.value;
     }
     return params;

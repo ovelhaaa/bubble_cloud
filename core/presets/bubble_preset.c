@@ -108,11 +108,51 @@ static bool ReadParamNumber(const char* json, const char* params_begin, const ch
     return ParseJsonNumberAt(pos, out_value);
 }
 
-static float NormalizeTypedValue(const BubblePresetParamSpec_t* spec, float value) {
+static bool FloatToInt32(float value, int32_t* out_value) {
+    if (out_value == NULL || !isfinite(value)) return false;
+    if (value < -2147483648.0f || value > 2147483520.0f) return false;
+    *out_value = (int32_t)value;
+    return true;
+}
+
+static bool NormalizeTypedValue(const BubblePresetParamSpec_t* spec, float* value) {
+    if (spec == NULL || value == NULL || !isfinite(*value)) return false;
     if (spec->type == BUBBLE_PRESET_PARAM_INT || spec->type == BUBBLE_PRESET_PARAM_BOOL || spec->type == BUBBLE_PRESET_PARAM_ENUM) {
-        return (float)((int32_t)value);
+        int32_t int_value = 0;
+        if (!FloatToInt32(*value, &int_value)) return false;
+        *value = (float)int_value;
     }
-    return value;
+    return true;
+}
+
+static bool ValidateRegionOffset(BubbleEngineParameterId_t id, int32_t value, char* error, size_t error_size, const char* label) {
+    const BubblePresetParamSpec_t* spec = bubble_preset_find_param_by_id(id);
+    if (!bubble_preset_validate_param_value(spec, (float)value)) {
+        char message[192];
+        snprintf(message, sizeof(message), "Preset validation failed: %s is outside %.9g..%.9g.", label, spec != NULL ? spec->min_value : 0.0f, spec != NULL ? spec->max_value : 0.0f);
+        SetError(error, error_size, message);
+        return false;
+    }
+    return true;
+}
+
+static bool CheckedAddInt32(int32_t a, int32_t b, int32_t* out_value) {
+    if (out_value == NULL) return false;
+    if ((b > 0 && a > INT32_MAX - b) || (b < 0 && a < INT32_MIN - b)) return false;
+    *out_value = a + b;
+    return true;
+}
+
+static bool ReadLegacyInt(const char* json, const char* key, int32_t* out_value, char* error, size_t error_size) {
+    float value = 0.0f;
+    if (!ReadParamNumber(json, NULL, NULL, key, &value)) return true;
+    if (!FloatToInt32(value, out_value)) {
+        char message[160];
+        snprintf(message, sizeof(message), "Preset validation failed: legacy parameter %s is outside int32 range.", key);
+        SetError(error, error_size, message);
+        return false;
+    }
+    return true;
 }
 
 static bool SetPresetParam(BubbleEnginePreset_t* preset, BubbleEngineParameterId_t id, float value) {
@@ -299,7 +339,12 @@ bool bubble_preset_load_json(const char* json, BubbleEnginePreset_t* preset, cha
             }
         }
 
-        value = NormalizeTypedValue(spec, value);
+        if (!NormalizeTypedValue(spec, &value)) {
+            char message[192];
+            snprintf(message, sizeof(message), "Preset validation failed: %s must be a finite int32-compatible value.", spec->canonical_name);
+            SetError(error, error_size, message);
+            return false;
+        }
         if (!bubble_preset_validate_param_value(spec, value)) {
             char message[192];
             snprintf(message, sizeof(message), "Preset validation failed: %s is outside %.9g..%.9g.", spec->canonical_name, spec->min_value, spec->max_value);
@@ -320,18 +365,40 @@ bool bubble_preset_load_json(const char* json, BubbleEnginePreset_t* preset, cha
         int32_t body_offset = 11025;
         int32_t body_jitter = 28665;
         float v = 0.0f;
-        if (ReadParamNumber(json, NULL, NULL, "micro_offset_samples", &v)) micro_offset = (int32_t)v;
-        if (ReadParamNumber(json, NULL, NULL, "micro_jitter_samples", &v)) micro_jitter = (int32_t)v;
-        if (ReadParamNumber(json, NULL, NULL, "short_offset_samples", &v)) short_offset = (int32_t)v;
-        if (ReadParamNumber(json, NULL, NULL, "short_jitter_samples", &v)) short_jitter = (int32_t)v;
-        if (ReadParamNumber(json, NULL, NULL, "body_offset_samples", &v)) body_offset = (int32_t)v;
-        if (ReadParamNumber(json, NULL, NULL, "body_jitter_samples", &v)) body_jitter = (int32_t)v;
+        if (!ReadLegacyInt(json, "micro_offset_samples", &micro_offset, error, error_size) ||
+            !ReadLegacyInt(json, "micro_jitter_samples", &micro_jitter, error, error_size) ||
+            !ReadLegacyInt(json, "short_offset_samples", &short_offset, error, error_size) ||
+            !ReadLegacyInt(json, "short_jitter_samples", &short_jitter, error, error_size) ||
+            !ReadLegacyInt(json, "body_offset_samples", &body_offset, error, error_size) ||
+            !ReadLegacyInt(json, "body_jitter_samples", &body_jitter, error, error_size)) {
+            return false;
+        }
+
+        int32_t legacy_attack_max = 0;
+        int32_t legacy_body_max = 0;
+        int32_t legacy_memory_max = 0;
+        if (!CheckedAddInt32(micro_offset, micro_jitter, &legacy_attack_max) ||
+            !CheckedAddInt32(short_offset, short_jitter, &legacy_body_max) ||
+            !CheckedAddInt32(body_offset, body_jitter, &legacy_memory_max)) {
+            SetError(error, error_size, "Preset validation failed: legacy offset + jitter overflowed int32 range.");
+            return false;
+        }
+
         if (!ReadParamNumber(json, NULL, NULL, "attack_region_min_offset_samples", &v)) preset->config.attack_region.min_offset_samples = micro_offset;
-        if (!ReadParamNumber(json, NULL, NULL, "attack_region_max_offset_samples", &v)) preset->config.attack_region.max_offset_samples = micro_offset + micro_jitter;
+        if (!ReadParamNumber(json, NULL, NULL, "attack_region_max_offset_samples", &v)) preset->config.attack_region.max_offset_samples = legacy_attack_max;
         if (!ReadParamNumber(json, NULL, NULL, "body_region_min_offset_samples", &v)) preset->config.body_region.min_offset_samples = short_offset;
-        if (!ReadParamNumber(json, NULL, NULL, "body_region_max_offset_samples", &v)) preset->config.body_region.max_offset_samples = short_offset + short_jitter;
+        if (!ReadParamNumber(json, NULL, NULL, "body_region_max_offset_samples", &v)) preset->config.body_region.max_offset_samples = legacy_body_max;
         if (!ReadParamNumber(json, NULL, NULL, "memory_region_min_offset_samples", &v)) preset->config.memory_region.min_offset_samples = body_offset;
-        if (!ReadParamNumber(json, NULL, NULL, "memory_region_max_offset_samples", &v)) preset->config.memory_region.max_offset_samples = body_offset + body_jitter;
+        if (!ReadParamNumber(json, NULL, NULL, "memory_region_max_offset_samples", &v)) preset->config.memory_region.max_offset_samples = legacy_memory_max;
+
+        if (!ValidateRegionOffset(BUBBLE_ENGINE_PARAM_ATTACK_REGION_MIN_OFFSET_SAMPLES, preset->config.attack_region.min_offset_samples, error, error_size, "attack_region_min_offset_samples") ||
+            !ValidateRegionOffset(BUBBLE_ENGINE_PARAM_ATTACK_REGION_MAX_OFFSET_SAMPLES, preset->config.attack_region.max_offset_samples, error, error_size, "attack_region_max_offset_samples") ||
+            !ValidateRegionOffset(BUBBLE_ENGINE_PARAM_BODY_REGION_MIN_OFFSET_SAMPLES, preset->config.body_region.min_offset_samples, error, error_size, "body_region_min_offset_samples") ||
+            !ValidateRegionOffset(BUBBLE_ENGINE_PARAM_BODY_REGION_MAX_OFFSET_SAMPLES, preset->config.body_region.max_offset_samples, error, error_size, "body_region_max_offset_samples") ||
+            !ValidateRegionOffset(BUBBLE_ENGINE_PARAM_MEMORY_REGION_MIN_OFFSET_SAMPLES, preset->config.memory_region.min_offset_samples, error, error_size, "memory_region_min_offset_samples") ||
+            !ValidateRegionOffset(BUBBLE_ENGINE_PARAM_MEMORY_REGION_MAX_OFFSET_SAMPLES, preset->config.memory_region.max_offset_samples, error, error_size, "memory_region_max_offset_samples")) {
+            return false;
+        }
     }
 
     return ValidatePresetRelations(preset, error, error_size);
@@ -397,16 +464,34 @@ bool bubble_preset_save_json(const BubbleEnginePreset_t* preset, char* out_json,
         BUBBLE_PRESET_SCHEMA_VERSION,
         BUBBLE_PRESET_ENGINE_VERSION)) goto overflow;
 
+    bool first = true;
     for (size_t i = 0; i < BUBBLE_PRESET_PARAM_COUNT; ++i) {
         const BubblePresetParamSpec_t* spec = &BUBBLE_PRESET_PARAM_SPECS[i];
         float value = 0.0f;
         if (!GetPresetParam(preset, spec->id, &value)) continue;
-        const char* comma = (i + 1u < BUBBLE_PRESET_PARAM_COUNT) ? "," : "";
-        if (spec->type == BUBBLE_PRESET_PARAM_FLOAT) {
-            if (!Append(out_json, out_json_size, &used, "    \"%s\": %.9g%s\n", spec->canonical_name, value, comma)) goto overflow;
-        } else {
-            if (!Append(out_json, out_json_size, &used, "    \"%s\": %d%s\n", spec->canonical_name, (int32_t)value, comma)) goto overflow;
+        if (!NormalizeTypedValue(spec, &value) || !bubble_preset_validate_param_value(spec, value)) {
+            char message[192];
+            snprintf(message, sizeof(message), "Preset validation failed: %s cannot be serialized outside %.9g..%.9g.", spec->canonical_name, spec->min_value, spec->max_value);
+            SetError(error, error_size, message);
+            return false;
         }
+        if (!first) {
+            if (!Append(out_json, out_json_size, &used, ",\n")) goto overflow;
+        }
+        first = false;
+        if (spec->type == BUBBLE_PRESET_PARAM_FLOAT) {
+            if (!Append(out_json, out_json_size, &used, "    \"%s\": %.9g", spec->canonical_name, value)) goto overflow;
+        } else {
+            int32_t int_value = 0;
+            if (!FloatToInt32(value, &int_value)) {
+                SetError(error, error_size, "Preset JSON integer value is outside int32 range.");
+                return false;
+            }
+            if (!Append(out_json, out_json_size, &used, "    \"%s\": %d", spec->canonical_name, int_value)) goto overflow;
+        }
+    }
+    if (!first) {
+        if (!Append(out_json, out_json_size, &used, "\n")) goto overflow;
     }
     if (!Append(out_json, out_json_size, &used, "  }\n}\n")) goto overflow;
     return true;
@@ -418,16 +503,26 @@ overflow:
 }
 
 bool bubble_preset_save_file(const char* path, const BubbleEnginePreset_t* preset, char* error, size_t error_size) {
-    char json[8192];
-    if (!bubble_preset_save_json(preset, json, sizeof(json), error, error_size)) return false;
+    const size_t json_size = 8192u;
+    char* json = (char*)malloc(json_size);
+    if (json == NULL) {
+        SetError(error, error_size, "Failed to allocate memory for saving preset.");
+        return false;
+    }
+    if (!bubble_preset_save_json(preset, json, json_size, error, error_size)) {
+        free(json);
+        return false;
+    }
     FILE* file = fopen(path, "wb");
     if (file == NULL) {
+        free(json);
         SetError(error, error_size, "Could not open preset file for writing.");
         return false;
     }
     size_t len = strlen(json);
     bool ok = fwrite(json, 1, len, file) == len;
     fclose(file);
+    free(json);
     if (!ok) SetError(error, error_size, "Failed to write preset file.");
     return ok;
 }
