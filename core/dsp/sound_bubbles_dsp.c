@@ -181,6 +181,7 @@ void SoundBubbles_SetMetricsCallback(SoundBubblesEngine_t* engine, SoundBubblesM
 
 void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mono, float* out_left, float* out_right, int num_samples) {
     float block_peak = 0.0f;
+    bool freeze_write = (engine->config.freeze_enabled != 0) || (engine->config.freeze_amount >= 0.5f);
 
     for (int i = 0; i < num_samples; i++) {
         float dry_sample = in_mono[i];
@@ -194,7 +195,6 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
         // Clamp input to [-1.0f, 1.0f] before conversion. Freeze keeps the
         // granular memory write head locked while voices continue processing.
         float clamped_sample = fmaxf(-1.0f, fminf(1.0f, dry_sample));
-        bool freeze_write = (engine->config.freeze_enabled != 0) || (engine->config.freeze_amount >= 0.5f);
         if (!freeze_write) {
             engine->delay_buffer[engine->write_ptr] = (int16_t)(clamped_sample * 32767.0f);
         }
@@ -238,7 +238,7 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
             // Directional write-head guard. Reverse voices also reject the
             // opposite-side guard band so interpolation cannot wrap into the
             // frozen/live write head neighborhood.
-            if (!freeze_write && v->state == VOICE_STATE_PLAYING && CheckGuardZoneDirectional(engine->write_ptr, v->read_ptr_float, v->rate)) {
+            if (v->state == VOICE_STATE_PLAYING && CheckGuardZoneDirectional(engine->write_ptr, v->read_ptr_float, v->rate)) {
                 v->state = VOICE_STATE_PREEMPT_FADING;
                 v->fade_counter = BUBBLES_FADE_SAMPLES;
             }
@@ -755,6 +755,12 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     v->quantized_rate = ResolvePitchModeRate(engine);
     v->read_direction = (RandomFloat01(engine) < Clamp01(engine->config.reverse_probability)) ? 1u : 0u;
     v->rate = (v->read_direction != 0u) ? -v->quantized_rate : v->quantized_rate;
+    if (engine->config.attack_rate_jitter && b_class == BUBBLE_CLASS_MICRO_ATTACK) {
+        float d = Clamp(engine->config.attack_rate_jitter_depth, 0.0f, 0.2f);
+        float j = (RandomFloat01(engine) * 2.0f - 1.0f) * d;
+        v->quantized_rate = Clamp(v->quantized_rate + j, 0.25f, 4.0f);
+        v->rate = (v->read_direction != 0u) ? -v->quantized_rate : v->quantized_rate;
+    }
     v->gain = 1.0f;
 
     float duration_ms = class_cfg->duration_ms_min + (RandomFloat01(engine) * (class_cfg->duration_ms_max - class_cfg->duration_ms_min));
@@ -818,13 +824,6 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     v->source_region_id = region_choice.region_id;
     if (region_choice.region_id == 2) {
         v->gain *= Clamp(1.0f - 0.6f * engine->config.memory_darkening, 0.2f, 1.0f);
-    }
-
-    if (engine->config.attack_rate_jitter && b_class == BUBBLE_CLASS_MICRO_ATTACK) {
-        float d = Clamp(engine->config.attack_rate_jitter_depth, 0.0f, 0.2f);
-        float j = (RandomFloat01(engine) * 2.0f - 1.0f) * d;
-        v->quantized_rate = Clamp(v->quantized_rate + j, 0.25f, 4.0f);
-        v->rate = (v->read_direction != 0u) ? -v->quantized_rate : v->quantized_rate;
     }
 
     // Optional hard-limited 2nd-generation droplet (single child, no recursive chain).
@@ -1007,10 +1006,20 @@ static inline int32_t WrapIntIndex(int32_t index, int32_t size) {
 }
 
 static inline float WrapFloatIndex(float index, float size) {
-    while (index >= size) index -= size;
-    while (index < 0.0f) index += size;
-    if (index >= size) index = 0.0f;
-    if (index < 0.0f) index = 0.0f;
+    if (index >= 0.0f && index < size) {
+        return index;
+    }
+    if (!isfinite(index) || !isfinite(size) || size <= 0.0f) {
+        return 0.0f;
+    }
+
+    index = fmodf(index, size);
+    if (index < 0.0f) {
+        index += size;
+    }
+    if (!(index >= 0.0f && index < size)) {
+        return 0.0f;
+    }
     return index;
 }
 
@@ -1026,20 +1035,15 @@ static inline float LinearInterpolate(const int16_t* buffer, float index_float) 
 
 static inline bool CheckGuardZoneDirectional(int32_t write_ptr, float read_ptr_float, float rate) {
     int32_t read_ptr = (int32_t)read_ptr_float;
-    int32_t dist_behind_write = write_ptr - read_ptr;
-    if (dist_behind_write < 0) dist_behind_write += BUBBLES_BUFFER_SIZE_SAMPLES;
-
-    if (dist_behind_write >= 0 && dist_behind_write < BUBBLES_GUARD_ZONE_SAMPLES) {
-        return true;
-    }
-
-    if (rate < 0.0f) {
+    if (rate >= 0.0f) {
+        int32_t dist_behind_write = write_ptr - read_ptr;
+        if (dist_behind_write < 0) dist_behind_write += BUBBLES_BUFFER_SIZE_SAMPLES;
+        return (dist_behind_write >= 0 && dist_behind_write < BUBBLES_GUARD_ZONE_SAMPLES);
+    } else {
         int32_t dist_ahead_of_write = read_ptr - write_ptr;
         if (dist_ahead_of_write < 0) dist_ahead_of_write += BUBBLES_BUFFER_SIZE_SAMPLES;
         return (dist_ahead_of_write >= 0 && dist_ahead_of_write < BUBBLES_GUARD_ZONE_SAMPLES);
     }
-
-    return false;
 }
 
 static float ResolvePitchModeRate(SoundBubblesEngine_t* engine) {
