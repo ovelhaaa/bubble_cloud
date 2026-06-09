@@ -21,7 +21,42 @@ typedef struct {
     float master_wet_gain;
 } BubbleEnginePreset_t;
 
-typedef enum {
+typedef enum BubbleParameterCurve {
+    BUBBLE_PARAMETER_CURVE_LINEAR = 0,
+    BUBBLE_PARAMETER_CURVE_EXP = 1,
+    BUBBLE_PARAMETER_CURVE_LOG = 2,
+    BUBBLE_PARAMETER_CURVE_TOGGLE = 3
+} BubbleParameterCurve;
+
+typedef enum BubbleParameterFlags {
+    BUBBLE_PARAMETER_FLAG_AUDIBLE = 1u << 0,
+    BUBBLE_PARAMETER_FLAG_MACRO = 1u << 1,
+    BUBBLE_PARAMETER_FLAG_DEVELOPER = 1u << 2,
+    BUBBLE_PARAMETER_FLAG_RUNTIME = 1u << 3,
+    BUBBLE_PARAMETER_FLAG_INTEGER = 1u << 4,
+    BUBBLE_PARAMETER_FLAG_BOOLEAN = 1u << 5
+} BubbleParameterFlags;
+
+typedef enum BubbleParameterId {
+    /* Musical macro controls: stable product-facing IDs in normalized 0..1 space. */
+    BUBBLE_PARAM_DENSITY = 2000,
+    BUBBLE_PARAM_BLOOM = 2001,
+    BUBBLE_PARAM_MOTION = 2002,
+    BUBBLE_PARAM_TEXTURE = 2003,
+    BUBBLE_PARAM_SPACE = 2004,
+    BUBBLE_PARAM_GRAVITY = 2005,
+    BUBBLE_PARAM_MEMORY = 2006,
+    BUBBLE_PARAM_CLARITY = 2007,
+    BUBBLE_PARAM_FREEZE = 2008,
+    BUBBLE_PARAM_SPARKLE = 2009,
+    BUBBLE_PARAM_WARMTH = 2010,
+    BUBBLE_PARAM_MIX = 2011,
+    BUBBLE_PARAM_MACRO_COUNT = 12,
+
+    /* Developer/debug switch. Raw DSP parameters below are readable only while enabled. */
+    BUBBLE_PARAM_DEVELOPER_MODE = 2999,
+
+    /* Developer raw DSP controls. These IDs are kept for source/binary protocol compatibility. */
     BUBBLE_ENGINE_PARAM_NOISE_FLOOR = 0,
     BUBBLE_ENGINE_PARAM_TRACKING_THRESH = 1,
     BUBBLE_ENGINE_PARAM_SUSTAIN_THRESH = 2,
@@ -93,8 +128,25 @@ typedef enum {
     BUBBLE_ENGINE_PARAM_RUNTIME_PEAK_R = 1004,
     BUBBLE_ENGINE_PARAM_RUNTIME_CLIP_COUNT = 1005,
     BUBBLE_ENGINE_PARAM_RUNTIME_LIMITER_GAIN = 1006
-} BubbleEngineParameterId_t;
+} BubbleParameterId;
 
+typedef BubbleParameterId BubbleEngineParameterId_t;
+
+typedef struct BubbleParameterInfo {
+    BubbleParameterId id;
+    const char* name;
+    float min_value;
+    float max_value;
+    float default_value;
+    BubbleParameterCurve curve;
+    const char* unit;
+    uint32_t flags;
+} BubbleParameterInfo;
+
+
+extern const BubbleParameterInfo BUBBLE_PARAMETER_INFO[];
+extern const int BUBBLE_PARAMETER_INFO_COUNT;
+const BubbleParameterInfo* bubble_engine_get_parameter_info(BubbleParameterId parameter);
 void bubble_engine_default_config(BubbleEngineConfig_t* config);
 void bubble_engine_init(BubbleEngine_t* engine, int16_t* delay_buffer_memory, const BubbleEngineConfig_t* initial_config);
 void bubble_engine_reset(BubbleEngine_t* engine);

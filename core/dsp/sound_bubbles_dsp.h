@@ -272,6 +272,13 @@ typedef struct {
     float master_dry_gain;
     float master_wet_gain;
 
+    // Product-facing macro state. Targets are written by bubble_engine_set_parameter();
+    // current values are slewed at control-rate before being mapped to raw DSP fields.
+    float macro_values[12];
+    float macro_targets[12];
+    uint32_t macro_dirty_mask;
+    int32_t developer_mode;
+
     // MCU-safe no-lookahead final limiter state and block telemetry accumulators.
     float final_limiter_gain;
     float final_limiter_ceiling_linear;

@@ -155,6 +155,16 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
 
     engine->master_dry_gain = 1.0f;
     engine->master_wet_gain = 1.0f;
+    for (int i = 0; i < 12; i++) {
+        engine->macro_values[i] = 0.5f;
+        engine->macro_targets[i] = 0.5f;
+    }
+    engine->macro_values[8] = 0.0f;
+    engine->macro_targets[8] = 0.0f;
+    engine->macro_values[9] = 0.0f;
+    engine->macro_targets[9] = 0.0f;
+    engine->macro_dirty_mask = 0u;
+    engine->developer_mode = 0;
     engine->final_limiter_gain = 1.0f;
     engine->final_limiter_ceiling_linear = 1.0f;
     engine->final_limiter_release_coef = 0.0f;
