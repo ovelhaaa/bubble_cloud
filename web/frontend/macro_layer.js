@@ -1,36 +1,30 @@
 (function initMacroLayer(global) {
-  const MATRIX_CANDIDATE_PATHS = Object.freeze([
-    '../../docs/macro_matrix.yaml',
-    '/docs/macro_matrix.yaml',
-    'docs/macro_matrix.yaml',
-    'macro_matrix.yaml',
-  ]);
+  const EMBEDDED_FALLBACK_MATRIX = Object.freeze({
+    neutral_macro_value: 0.5,
+    application: {
+      global_order: ['density', 'bloom', 'motion', 'texture', 'space', 'gravity', 'memory', 'clarity', 'freeze', 'sparkle', 'warmth', 'mix'],
+    },
+    macros: {},
+    performance_ranges: {},
+    canonical_presets: [],
+  });
 
   function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
   }
 
-  function parseMacroMatrix(text) {
-    const source = String(text || '').trim();
-    if (!source) throw new Error('macro_matrix.yaml está vazio.');
+  function parseMacroMatrix(input) {
+    if (input && typeof input === 'object') return input;
+    const source = String(input || '').trim();
+    if (!source) throw new Error('macro_matrix está vazio.');
     return JSON.parse(source);
   }
 
-  function fetchMatrixTextSync() {
-    for (let i = 0; i < MATRIX_CANDIDATE_PATHS.length; i += 1) {
-      const path = MATRIX_CANDIDATE_PATHS[i];
-      try {
-        const request = new XMLHttpRequest();
-        request.open('GET', path, false);
-        request.send(null);
-        if (request.status >= 200 && request.status < 300 && request.responseText) {
-          return request.responseText;
-        }
-      } catch (_error) {
-        // tenta próximo caminho
-      }
+  function loadMacroMatrix() {
+    if (global.BubbleCloudMacroMatrix && typeof global.BubbleCloudMacroMatrix === 'object') {
+      return global.BubbleCloudMacroMatrix;
     }
-    throw new Error('Não foi possível carregar docs/macro_matrix.yaml.');
+    return EMBEDDED_FALLBACK_MATRIX;
   }
 
   function buildMatrixConfig(rawMatrix) {
@@ -171,16 +165,10 @@
 
   let matrixConfig;
   try {
-    matrixConfig = buildMatrixConfig(parseMacroMatrix(fetchMatrixTextSync()));
+    matrixConfig = buildMatrixConfig(parseMacroMatrix(loadMacroMatrix()));
   } catch (error) {
-    console.warn('[MacroLayer] fallback para configuração vazia:', error);
-    matrixConfig = buildMatrixConfig({
-      neutral_macro_value: 0.5,
-      application: { global_order: ['density', 'bloom', 'motion', 'texture', 'space', 'gravity', 'memory', 'clarity', 'freeze', 'sparkle', 'warmth', 'mix'] },
-      macros: {},
-      performance_ranges: {},
-      canonical_presets: [],
-    });
+    console.warn('[MacroLayer] fallback para configuração local embutida:', error);
+    matrixConfig = buildMatrixConfig(EMBEDDED_FALLBACK_MATRIX);
   }
 
   function createNeutralMacroValues() {
@@ -276,4 +264,4 @@
     normalizeMacroValues,
     applyMacroPipeline,
   };
-})(window);
+})(typeof globalThis !== 'undefined' ? globalThis : window);
