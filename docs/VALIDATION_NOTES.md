@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`platform/offline/sound_bubbles_render` now supports lightweight parity validation with:
+`build/sound_bubbles_render` now supports lightweight parity validation with:
 
 - Per-control-block metrics exported via `SoundBubbles_SetMetricsCallback`.
 - Output-energy summaries per block (RMS + peak for left/right).
@@ -26,22 +26,25 @@ When `--metrics-out` is supplied, the renderer writes CSV rows with:
 
 ## Typical workflow
 
+Build the renderer with `make offline` first; the binary is emitted under `build/` so the source tree does not receive versioned build artifacts.
+
+
 1. Generate the **reference** render + metrics:
 
    ```bash
-   ./platform/offline/sound_bubbles_render in.wav preset.json ref.wav --metrics-out ref_metrics.csv --repro-check
+   ./build/sound_bubbles_render in.wav preset.json ref.wav --metrics-out ref_metrics.csv --repro-check
    ```
 
 2. Generate the **candidate** render + metrics:
 
    ```bash
-   ./platform/offline/sound_bubbles_render in.wav preset.json cand.wav --metrics-out cand_metrics.csv --repro-check
+   ./build/sound_bubbles_render in.wav preset.json cand.wav --metrics-out cand_metrics.csv --repro-check
    ```
 
 3. Compare metrics:
 
    ```bash
-   ./platform/offline/sound_bubbles_render compare ref_metrics.csv cand_metrics.csv --max-threshold 1e-6 --mean-threshold 1e-7
+   ./build/sound_bubbles_render compare ref_metrics.csv cand_metrics.csv --max-threshold 1e-6 --mean-threshold 1e-7
    ```
 
 ## Threshold guidance
