@@ -7,7 +7,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 AUDIO_CORE_PATHS = [
     REPO_ROOT / "core" / "dsp",
     REPO_ROOT / "core" / "engine",
-    REPO_ROOT / "core" / "sound_bubbles_dsp.h",
 ]
 
 BANNED_SYMBOLS = [

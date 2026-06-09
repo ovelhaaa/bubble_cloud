@@ -147,7 +147,7 @@ const missing = [
 ];
 if (missing.length > 0) {
   console.error(`WASM module is stale or missing test exports: ${missing.join(', ')}. Rebuild with make wasm.`);
-  process.exit(77);
+  process.exit(1);
 }
 const wasmInit = module.cwrap('wasm_init', null, []);
 const wasmReset = module.cwrap('wasm_reset', null, []);
@@ -165,10 +165,35 @@ const getLimiterGain = module.cwrap('wasm_get_limiter_gain', 'number', []);
 
 wasmInit();
 const preset = JSON.parse(fs.readFileSync(presetPath, 'utf8'));
+const updates = {};
 for (const [key, paramId] of Object.entries(PARAMS)) {
-  if (Object.prototype.hasOwnProperty.call(preset, key)) {
-    wasmSetParam(paramId, Number(preset[key]));
+  let value = preset[key];
+  if (value === undefined) {
+    if (key === 'mix_dry_gain') value = preset.master_dry_gain;
+    else if (key === 'mix_wet_gain') value = preset.master_wet_gain;
+    else if (key === 'attack_region_min_offset_samples') value = preset.micro_offset_samples;
+    else if (key === 'attack_region_max_offset_samples') {
+      value = (preset.micro_offset_samples ?? 441) + (preset.micro_jitter_samples ?? 3087);
+    }
+    else if (key === 'body_region_min_offset_samples') value = preset.short_offset_samples;
+    else if (key === 'body_region_max_offset_samples') {
+      value = (preset.short_offset_samples ?? 3528) + (preset.short_jitter_samples ?? 7497);
+    }
+    else if (key === 'memory_region_min_offset_samples') value = preset.body_offset_samples;
+    else if (key === 'memory_region_max_offset_samples') {
+      value = (preset.body_offset_samples ?? 11025) + (preset.body_jitter_samples ?? 28665);
+    }
   }
+  if (value !== undefined) {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) {
+      throw new Error(`Preset parameter ${key} must be finite, got ${value}`);
+    }
+    updates[paramId] = numericValue;
+  }
+}
+for (const [paramId, value] of Object.entries(updates)) {
+  wasmSetParam(Number(paramId), value);
 }
 wasmReset();
 

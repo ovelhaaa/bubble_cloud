@@ -65,7 +65,7 @@ def test_offline_c_and_wasm_metrics_match_with_defined_tolerance(tmp_path: Path)
     if shutil.which("node") is None:
         pytest.skip("Node.js is required to execute the generated WASM module")
     if not WASM_MODULE.exists():
-        pytest.skip("WASM module is not built; run `make wasm` in an Emscripten environment")
+        pytest.fail("WASM module is not built; run `make wasm` before running parity tests")
 
     renderer = _build_renderer(tmp_path)
     fixture = write_core_parity_fixture(tmp_path / "core_parity_fixture.wav")
@@ -82,14 +82,18 @@ def test_offline_c_and_wasm_metrics_match_with_defined_tolerance(tmp_path: Path)
         text=True,
         capture_output=True,
     )
-    if wasm_run.returncode == 77:
-        pytest.skip(wasm_run.stderr.strip())
     if wasm_run.returncode != 0:
-        raise subprocess.CalledProcessError(wasm_run.returncode, wasm_run.args, output=wasm_run.stdout, stderr=wasm_run.stderr)
+        pytest.fail(
+            "WASM parity runner failed; rebuild web/frontend/bubble_cloud_wasm.js with `make wasm` "
+            "when exports are stale or missing.\n"
+            f"stdout:\n{wasm_run.stdout}\n"
+            f"stderr:\n{wasm_run.stderr}"
+        )
 
     offline_rows = _read_metrics(offline_metrics)
     wasm_rows = _read_metrics(wasm_metrics)
     assert len(offline_rows) == len(wasm_rows)
+    assert len(offline_rows) > 0, "No metrics rows were parsed from the C or WASM runs."
 
     failures: list[str] = []
     for column in COMMON_COLUMNS:
