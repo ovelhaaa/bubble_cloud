@@ -11,12 +11,17 @@ offline: platform/offline/sound_bubbles_render
 platform/offline/sound_bubbles_render: platform/offline/sound_bubbles_render.c core/engine/bubble_engine.c core/dsp/sound_bubbles_dsp.c
 	$(CC) $^ $(CFLAGS) -o $@
 
-wasm: web/frontend/bubble_cloud_wasm.js
+wasm: macro-matrix web/frontend/bubble_cloud_wasm.js
+
+macro-matrix: web/frontend/macro_matrix.js
+
+web/frontend/macro_matrix.js: docs/macro_matrix.yaml scripts/generate_macro_matrix_js.py
+	python3 scripts/generate_macro_matrix_js.py --source docs/macro_matrix.yaml --output web/frontend/macro_matrix.js
 
 web/frontend/bubble_cloud_wasm.js: web/wasm/bubble_cloud_wasm.c core/engine/bubble_engine.c core/dsp/sound_bubbles_dsp.c
 	$(EMCC) $^ $(EMCC_FLAGS) -o $@
 
 clean:
-	rm -f platform/offline/sound_bubbles_render web/frontend/bubble_cloud_wasm.js
+	rm -f platform/offline/sound_bubbles_render web/frontend/bubble_cloud_wasm.js web/frontend/macro_matrix.js
 
-.PHONY: all offline wasm clean
+.PHONY: all offline wasm macro-matrix clean
