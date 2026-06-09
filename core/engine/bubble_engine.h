@@ -51,7 +51,7 @@ typedef enum BubbleParameterId {
     BUBBLE_PARAM_SPARKLE = 2009,
     BUBBLE_PARAM_WARMTH = 2010,
     BUBBLE_PARAM_MIX = 2011,
-    BUBBLE_PARAM_MACRO_COUNT = 12,
+    BUBBLE_PARAM_MACRO_COUNT = BUBBLES_MACRO_COUNT,
 
     /* Developer/debug switch. Raw DSP parameters below are readable only while enabled. */
     BUBBLE_PARAM_DEVELOPER_MODE = 2999,

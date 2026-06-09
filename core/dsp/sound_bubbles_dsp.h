@@ -15,6 +15,7 @@
 #define SCHED_MAX_SPAWNS_PER_TICK 3
 #define BUBBLES_PENDING_SPAWN_CAPACITY 4
 #define BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY 96
+#define BUBBLES_MACRO_COUNT 12
 
 // --- Enums ---
 
@@ -274,8 +275,8 @@ typedef struct {
 
     // Product-facing macro state. Targets are written by bubble_engine_set_parameter();
     // current values are slewed at control-rate before being mapped to raw DSP fields.
-    float macro_values[12];
-    float macro_targets[12];
+    float macro_values[BUBBLES_MACRO_COUNT];
+    float macro_targets[BUBBLES_MACRO_COUNT];
     uint32_t macro_dirty_mask;
     int32_t developer_mode;
 

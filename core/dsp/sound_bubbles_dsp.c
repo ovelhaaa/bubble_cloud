@@ -155,7 +155,7 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
 
     engine->master_dry_gain = 1.0f;
     engine->master_wet_gain = 1.0f;
-    for (int i = 0; i < 12; i++) {
+    for (int i = 0; i < BUBBLES_MACRO_COUNT; i++) {
         engine->macro_values[i] = 0.5f;
         engine->macro_targets[i] = 0.5f;
     }

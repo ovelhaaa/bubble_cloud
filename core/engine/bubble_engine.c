@@ -479,13 +479,8 @@ bool bubble_engine_get_parameter(const BubbleEngine_t* engine, BubbleEngineParam
         return true;
     }
 
-    if (!engine->developer_mode) {
-        BubbleParameterId owner = MacroForDeveloperParameter(parameter);
-        int owner_index = MacroIndex(owner);
-        if (owner_index >= 0) {
-            *value = engine->macro_targets[owner_index];
-            return true;
-        }
+    if (!engine->developer_mode && MacroIndex(MacroForDeveloperParameter(parameter)) >= 0) {
+        return false;
     }
 
     const BubbleEngineConfig_t* config = &engine->config;
