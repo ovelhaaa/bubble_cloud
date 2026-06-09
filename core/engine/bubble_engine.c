@@ -59,6 +59,8 @@ void bubble_engine_default_config(BubbleEngineConfig_t* config) {
     config->wet_drive = 1.0f;
     config->wet_clip_amount = 0.2f;
     config->wet_output_trim = 1.0f;
+    config->final_limiter_ceiling_db = -1.0f;
+    config->final_limiter_release_ms = 50.0f;
     config->sustain_diffusion_enable = 0;
     config->sustain_diffusion_amount = 0.35f;
     config->sustain_diffusion_stages = 1;
@@ -205,6 +207,8 @@ bool bubble_engine_set_parameter(BubbleEngine_t* engine, BubbleEngineParameterId
         case BUBBLE_ENGINE_PARAM_REVERSE_PROBABILITY: config.reverse_probability = value; break;
         case BUBBLE_ENGINE_PARAM_PITCH_MODE: config.pitch_mode = (int32_t)value; break;
         case BUBBLE_ENGINE_PARAM_SHIMMER_AMOUNT: config.shimmer_amount = value; break;
+        case BUBBLE_ENGINE_PARAM_FINAL_LIMITER_CEILING_DB: config.final_limiter_ceiling_db = value; break;
+        case BUBBLE_ENGINE_PARAM_FINAL_LIMITER_RELEASE_MS: config.final_limiter_release_ms = value; break;
         case BUBBLE_ENGINE_PARAM_QUALITY_PROFILE:
             return bubble_engine_set_quality_profile(engine, (BubbleQualityProfile)((int32_t)value));
         case BUBBLE_ENGINE_PARAM_ACTIVE_VOICE_LIMIT: config.active_voice_limit = (int32_t)value; break;
@@ -283,11 +287,17 @@ bool bubble_engine_get_parameter(const BubbleEngine_t* engine, BubbleEngineParam
         case BUBBLE_ENGINE_PARAM_REVERSE_PROBABILITY: *value = config->reverse_probability; break;
         case BUBBLE_ENGINE_PARAM_PITCH_MODE: *value = (float)config->pitch_mode; break;
         case BUBBLE_ENGINE_PARAM_SHIMMER_AMOUNT: *value = config->shimmer_amount; break;
+        case BUBBLE_ENGINE_PARAM_FINAL_LIMITER_CEILING_DB: *value = config->final_limiter_ceiling_db; break;
+        case BUBBLE_ENGINE_PARAM_FINAL_LIMITER_RELEASE_MS: *value = config->final_limiter_release_ms; break;
         case BUBBLE_ENGINE_PARAM_QUALITY_PROFILE: *value = (float)config->quality_profile; break;
         case BUBBLE_ENGINE_PARAM_ACTIVE_VOICE_LIMIT: *value = (float)config->active_voice_limit; break;
         case BUBBLE_ENGINE_PARAM_RUNTIME_ENVELOPE: *value = engine->env_follower_state; break;
         case BUBBLE_ENGINE_PARAM_RUNTIME_STATE: *value = (float)engine->engine_state; break;
         case BUBBLE_ENGINE_PARAM_RUNTIME_ACTIVE_VOICES: *value = (float)CountActiveVoices(engine); break;
+        case BUBBLE_ENGINE_PARAM_RUNTIME_PEAK_L: *value = engine->metrics_last_block.peak_l; break;
+        case BUBBLE_ENGINE_PARAM_RUNTIME_PEAK_R: *value = engine->metrics_last_block.peak_r; break;
+        case BUBBLE_ENGINE_PARAM_RUNTIME_CLIP_COUNT: *value = (float)engine->metrics_last_block.clip_count; break;
+        case BUBBLE_ENGINE_PARAM_RUNTIME_LIMITER_GAIN: *value = engine->metrics_last_block.limiter_gain; break;
         default: return false;
     }
 

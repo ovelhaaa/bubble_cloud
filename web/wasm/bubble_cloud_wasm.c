@@ -81,3 +81,31 @@ int wasm_get_active_voices() {
     (void)bubble_engine_get_parameter(&engine, BUBBLE_ENGINE_PARAM_RUNTIME_ACTIVE_VOICES, &value);
     return (int)value;
 }
+
+EMSCRIPTEN_KEEPALIVE
+float wasm_get_peak_l() {
+    float value = 0.0f;
+    (void)bubble_engine_get_parameter(&engine, BUBBLE_ENGINE_PARAM_RUNTIME_PEAK_L, &value);
+    return value;
+}
+
+EMSCRIPTEN_KEEPALIVE
+float wasm_get_peak_r() {
+    float value = 0.0f;
+    (void)bubble_engine_get_parameter(&engine, BUBBLE_ENGINE_PARAM_RUNTIME_PEAK_R, &value);
+    return value;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int wasm_get_clip_count() {
+    float value = 0.0f;
+    (void)bubble_engine_get_parameter(&engine, BUBBLE_ENGINE_PARAM_RUNTIME_CLIP_COUNT, &value);
+    return (int)value;
+}
+
+EMSCRIPTEN_KEEPALIVE
+float wasm_get_limiter_gain() {
+    float value = 1.0f;
+    (void)bubble_engine_get_parameter(&engine, BUBBLE_ENGINE_PARAM_RUNTIME_LIMITER_GAIN, &value);
+    return value;
+}

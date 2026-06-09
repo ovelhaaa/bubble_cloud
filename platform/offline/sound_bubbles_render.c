@@ -173,6 +173,12 @@ static void ValidateConfig(const EngineConfig_t* config, float master_dry, float
     if (!isfinite(master_dry) || master_dry < 0.0f || !isfinite(master_wet) || master_wet < 0.0f) {
         ErrorExit("Preset validation failed: master_dry and master_wet must be finite and >= 0.");
     }
+    if (!isfinite(config->final_limiter_ceiling_db) || config->final_limiter_ceiling_db < -24.0f || config->final_limiter_ceiling_db > 0.0f) {
+        ErrorExit("Preset validation failed: final_limiter_ceiling_db must be finite and between -24 and 0 dBFS.");
+    }
+    if (!isfinite(config->final_limiter_release_ms) || config->final_limiter_release_ms < 5.0f || config->final_limiter_release_ms > 500.0f) {
+        ErrorExit("Preset validation failed: final_limiter_release_ms must be finite and between 5 and 500 ms.");
+    }
     if (config->active_voice_limit < 1 || config->active_voice_limit > BUBBLE_ENGINE_MAX_VOICES) {
         ErrorExit("Preset validation failed: active_voice_limit is outside the compiled voice pool.");
     }
@@ -196,6 +202,10 @@ typedef struct {
     float out_rms_r;
     float out_peak_l;
     float out_peak_r;
+    float peak_l;
+    float peak_r;
+    int32_t clip_count;
+    float limiter_gain;
 } MetricRow_t;
 
 typedef struct {
@@ -242,6 +252,10 @@ static uint64_t HashMetricRow(uint64_t hash, const MetricRow_t* row) {
     hash = Fnv1a64UpdateF32(hash, row->out_rms_r);
     hash = Fnv1a64UpdateF32(hash, row->out_peak_l);
     hash = Fnv1a64UpdateF32(hash, row->out_peak_r);
+    hash = Fnv1a64UpdateF32(hash, row->peak_l);
+    hash = Fnv1a64UpdateF32(hash, row->peak_r);
+    hash = Fnv1a64UpdateI32(hash, row->clip_count);
+    hash = Fnv1a64UpdateF32(hash, row->limiter_gain);
     return hash;
 }
 
@@ -276,7 +290,7 @@ static FILE* OpenMetricsLog(const char* metrics_file) {
     if (!f) {
         ErrorExit("Failed to open metrics output file.");
     }
-    fprintf(f, "block,spawn_count,active_voices,engine_state,ducking_gain,envelope,out_rms_l,out_rms_r,out_peak_l,out_peak_r\n");
+    fprintf(f, "block,spawn_count,active_voices,engine_state,ducking_gain,envelope,out_rms_l,out_rms_r,out_peak_l,out_peak_r,peak_l,peak_r,clip_count,limiter_gain\n");
     return f;
 }
 
@@ -573,6 +587,8 @@ static void LoadPreset(const char* filename, EngineConfig_t* config, float* mast
     config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_max = GetJsonFloat(json_str, "body_duration_ms_max", 200.0f);
     config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].window_type = WINDOW_TYPE_TUKEY_LIKE;
 
+    config->final_limiter_ceiling_db = GetJsonFloat(json_str, "final_limiter_ceiling_db", -1.0f);
+    config->final_limiter_release_ms = GetJsonFloat(json_str, "final_limiter_release_ms", 50.0f);
     config->active_voice_limit = GetJsonInt(json_str, "active_voice_limit", config->active_voice_limit);
 
     // Canonical mix keys with legacy fallback.
@@ -621,12 +637,16 @@ static MetricsDigest_t RenderWithMetrics(const EngineConfig_t* config, float mas
         row.engine_state = metrics_state.last_control_metrics.engine_state;
         row.ducking_gain = metrics_state.last_control_metrics.ducking_gain;
         row.envelope = metrics_state.last_control_metrics.envelope;
+        row.peak_l = metrics_state.last_control_metrics.peak_l;
+        row.peak_r = metrics_state.last_control_metrics.peak_r;
+        row.clip_count = metrics_state.last_control_metrics.clip_count;
+        row.limiter_gain = metrics_state.last_control_metrics.limiter_gain;
         ComputeOutputEnergy(&out_left[processed - chunk], &out_right[processed - chunk], chunk, &row.out_rms_l, &row.out_rms_r, &row.out_peak_l, &row.out_peak_r);
         digest.hash = HashMetricRow(digest.hash, &row);
         digest.block_count++;
 
         if (metrics_log != NULL) {
-            fprintf(metrics_log, "%u,%d,%d,%d,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g\n",
+            fprintf(metrics_log, "%u,%d,%d,%d,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%d,%.9g\n",
                 row.block_index,
                 row.spawn_count,
                 row.active_voices,
@@ -636,7 +656,11 @@ static MetricsDigest_t RenderWithMetrics(const EngineConfig_t* config, float mas
                 row.out_rms_l,
                 row.out_rms_r,
                 row.out_peak_l,
-                row.out_peak_r);
+                row.out_peak_r,
+                row.peak_l,
+                row.peak_r,
+                row.clip_count,
+                row.limiter_gain);
         }
     }
 
@@ -661,11 +685,12 @@ static void CompareMetricsFiles(const char* ref_file, const char* cand_file, dou
         ErrorExit("Metrics files must include a header row.");
     }
 
-    double totals[9] = {0};
-    double maxes[9] = {0};
-    const char* labels[9] = {
+    double totals[13] = {0};
+    double maxes[13] = {0};
+    const char* labels[13] = {
         "spawn_count", "active_voices", "engine_state", "ducking_gain", "envelope",
-        "out_rms_l", "out_rms_r", "out_peak_l", "out_peak_r"
+        "out_rms_l", "out_rms_r", "out_peak_l", "out_peak_r",
+        "peak_l", "peak_r", "clip_count", "limiter_gain"
     };
     uint32_t rows = 0;
 
@@ -681,13 +706,13 @@ static void CompareMetricsFiles(const char* ref_file, const char* cand_file, dou
 
         unsigned int block_ref = 0;
         unsigned int block_cand = 0;
-        double ref_vals[9] = {0};
-        double cand_vals[9] = {0};
-        int ref_fields = sscanf(ref_line, "%u,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf",
-            &block_ref, &ref_vals[0], &ref_vals[1], &ref_vals[2], &ref_vals[3], &ref_vals[4], &ref_vals[5], &ref_vals[6], &ref_vals[7], &ref_vals[8]);
-        int cand_fields = sscanf(cand_line, "%u,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf",
-            &block_cand, &cand_vals[0], &cand_vals[1], &cand_vals[2], &cand_vals[3], &cand_vals[4], &cand_vals[5], &cand_vals[6], &cand_vals[7], &cand_vals[8]);
-        if (ref_fields != 10 || cand_fields != 10) {
+        double ref_vals[13] = {0};
+        double cand_vals[13] = {0};
+        int ref_fields = sscanf(ref_line, "%u,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf",
+            &block_ref, &ref_vals[0], &ref_vals[1], &ref_vals[2], &ref_vals[3], &ref_vals[4], &ref_vals[5], &ref_vals[6], &ref_vals[7], &ref_vals[8], &ref_vals[9], &ref_vals[10], &ref_vals[11], &ref_vals[12]);
+        int cand_fields = sscanf(cand_line, "%u,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf",
+            &block_cand, &cand_vals[0], &cand_vals[1], &cand_vals[2], &cand_vals[3], &cand_vals[4], &cand_vals[5], &cand_vals[6], &cand_vals[7], &cand_vals[8], &cand_vals[9], &cand_vals[10], &cand_vals[11], &cand_vals[12]);
+        if (ref_fields != cand_fields || (ref_fields != 10 && ref_fields != 14)) {
             fclose(ref);
             fclose(cand);
             ErrorExit("Invalid metrics CSV row format.");
@@ -698,7 +723,7 @@ static void CompareMetricsFiles(const char* ref_file, const char* cand_file, dou
             ErrorExit("Metrics block indices are misaligned.");
         }
 
-        for (int i = 0; i < 9; ++i) {
+        for (int i = 0; i < 13; ++i) {
             double d = fabs(ref_vals[i] - cand_vals[i]);
             totals[i] += d;
             if (d > maxes[i]) maxes[i] = d;
@@ -715,7 +740,7 @@ static void CompareMetricsFiles(const char* ref_file, const char* cand_file, dou
 
     bool pass = true;
     printf("Metric deltas for %u blocks:\n", rows);
-    for (int i = 0; i < 9; ++i) {
+    for (int i = 0; i < 13; ++i) {
         double mean = totals[i] / (double)rows;
         printf("  %-14s max=%.9g mean=%.9g\n", labels[i], maxes[i], mean);
         if (maxes[i] > max_threshold || mean > mean_threshold) {

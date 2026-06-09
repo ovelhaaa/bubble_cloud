@@ -996,6 +996,9 @@ a:hover { color: var(--primary-dark); text-decoration: underline; }
   color: var(--text);
   font-family: monospace;
 }
+.metric-box-clip {
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.6);
+}
 .macro-health-grid {
   display: grid;
   gap: 0.75rem;
@@ -1023,6 +1026,9 @@ a:hover { color: var(--primary-dark); text-decoration: underline; }
 .health-meter.is-na {
   background: rgba(148, 163, 184, 0.35);
 }
+.health-meter.is-clip .health-fill {
+  background: linear-gradient(90deg, #f59e0b, #ef4444);
+}
 .health-fill {
   display: block;
   height: 100%;
@@ -1035,6 +1041,9 @@ a:hover { color: var(--primary-dark); text-decoration: underline; }
 }
 .indicator-live {
   color: var(--text);
+}
+.indicator-clip {
+  color: var(--danger);
 }
 .state-transition {
   margin-top: 0.85rem;
