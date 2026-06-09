@@ -1,5 +1,8 @@
 CC = gcc
 CFLAGS = -O2 -Wall -Wextra -std=c11 -lm -Icore -Icore/dsp
+BUILD_DIR ?= build
+OFFLINE_RENDERER ?= $(BUILD_DIR)/sound_bubbles_render
+WASM_OUT ?= web/frontend/bubble_cloud_wasm.js
 
 EMCC = emcc
 EMCC_FLAGS = -O3 -Wall -s WASM=1 -s EXPORTED_RUNTIME_METHODS='["cwrap","HEAP8","HEAPU8","HEAPF32"]' -s EXPORTED_FUNCTIONS='["_wasm_init", "_wasm_reset", "_wasm_process", "_wasm_set_param", "_wasm_set_quality_profile", "_wasm_get_active_voice_limit", "_wasm_alloc", "_wasm_free", "_wasm_get_envelope", "_wasm_get_state", "_wasm_get_active_voices", "_wasm_get_peak_l", "_wasm_get_peak_r", "_wasm_get_clip_count", "_wasm_get_limiter_gain"]' -s ALLOW_MEMORY_GROWTH=1 -s NO_EXIT_RUNTIME=1 -s MODULARIZE=1 -s EXPORT_ES6=1 -s SINGLE_FILE=1 -s ENVIRONMENT='web,worker,worklet' -Icore -Icore/dsp
@@ -10,17 +13,27 @@ WASM_SRCS = web/wasm/bubble_cloud_wasm.c core/presets/bubble_preset.c core/engin
 
 all: offline wasm
 
-offline: platform/offline/sound_bubbles_render
+offline: $(OFFLINE_RENDERER)
 
-platform/offline/sound_bubbles_render: $(OFFLINE_SRCS) $(PRESET_HEADERS)
+$(OFFLINE_RENDERER): $(OFFLINE_SRCS) $(PRESET_HEADERS)
+	mkdir -p $(dir $@)
 	$(CC) $(OFFLINE_SRCS) $(CFLAGS) -o $@
 
-wasm: web/frontend/bubble_cloud_wasm.js
+wasm: macro-matrix $(WASM_OUT)
 
-web/frontend/bubble_cloud_wasm.js: $(WASM_SRCS) $(PRESET_HEADERS)
+macro-matrix: web/frontend/macro_matrix.js
+
+web/frontend/macro_matrix.js: docs/macro_matrix.yaml scripts/generate_macro_matrix_js.py
+	python3 scripts/generate_macro_matrix_js.py --source docs/macro_matrix.yaml --output web/frontend/macro_matrix.js
+
+$(WASM_OUT): $(WASM_SRCS) $(PRESET_HEADERS)
+	mkdir -p $(dir $@)
 	$(EMCC) $(WASM_SRCS) $(EMCC_FLAGS) -o $@
 
 clean:
-	rm -f platform/offline/sound_bubbles_render web/frontend/bubble_cloud_wasm.js
+ifneq ($(strip $(BUILD_DIR)),)
+	rm -rf $(BUILD_DIR)
+endif
+	rm -f platform/offline/sound_bubbles_render platform/offline/sound_bubbles_synth web/frontend/bubble_cloud_wasm.js web/frontend/macro_matrix.js
 
-.PHONY: all offline wasm clean
+.PHONY: all offline wasm macro-matrix clean

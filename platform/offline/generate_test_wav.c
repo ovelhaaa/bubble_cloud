@@ -188,9 +188,17 @@ int main() {
     // 8. Final silence (2s)
     current_sample += 2 * SAMPLE_RATE; // Leaves buffer empty at end
 
-    write_wav("sample/test_in.wav", buffer, current_sample); // Write exact duration ~ 28 seconds
+    write_wav("tests/fixtures/audio/test_in.wav", buffer, current_sample); // Write exact duration ~ 28 seconds
+
+    FILE* f_check = fopen("tests/fixtures/audio/test_in.wav", "rb");
+    if (!f_check) {
+        fprintf(stderr, "Error: WAV file was not successfully written.\n");
+        free(buffer);
+        return EXIT_FAILURE;
+    }
+    fclose(f_check);
 
     free(buffer);
-    printf("Successfully generated sample/test_in.wav (%d samples, %.2f seconds)\n", current_sample, (float)current_sample / SAMPLE_RATE);
-    return 0;
+    printf("Successfully generated tests/fixtures/audio/test_in.wav (%d samples, %.2f seconds)\n", current_sample, (float)current_sample / SAMPLE_RATE);
+    return EXIT_SUCCESS;
 }

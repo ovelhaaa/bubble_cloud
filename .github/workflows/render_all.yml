@@ -6,18 +6,19 @@ on:
       input_file:
         description: 'Input WAV file path'
         required: true
-        default: 'sample/test_in.wav'
+        default: 'tests/fixtures/audio/test_in.wav'
         type: choice
         options:
-          - 'sample/test_in.wav'
-          - 'sample/chords.wav'
-          - 'sample/liecio-guitar-chord-sequence-to-make-a-beat-258061.wav'
-          - 'sample/farran_ez-soft-indie-guitar-sample-456142.wav'
-          - 'sample/freesound_community-electric-guitar-phrase-38142.wav'
-          - 'sample/freesound_community-guitar-103460.wav'
-          - 'sample/freesound_community-spanish-guitar-loop-17221 (1).wav'
-          - 'sample/ncone-bgm-blues-guitar-loop-192099.wav'
-          - 'sample/u_1aiqn32afi-clean-country-lick-bend-289052.wav'
+          - 'tests/fixtures/audio/test_in.wav'
+          - 'tests/fixtures/audio/test_in_short.wav'
+          - 'tests/fixtures/audio/groove_7.wav'
+          - 'tests/fixtures/audio/liecio-guitar-chord-sequence-to-make-a-beat-258061.wav'
+          - 'tests/fixtures/audio/farran_ez-soft-indie-guitar-sample-456142.wav'
+          - 'tests/fixtures/audio/freesound_community-electric-guitar-phrase-38142.wav'
+          - 'tests/fixtures/audio/freesound_community-guitar-103460.wav'
+          - 'tests/fixtures/audio/freesound_community-spanish-guitar-loop-17221.wav'
+          - 'tests/fixtures/audio/ncone-bgm-blues-guitar-loop-192099.wav'
+          - 'tests/fixtures/audio/u_1aiqn32afi-clean-country-lick-bend-289052.wav'
   push:
     paths:
       - 'core/engine/bubble_engine.c'
@@ -27,7 +28,7 @@ on:
       - 'core/sound_bubbles_dsp.h'
       - 'platform/offline/sound_bubbles_render.c'
       - 'presets/*.json'
-      - 'sample/*.wav'
+      - 'tests/fixtures/audio/*.wav'
       - '.github/workflows/render_all.yml'
 
 jobs:
@@ -43,7 +44,7 @@ jobs:
           INPUT_FILE="${{ github.event.inputs.input_file }}"
 
           if [ -z "$INPUT_FILE" ]; then
-            INPUT_FILE="sample/test_in.wav"
+            INPUT_FILE="tests/fixtures/audio/test_in.wav"
           fi
 
           INPUT_BASE="$(basename "$INPUT_FILE" .wav)"
@@ -84,16 +85,19 @@ jobs:
           echo "Found $PRESET_COUNT preset(s):"
           ls -lh presets/*.json
           echo "Sample files:"
-          ls -lh sample || true
+          ls -lh tests/fixtures/audio || true
 
       - name: Compile Offline Renderer
         run: |
-          gcc platform/offline/sound_bubbles_render.c core/engine/bubble_engine.c core/dsp/sound_bubbles_dsp.c -O2 -Wall -Wextra -std=c11 -lm -Icore -Icore/dsp -o platform/offline/sound_bubbles_render
+          mkdir -p "$RUNNER_TEMP/bin"
+          gcc platform/offline/sound_bubbles_render.c core/engine/bubble_engine.c core/dsp/sound_bubbles_dsp.c -O2 -Wall -Wextra -std=c11 -lm -Icore -Icore/dsp -o "$RUNNER_TEMP/bin/sound_bubbles_render"
 
       - name: Render All Presets
         run: |
-          rm -rf renders
-          mkdir -p renders
+          RENDER_DIR="$RUNNER_TEMP/renders"
+          rm -rf "$RENDER_DIR"
+          mkdir -p "$RENDER_DIR"
+          echo "RENDER_DIR=$RENDER_DIR" >> "$GITHUB_ENV"
 
           echo "Selected input file: $input_file"
           echo "Input basename: $INPUT_BASE"
@@ -102,14 +106,14 @@ jobs:
             [ -f "$preset" ] || continue
 
             PRESET_BASE="$(basename "$preset" .json)"
-            OUTPUT_FILE="renders/${INPUT_BASE}__${PRESET_BASE}.wav"
+            OUTPUT_FILE="$RENDER_DIR/${INPUT_BASE}__${PRESET_BASE}.wav"
 
             echo "Rendering:"
             echo "  input  = $input_file"
             echo "  preset = $preset"
             echo "  output = $OUTPUT_FILE"
 
-            ./platform/offline/sound_bubbles_render "$input_file" "$preset" "$OUTPUT_FILE"
+            "$RUNNER_TEMP/bin/sound_bubbles_render" "$input_file" "$preset" "$OUTPUT_FILE"
 
             if [ ! -f "$OUTPUT_FILE" ]; then
               echo "Error: Failed to generate '$OUTPUT_FILE'"
@@ -119,17 +123,17 @@ jobs:
 
       - name: Verify Outputs
         run: |
-          OUTPUT_COUNT=$(find renders -maxdepth 1 -name '*.wav' | wc -l)
+          OUTPUT_COUNT=$(find "$RENDER_DIR" -maxdepth 1 -name '*.wav' | wc -l)
           if [ "$OUTPUT_COUNT" -eq 0 ]; then
             echo "Error: No WAV outputs were generated!"
             exit 1
           fi
 
           echo "Generated $OUTPUT_COUNT WAV file(s):"
-          ls -lh renders/*.wav
+          ls -lh "$RENDER_DIR"/*.wav
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: render-${{ env.INPUT_BASE }}-${{ github.run_id }}
-          path: renders/*.wav
+          path: ${{ runner.temp }}/renders/*.wav
