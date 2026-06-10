@@ -28,11 +28,19 @@
         radiusSeed: 0.25 + ((index * 37) % 100) / 140,
         lane: ((index * 19) % 100) / 100,
       }));
+      this.resizePending = true;
+      this.resizeObserver = typeof ResizeObserver === 'function'
+        ? new ResizeObserver(() => {
+            this.resizePending = true;
+          })
+        : null;
+      this.resizeObserver?.observe(canvas);
     }
 
     start() {
       if (this.running) return;
       this.running = true;
+      this.resizePending = true;
       this.resize();
       this.animationFrame = requestAnimationFrame((time) => this.draw(time));
     }
@@ -46,16 +54,21 @@
     }
 
     resize() {
+      if (!this.resizePending) return;
+
       const rect = this.canvas.getBoundingClientRect();
       const nextPixelRatio = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
       const nextWidth = Math.max(1, Math.floor(rect.width * nextPixelRatio));
       const nextHeight = Math.max(1, Math.floor(rect.height * nextPixelRatio));
+      const sizeChanged = this.canvas.width !== nextWidth || this.canvas.height !== nextHeight || this.pixelRatio !== nextPixelRatio;
 
-      if (this.canvas.width !== nextWidth || this.canvas.height !== nextHeight || this.pixelRatio !== nextPixelRatio) {
+      if (sizeChanged) {
         this.canvas.width = nextWidth;
         this.canvas.height = nextHeight;
         this.pixelRatio = nextPixelRatio;
       }
+
+      this.resizePending = false;
     }
 
     update(metrics = {}) {

@@ -1189,7 +1189,17 @@ document.addEventListener('alpine:init', () => {
       if (this.visualizer || !this.$refs?.visualizerCanvas || !window.BubbleCloudVisualizer) return;
       this.visualizer = new window.BubbleCloudVisualizer(this.$refs.visualizerCanvas);
       this.visualizer.update(this.visualizerMetrics);
-      this.visualizer.start();
+    },
+
+    syncVisualizerPlayback() {
+      this.initVisualizer();
+      if (!this.visualizer) return;
+      this.visualizer.update(this.visualizerMetrics);
+      if (this.isPlaying) {
+        this.visualizer.start();
+      } else {
+        this.visualizer.stop();
+      }
     },
 
     handleVisualizerMetrics(data) {
@@ -1203,8 +1213,7 @@ document.addEventListener('alpine:init', () => {
         clipCount: Math.max(0, Number(data.clipCount) || 0),
         engineState: Number(data.engineState) || 0,
       };
-      this.initVisualizer();
-      this.visualizer?.update(this.visualizerMetrics);
+      this.syncVisualizerPlayback();
     },
 
     scheduleTelemetryUiUpdate() {
@@ -1339,6 +1348,7 @@ document.addEventListener('alpine:init', () => {
         this.duration = this.audioBuffer.duration;
       }
       this.setAudioStatus('Parado.');
+      this.syncVisualizerPlayback();
     },
 
     pausePlay() {
@@ -1347,12 +1357,14 @@ document.addEventListener('alpine:init', () => {
         this.isPlaying = false;
         this.stopTransportTimer();
         this.setAudioStatus('Synth pausado.');
+        this.syncVisualizerPlayback();
         return;
       }
       this.stopFilePlayback(false);
       this.isPlaying = false;
       this.stopTransportTimer();
       this.setAudioStatus('Pausado.');
+      this.syncVisualizerPlayback();
     },
 
     startSynth() {
@@ -1370,6 +1382,7 @@ document.addEventListener('alpine:init', () => {
       this.startedAt = now;
       this.setAudioStatus('Synth tocando.');
       this.startTransportTimer();
+      this.syncVisualizerPlayback();
     },
 
     stopSynth() {
@@ -1409,6 +1422,7 @@ document.addEventListener('alpine:init', () => {
         this.pausedAt = 0;
         this.currentTime = this.duration;
         this.seekTime = this.duration;
+        this.syncVisualizerPlayback();
       };
 
       const safeOffset = clamp(offsetSeconds || 0, 0, this.audioBuffer.duration);
@@ -1420,6 +1434,7 @@ document.addEventListener('alpine:init', () => {
       this.duration = this.audioBuffer.duration;
       this.setAudioStatus('Arquivo tocando.');
       this.startTransportTimer();
+      this.syncVisualizerPlayback();
     },
 
     stopFilePlayback(resetOffset) {

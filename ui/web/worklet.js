@@ -167,12 +167,16 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
   }
 
   updateVisualizerMetrics(blockSize, processNow) {
+    if (processNow - this.lastVisualizerMessageAt < this.visualizerMessageIntervalMs) {
+      return;
+    }
+
     let sumSquares = 0;
     let sumSideSquares = 0;
     let sumMidSquares = 0;
     for (let i = 0; i < blockSize; i += 1) {
-      const left = this.outLHeap[i] || 0;
-      const right = this.outRHeap[i] || 0;
+      const left = this.outLHeap[i];
+      const right = this.outRHeap[i];
       const mid = (left + right) * 0.5;
       const side = (left - right) * 0.5;
       sumSquares += left * left + right * right;
@@ -180,25 +184,37 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
       sumSideSquares += side * side;
     }
 
-    const energy = Math.sqrt(sumSquares / Math.max(1, blockSize * 2));
-    const stereoSpread = Math.sqrt(sumSideSquares / Math.max(1e-9, sumMidSquares + sumSideSquares));
+    const energy = this.clamp01(Math.sqrt(sumSquares / Math.max(1, blockSize * 2)));
+    const stereoSpread = this.clamp01(Math.sqrt(sumSideSquares / Math.max(1e-9, sumMidSquares + sumSideSquares)));
+    const activeVoices = Number(this.metrics.voices) || 0;
+    const voiceLimit = Number(this.metrics.voiceLimit) || 24;
+    const densityEstimate = this.estimateDensityForVisualizer(this.metrics.state, this.metrics.envelope, activeVoices, voiceLimit);
     const clipCount = Number(this.metrics.clipCount) || 0;
+    const clipping = clipCount > 0 || Math.max(Math.abs(this.metrics.peakL), Math.abs(this.metrics.peakR)) >= 0.999;
+    const engineState = Number(this.metrics.state) || 0;
+    const metrics = this.visualizerMetrics;
 
-    this.visualizerMetrics = {
-      activeVoices: Number(this.metrics.voices) || 0,
-      voiceLimit: Number(this.metrics.voiceLimit) || 24,
-      densityEstimate: this.estimateDensityForVisualizer(this.metrics.state, this.metrics.envelope, this.metrics.voices, this.metrics.voiceLimit),
-      energy: this.clamp01(energy),
-      stereoSpread: this.clamp01(stereoSpread),
-      clipping: clipCount > 0 || Math.max(Math.abs(this.metrics.peakL), Math.abs(this.metrics.peakR)) >= 0.999,
+    metrics.activeVoices = activeVoices;
+    metrics.voiceLimit = voiceLimit;
+    metrics.densityEstimate = densityEstimate;
+    metrics.energy = energy;
+    metrics.stereoSpread = stereoSpread;
+    metrics.clipping = clipping;
+    metrics.clipCount = clipCount;
+    metrics.engineState = engineState;
+    this.lastVisualizerMessageAt = processNow;
+
+    this.port.postMessage({
+      type: 'visualizer-metrics',
+      activeVoices,
+      voiceLimit,
+      densityEstimate,
+      energy,
+      stereoSpread,
+      clipping,
       clipCount,
-      engineState: Number(this.metrics.state) || 0,
-    };
-
-    if (processNow - this.lastVisualizerMessageAt >= this.visualizerMessageIntervalMs) {
-      this.lastVisualizerMessageAt = processNow;
-      this.port.postMessage({ type: 'visualizer-metrics', ...this.visualizerMetrics });
-    }
+      engineState,
+    });
   }
 
   async initialize() {
