@@ -63,6 +63,7 @@ def test_core_processing_stays_within_smoke_block_budget(tmp_path: Path) -> None
             "-Icore/dsp",
             str(source),
             "core/engine/bubble_engine.c",
+            "core/engine/bubble_macro_map.c",
             "core/dsp/sound_bubbles_dsp.c",
             "-lm",
             "-o",

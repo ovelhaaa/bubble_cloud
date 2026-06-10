@@ -7,6 +7,7 @@ idf_component_register(
         "preset_storage.c"
         "main.c"
         "../../core/engine/bubble_engine.c"
+        "../../core/engine/bubble_macro_map.c"
         "../../core/dsp/sound_bubbles_dsp.c"
     INCLUDE_DIRS
         "."
