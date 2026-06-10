@@ -58,6 +58,12 @@ typedef enum {
     BUBBLE_PITCH_MODE_SHIMMER = 4
 } BubblePitchMode_t;
 
+typedef enum {
+    BUBBLE_MOTION_SHAPE_TRIANGLE = 0,
+    BUBBLE_MOTION_SHAPE_SMOOTH = 1,
+    BUBBLE_MOTION_SHAPE_HOLD = 2
+} BubbleMotionShape_t;
+
 // --- Configuration Structs ---
 
 typedef struct {
@@ -157,7 +163,7 @@ typedef struct {
     // Developer motion controls. Updated at control-rate only.
     float motion_rate;
     float motion_depth;
-    int32_t motion_shape;
+    BubbleMotionShape_t motion_shape;
 
     // Product/runtime quality profile. It selects an active subset of the
     // compiled voice pool without changing per-voice DSP behavior.
@@ -337,6 +343,8 @@ SOUND_BUBBLES_DEPRECATED void SoundBubbles_Init(SoundBubblesEngine_t* engine, in
 SOUND_BUBBLES_DEPRECATED void SoundBubbles_UpdateConfig(SoundBubblesEngine_t* engine, const EngineConfig_t* new_config);
 SOUND_BUBBLES_DEPRECATED void SoundBubbles_UpdateRuntimeConfig(SoundBubblesEngine_t* engine, const EngineConfig_t* new_config);
 SOUND_BUBBLES_DEPRECATED void SoundBubbles_ResetMotionPhase(SoundBubblesEngine_t* engine);
+uint32_t SoundBubbles_MotionHash(uint32_t state);
+float SoundBubbles_MotionHashToBipolar(uint32_t state);
 
 // Explicitly reset the deterministic PRNG state (0 maps to a fixed non-zero internal state).
 SOUND_BUBBLES_DEPRECATED void SoundBubbles_SetRngSeed(SoundBubblesEngine_t* engine, uint32_t seed);

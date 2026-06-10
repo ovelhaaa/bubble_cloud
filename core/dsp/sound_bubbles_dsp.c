@@ -35,9 +35,13 @@ const BubbleQualityProfileLimits_t BUBBLE_QUALITY_PROFILE_LIMITS[BUBBLE_QUALITY_
 #define FINAL_LIMITER_DEFAULT_CEILING_DB -1.0f
 #define FINAL_LIMITER_DEFAULT_RELEASE_MS 50.0f
 #define BUBBLE_MOTION_FIXED_SEED 0xB06B1E5u
-#define BUBBLE_MOTION_SHAPE_TRIANGLE 0
-#define BUBBLE_MOTION_SHAPE_SMOOTH 1
-#define BUBBLE_MOTION_SHAPE_HOLD 2
+#define BUBBLE_MOTION_DENSITY_SEED_XOR 0x1001u
+#define BUBBLE_MOTION_PANORAMA_SEED_XOR 0x2002u
+#define BUBBLE_MOTION_MEMORY_PULL_SEED_XOR 0x3003u
+#define BUBBLE_MOTION_SPARKLE_SEED_XOR 0x4004u
+#define BUBBLE_MOTION_REVERSE_PROBABILITY_SEED_XOR 0x5005u
+#define BUBBLE_MOTION_DIFFUSION_AMOUNT_SEED_XOR 0x6006u
+#define BUBBLE_MOTION_INITIAL_VALUE_SEED_XOR 0xA5A5A5A5u
 
 #if !defined(BUBBLES_QUALITY_ESP32_SAFE) && !defined(BUBBLES_QUALITY_WASM_FULL)
 #define BUBBLES_QUALITY_STANDARD 1
@@ -134,8 +138,6 @@ static inline float Clamp01(float x);
 static inline float Clamp(float x, float lo, float hi);
 static inline float Lerp(float a, float b, float t);
 static int32_t CountActiveVoices(const SoundBubblesEngine_t* engine);
-static uint32_t MotionHash(uint32_t state);
-static float MotionHashToBipolar(uint32_t state);
 static void MotionResetLfo(BubbleMotionLfoState_t* lfo, uint32_t seed);
 
 // --- Initialization & Config ---
@@ -253,12 +255,12 @@ void SoundBubbles_UpdateRuntimeConfig(SoundBubblesEngine_t* engine, const Engine
 void SoundBubbles_ResetMotionPhase(SoundBubblesEngine_t* engine) {
     if (engine == NULL) return;
     engine->motion_state.seed = BUBBLE_MOTION_FIXED_SEED;
-    MotionResetLfo(&engine->motion_state.density, MotionHash(BUBBLE_MOTION_FIXED_SEED ^ 0x1001u));
-    MotionResetLfo(&engine->motion_state.panorama, MotionHash(BUBBLE_MOTION_FIXED_SEED ^ 0x2002u));
-    MotionResetLfo(&engine->motion_state.memory_pull, MotionHash(BUBBLE_MOTION_FIXED_SEED ^ 0x3003u));
-    MotionResetLfo(&engine->motion_state.sparkle, MotionHash(BUBBLE_MOTION_FIXED_SEED ^ 0x4004u));
-    MotionResetLfo(&engine->motion_state.reverse_probability, MotionHash(BUBBLE_MOTION_FIXED_SEED ^ 0x5005u));
-    MotionResetLfo(&engine->motion_state.diffusion_amount, MotionHash(BUBBLE_MOTION_FIXED_SEED ^ 0x6006u));
+    MotionResetLfo(&engine->motion_state.density, SoundBubbles_MotionHash(BUBBLE_MOTION_FIXED_SEED ^ BUBBLE_MOTION_DENSITY_SEED_XOR));
+    MotionResetLfo(&engine->motion_state.panorama, SoundBubbles_MotionHash(BUBBLE_MOTION_FIXED_SEED ^ BUBBLE_MOTION_PANORAMA_SEED_XOR));
+    MotionResetLfo(&engine->motion_state.memory_pull, SoundBubbles_MotionHash(BUBBLE_MOTION_FIXED_SEED ^ BUBBLE_MOTION_MEMORY_PULL_SEED_XOR));
+    MotionResetLfo(&engine->motion_state.sparkle, SoundBubbles_MotionHash(BUBBLE_MOTION_FIXED_SEED ^ BUBBLE_MOTION_SPARKLE_SEED_XOR));
+    MotionResetLfo(&engine->motion_state.reverse_probability, SoundBubbles_MotionHash(BUBBLE_MOTION_FIXED_SEED ^ BUBBLE_MOTION_REVERSE_PROBABILITY_SEED_XOR));
+    MotionResetLfo(&engine->motion_state.diffusion_amount, SoundBubbles_MotionHash(BUBBLE_MOTION_FIXED_SEED ^ BUBBLE_MOTION_DIFFUSION_AMOUNT_SEED_XOR));
 }
 
 void SoundBubbles_SetRngSeed(SoundBubblesEngine_t* engine, uint32_t seed) {
@@ -1239,7 +1241,7 @@ static float ProcessSustainDiffusionSample(SoundBubblesEngine_t* engine, float i
 }
 
 
-static uint32_t MotionHash(uint32_t state) {
+uint32_t SoundBubbles_MotionHash(uint32_t state) {
     state ^= state >> 16;
     state *= 0x7feb352du;
     state ^= state >> 15;
@@ -1248,16 +1250,16 @@ static uint32_t MotionHash(uint32_t state) {
     return state;
 }
 
-static float MotionHashToBipolar(uint32_t state) {
-    uint32_t mantissa = (MotionHash(state) >> 8) & 0x00FFFFFFu;
+float SoundBubbles_MotionHashToBipolar(uint32_t state) {
+    uint32_t mantissa = (SoundBubbles_MotionHash(state) >> 8) & 0x00FFFFFFu;
     return ((float)mantissa * (1.0f / 8388607.5f)) - 1.0f;
 }
 
 static void MotionResetLfo(BubbleMotionLfoState_t* lfo, uint32_t seed) {
     if (lfo == NULL) return;
-    lfo->hold_state = MotionHash(seed);
+    lfo->hold_state = SoundBubbles_MotionHash(seed);
     lfo->phase = (float)((lfo->hold_state >> 8) & 0x00FFFFFFu) * (1.0f / 16777216.0f);
-    lfo->value = MotionHashToBipolar(lfo->hold_state ^ 0xA5A5A5A5u);
+    lfo->value = SoundBubbles_MotionHashToBipolar(lfo->hold_state ^ BUBBLE_MOTION_INITIAL_VALUE_SEED_XOR);
 }
 
 

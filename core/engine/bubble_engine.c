@@ -6,9 +6,7 @@
 
 #define BUBBLE_MACRO_SMOOTH_COEF 0.18f
 #define BUBBLE_MACRO_EPSILON 0.0005f
-#define BUBBLE_MOTION_SHAPE_TRIANGLE 0
-#define BUBBLE_MOTION_SHAPE_SMOOTH 1
-#define BUBBLE_MOTION_SHAPE_HOLD 2
+#define BUBBLE_MOTION_HOLD_NEXT_STATE_ADD 0x9E3779B9u
 
 const BubbleParameterInfo BUBBLE_PARAMETER_INFO[] = {
     { BUBBLE_PARAM_DENSITY, "density", 0.0f, 1.0f, 0.5f, BUBBLE_PARAMETER_CURVE_LOG, "norm", BUBBLE_PARAMETER_FLAG_MACRO | BUBBLE_PARAMETER_FLAG_AUDIBLE },
@@ -57,21 +55,8 @@ static float Clampf(float value, float lo, float hi) {
     return value;
 }
 
-static uint32_t MotionHashLocal(uint32_t state) {
-    state ^= state >> 16;
-    state *= 0x7feb352du;
-    state ^= state >> 15;
-    state *= 0x846ca68bu;
-    state ^= state >> 16;
-    return state;
-}
 
-static float MotionHashToBipolarLocal(uint32_t state) {
-    uint32_t mantissa = (MotionHashLocal(state) >> 8) & 0x00FFFFFFu;
-    return ((float)mantissa * (1.0f / 8388607.5f)) - 1.0f;
-}
-
-static float MotionTickLfoLocal(BubbleMotionLfoState_t* lfo, float rate_hz, float rate_scale, int32_t shape) {
+static float MotionTickLfoLocal(BubbleMotionLfoState_t* lfo, float rate_hz, float rate_scale, BubbleMotionShape_t shape) {
     if (lfo == NULL) return 0.0f;
     float inc = rate_hz * rate_scale * ((float)BUBBLES_BLOCK_SIZE / (float)BUBBLES_SAMPLE_RATE);
     inc = Clampf(inc, 0.0f, 0.25f);
@@ -85,8 +70,8 @@ static float MotionTickLfoLocal(BubbleMotionLfoState_t* lfo, float rate_hz, floa
 
     if (shape == BUBBLE_MOTION_SHAPE_HOLD) {
         if (wrapped) {
-            lfo->hold_state = MotionHashLocal(lfo->hold_state + 0x9E3779B9u);
-            lfo->value = MotionHashToBipolarLocal(lfo->hold_state);
+            lfo->hold_state = SoundBubbles_MotionHash(lfo->hold_state + BUBBLE_MOTION_HOLD_NEXT_STATE_ADD);
+            lfo->value = SoundBubbles_MotionHashToBipolar(lfo->hold_state);
         }
         return lfo->value;
     }
@@ -125,7 +110,7 @@ static void ApplyRuntimeMotionConfig(BubbleEngine_t* engine) {
     }
 
     float rate_hz = 0.015f + 0.285f * Clamp01f(config.motion_rate);
-    int32_t shape = config.motion_shape;
+    BubbleMotionShape_t shape = config.motion_shape;
     float density_lfo = MotionTickLfoLocal(&engine->motion_state.density, rate_hz, 0.73f, shape);
     float panorama_lfo = MotionTickLfoLocal(&engine->motion_state.panorama, rate_hz, 0.49f, shape);
     float memory_lfo = MotionTickLfoLocal(&engine->motion_state.memory_pull, rate_hz, 0.37f, shape);
@@ -448,7 +433,7 @@ bool bubble_engine_set_parameter(BubbleEngine_t* engine, BubbleEngineParameterId
         case BUBBLE_ENGINE_PARAM_FINAL_LIMITER_RELEASE_MS: config.final_limiter_release_ms = value; break;
         case BUBBLE_ENGINE_PARAM_MOTION_RATE: config.motion_rate = value; break;
         case BUBBLE_ENGINE_PARAM_MOTION_DEPTH: config.motion_depth = value; break;
-        case BUBBLE_ENGINE_PARAM_MOTION_SHAPE: config.motion_shape = (int32_t)value; break;
+        case BUBBLE_ENGINE_PARAM_MOTION_SHAPE: config.motion_shape = (BubbleMotionShape_t)((int32_t)value); break;
         case BUBBLE_ENGINE_PARAM_QUALITY_PROFILE:
             return bubble_engine_set_quality_profile(engine, (BubbleQualityProfile)((int32_t)value));
         case BUBBLE_ENGINE_PARAM_ACTIVE_VOICE_LIMIT: config.active_voice_limit = (int32_t)value; break;
