@@ -627,23 +627,28 @@ document.addEventListener('alpine:init', () => {
         macroValues: { ...this.macroValues },
         uiMode: this.uiMode,
         developerMode: this.developerMode,
-        abSlots: JSON.parse(JSON.stringify(this.abSlots)),
       };
     },
 
     restoreHistorySnapshot(snapshot) {
       if (!snapshot) return;
-      this.baseParams = { ...this.baseParams, ...(snapshot.baseParams || {}) };
-      this.params = this.baseParams;
-      this.macroValues = window.BubbleCloudMacroLayer.normalizeMacroValues(snapshot.macroValues);
-      this.uiMode = Object.values(UI_MODES).includes(snapshot.uiMode) ? snapshot.uiMode : UI_MODES.SIMPLE;
-      this.developerMode = this.uiMode === UI_MODES.DEVELOPER;
-      if (snapshot.abSlots) this.abSlots = JSON.parse(JSON.stringify(snapshot.abSlots));
+      const nextBaseParams = { ...this.baseParams, ...(snapshot.baseParams || {}) };
+      const nextParams = nextBaseParams;
+      const nextMacroValues = window.BubbleCloudMacroLayer.normalizeMacroValues(snapshot.macroValues);
+      const nextUiMode = Object.values(UI_MODES).includes(snapshot.uiMode) ? snapshot.uiMode : UI_MODES.SIMPLE;
+      const nextDeveloperMode = nextUiMode === UI_MODES.DEVELOPER;
+
+      this.baseParams = nextBaseParams;
+      this.params = nextParams;
+      this.macroValues = nextMacroValues;
+      this.uiMode = nextUiMode;
+      this.developerMode = nextDeveloperMode;
+      this.isDraft = true;
+      this.hasUnexportedChanges = true;
+
       this.validateParamRanges();
       this.scheduleDraftPersist();
       this.queueParamFlush();
-      this.isDraft = true;
-      this.hasUnexportedChanges = true;
     },
 
     recordHistory(label = 'Parameter change') {
@@ -740,10 +745,28 @@ document.addEventListener('alpine:init', () => {
 
     swapABSlots() {
       this.recordHistory('Swap A/B');
-      const previousA = this.abSlots.A;
-      this.abSlots.A = this.abSlots.B;
-      this.abSlots.B = previousA;
-      this.scheduleDraftPersist();
+      const nextABSlots = {
+        A: this.abSlots.B,
+        B: this.abSlots.A,
+      };
+      const stored = nextABSlots[this.activeABSlot];
+      let nextBaseParams = this.baseParams;
+      let nextParams = this.params;
+      let nextMacroValues = this.macroValues;
+
+      if (stored) {
+        nextBaseParams = { ...this.baseParams, ...(stored.baseParams || {}) };
+        nextParams = nextBaseParams;
+        nextMacroValues = window.BubbleCloudMacroLayer.normalizeMacroValues(stored.macroValues);
+      }
+
+      this.abSlots = nextABSlots;
+      this.baseParams = nextBaseParams;
+      this.params = nextParams;
+      this.macroValues = nextMacroValues;
+
+      this.validateParamRanges();
+      this.saveDraft();
       this.toast('Slots A/B trocados.', 'info');
     },
 
