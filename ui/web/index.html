@@ -164,7 +164,7 @@
 
             <!-- Presets + Export Actions -->
             <div class="card export-actions">
-                <h3>Presets de fábrica</h3>
+                <h3>Preset Browser</h3>
                 <div class="preset-filter-row">
                     <label for="preset-category">Categoria</label>
                     <select id="preset-category" x-model="selectedPresetCategory" class="preset-category-select">
@@ -221,27 +221,34 @@
             <div class="panel-left">
                 <div class="section-header">
                     <h2 class="section-title">Engine Parameters</h2>
-                    <p class="helper-text">Adjust properties. The audio preview updates in real-time.</p>
+                    <p class="helper-text">Adjust properties. Audio runs in an AudioWorklet; UI meters are throttled so visual updates do not block audio.</p>
                     <p class="helper-text" x-text="parityNote"></p>
+                    <div class="ui-mode-switch" role="group" aria-label="UI mode">
+                        <button class="btn btn-secondary" :class="{ 'is-active': uiMode === uiModes.SIMPLE }" @click="setUiMode(uiModes.SIMPLE)">Simple</button>
+                        <button class="btn btn-secondary" :class="{ 'is-active': uiMode === uiModes.ADVANCED }" @click="setUiMode(uiModes.ADVANCED)">Advanced</button>
+                        <button class="btn btn-secondary" :class="{ 'is-active': uiMode === uiModes.DEVELOPER }" @click="setUiMode(uiModes.DEVELOPER)">Developer</button>
+                    </div>
                 </div>
 
                 <div class="card macro-controls macro-ribbon">
                     <div class="macro-ribbon-header">
                         <h3 x-text="macroPageTitle"></h3>
                         <div class="embedded-nav">
-                            <button class="btn btn-secondary" @click="cycleMacroPage()">Page</button>
+                            <button class="btn btn-secondary" :disabled="undoStack.length === 0" @click="undoParameterChange()">Undo</button>
+                            <button class="btn btn-secondary" :disabled="redoStack.length === 0" @click="redoParameterChange()">Redo</button>
                             <button class="btn btn-secondary" :class="{ 'is-active': shiftMode }" @click="toggleShiftMode()">Shift</button>
+                            <button class="btn btn-primary" @click="randomizeMusical()">Randomize musical</button>
                             <button class="btn btn-primary" @click="commitResolvedToBase()">Commit</button>
-                            <button class="btn btn-secondary" :class="{ 'is-active': compareMode }" @click="toggleCompareMode()">Compare</button>
+                            <button class="btn btn-secondary" :class="{ 'is-active': compareMode }" @click="toggleCompareMode()">Base Compare</button>
                         </div>
                     </div>
-                    <p class="helper-text">Simple: Density, Bloom, Texture, Motion, Space, Mix • Advanced: Gravity, Memory, Clarity, Freeze, Sparkle, Warmth</p>
+                    <p class="helper-text">Simple mostra Density, Bloom, Texture, Motion, Space e Mix. Advanced/Developer mostram todos os 12 macros musicais.</p>
                     <div class="macro-grid">
                         <template x-for="macroKey in displayedMacroKeys" :key="macroKey">
                             <div class="macro-tile">
                                 <label x-text="macroLabels[macroKey]"></label>
-                                <input type="number" min="0" max="1" :step="macroSliderStep" class="num-input" x-model.number="macroValues[macroKey]" @input="onMacroInput(macroKey)">
-                                <input type="range" min="0" max="1" :step="macroSliderStep" class="slider" x-model.number="macroValues[macroKey]" @input="onMacroInput(macroKey)">
+                                <input type="number" min="0" max="1" :step="macroSliderStep" class="num-input" x-model.number="macroValues[macroKey]" @input="onMacroInput(macroKey)" @change="commitHistoryTransaction()">
+                                <input type="range" min="0" max="1" :step="macroSliderStep" class="slider" x-model.number="macroValues[macroKey]" @input="onMacroInput(macroKey)" @change="commitHistoryTransaction()">
                             </div>
                         </template>
                         <template x-if="activeMacroPage === 1 && displayedMacroKeys.length < 6">
@@ -253,6 +260,14 @@
                         </template>
                     </div>
                     <p class="macro-affected" x-show="lastMacroAffectedText" x-text="lastMacroAffectedText"></p>
+                    <div class="ab-compare-row">
+                        <span class="helper-text">A/B compare ativo: <strong x-text="activeABSlot"></strong></span>
+                        <button class="btn btn-secondary" :class="{ 'is-active': activeABSlot === 'A' }" @click="recallABSlot('A')">Hear A</button>
+                        <button class="btn btn-secondary" @click="captureABSlot('A')">Save A</button>
+                        <button class="btn btn-secondary" :class="{ 'is-active': activeABSlot === 'B' }" @click="recallABSlot('B')">Hear B</button>
+                        <button class="btn btn-secondary" @click="captureABSlot('B')">Save B</button>
+                        <button class="btn btn-secondary" @click="swapABSlots()">Swap</button>
+                    </div>
                     <div class="action-buttons">
                         <button class="btn btn-secondary" @click="resetMacros()">Reset Macros</button>
                     </div>
@@ -260,7 +275,7 @@
 
                 <div class="accordions-container">
                 <!-- Dynamic Accordion Groups -->
-                <template x-for="group in parameterGroups" :key="group.name">
+                <template x-for="group in visibleParameterGroups" :key="group.name">
                     <div class="accordion" :class="{ 'open': openAccordion === group.name }">
                         <button
                             class="accordion-header"
@@ -276,11 +291,11 @@
                             </span>
                         </button>
 
-                        <div class="accordion-content" x-show="openAccordion === group.name && (developerMode || group.name === 'Advanced')" x-collapse x-cloak>
+                        <div class="accordion-content" x-show="openAccordion === group.name" x-collapse x-cloak>
                             <div class="param-row" x-show="group.name === 'Advanced'">
                                 <div class="param-labels">
                                     <label for="developer-mode">Developer diagnostics</label>
-                                    <input id="developer-mode" type="checkbox" x-model="developerMode" @change="saveDraft()">
+                                    <input id="developer-mode" type="checkbox" x-model="developerMode" @change="setUiMode(developerMode ? uiModes.DEVELOPER : uiModes.ADVANCED)">
                                 </div>
                                 <p class="helper-text">Off: Simple/Advanced send only musical macros. On: internal controls below override the core for diagnostics and are not part of the main preset flow.</p>
                             </div>
@@ -310,7 +325,8 @@
                                             type="number"
                                             :id="paramKey + '_num'"
                                             x-model.number="params[paramKey]"
-                                            @input="saveDraft()"
+                                            @input="onParamInput(paramKey)"
+                                            @change="commitHistoryTransaction()"
                                             :title="getDirectionalTooltip(paramKey)"
                                             :step="getParamConfig(paramKey).step"
                                             :min="getParamConfig(paramKey).min"
@@ -339,7 +355,8 @@
                                         type="range"
                                         :id="paramKey"
                                         x-model.number="params[paramKey]"
-                                        @input="saveDraft()"
+                                        @input="onParamInput(paramKey)"
+                                        @change="commitHistoryTransaction()"
                                         :title="getDirectionalTooltip(paramKey)"
                                         :step="getParamConfig(paramKey).step"
                                         :min="getParamConfig(paramKey).min"
@@ -374,6 +391,10 @@
                             <span class="metric-label">Voices</span>
                             <span class="metric-value"><strong x-text="metrics.voices"></strong> / <span x-text="activeVoiceLimit"></span></span>
                         </div>
+                        <div class="metric-box" :class="{ 'metric-box-warn': metrics.cpuLoad > 0.7 }">
+                            <span class="metric-label">CPU</span>
+                            <span class="metric-value" x-text="`${Math.round(metrics.cpuLoad * 100)}%`"></span>
+                        </div>
                         <div class="metric-box">
                             <span class="metric-label">Peak L/R</span>
                             <span class="metric-value" x-text="`${metrics.peakL.toFixed(3)} / ${metrics.peakR.toFixed(3)}`"></span>
@@ -388,6 +409,15 @@
                         </div>
                     </div>
                     <div class="macro-health-grid">
+                        <div class="health-box">
+                            <div class="health-header">
+                                <span>Voice meter</span>
+                                <span x-text="`${metrics.voices} / ${activeVoiceLimit}`"></span>
+                            </div>
+                            <div class="health-meter">
+                                <span class="health-fill" :style="`width: ${Math.min(100, (metrics.voices / Math.max(1, activeVoiceLimit)) * 100)}%`"></span>
+                            </div>
+                        </div>
                         <div class="health-box">
                             <div class="health-header">
                                 <span>Target density</span>

@@ -6,7 +6,7 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
 
     this.ready = false;
     this.bypass = false;
-    this.metrics = { envelope: 0, state: 0, voices: 0, voiceLimit: 24, peakL: 0, peakR: 0, clipCount: 0, limiterGain: 1 };
+    this.metrics = { envelope: 0, state: 0, voices: 0, voiceLimit: 24, peakL: 0, peakR: 0, clipCount: 0, limiterGain: 1, cpuLoad: 0 };
     this.qualityProfile = 2;
 
     this.wasm = null;
@@ -217,7 +217,12 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
         this.inHeap.set(inR.subarray(0, blockSize));
       }
 
+      const processStart = globalThis.performance?.now?.() || 0;
       this.wasmProcess(this.inPtr, this.outLPtr, this.outRPtr, blockSize);
+      const processEnd = globalThis.performance?.now?.() || processStart;
+      const blockDurationMs = (blockSize / sampleRate) * 1000;
+      const instantCpu = blockDurationMs > 0 ? (processEnd - processStart) / blockDurationMs : 0;
+      this.metrics.cpuLoad = this.metrics.cpuLoad * 0.92 + Math.max(0, instantCpu) * 0.08;
 
       outL.set(this.outLHeap);
       outR.set(this.outRHeap);

@@ -1179,3 +1179,29 @@ a:hover { color: var(--primary-dark); text-decoration: underline; }
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     color: var(--primary);
 }
+
+.ui-mode-switch,
+.ab-compare-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.ui-mode-switch .btn.is-active,
+.ab-compare-row .btn.is-active,
+.embedded-nav .btn.is-active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-light);
+}
+
+.metric-box-warn {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.metric-box-warn .metric-value {
+  color: #b45309;
+}
