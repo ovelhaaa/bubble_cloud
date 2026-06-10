@@ -415,6 +415,8 @@ document.addEventListener('alpine:init', () => {
     duration: 0,
 
     metrics: { envelope: 0, state: 0, voices: 0, voiceLimit: 24, peakL: 0, peakR: 0, clipCount: 0, limiterGain: 1, cpuLoad: 0 },
+    visualizer: null,
+    visualizerMetrics: { activeVoices: 0, voiceLimit: 24, densityEstimate: 0, energy: 0, stereoSpread: 0, clipping: false, clipCount: 0, engineState: 0 },
     telemetry: {
       targetDensity: { value: 0, ratio: 0, available: false },
       wetDuckAmount: { value: 0, ratio: 0, available: false },
@@ -1094,6 +1096,8 @@ document.addEventListener('alpine:init', () => {
             this.pushAllParamsToAudio();
             this.startMetricsPolling();
             this.toast('Engine inicializado com sucesso.', 'success');
+          } else if (data.type === 'visualizer-metrics') {
+            this.handleVisualizerMetrics(data);
           } else if (data.type === 'state') {
             this.metrics.envelope = Number(data.envelope) || 0;
             this.metrics.state = Number(data.state) || 0;
@@ -1179,6 +1183,37 @@ document.addEventListener('alpine:init', () => {
           this.workletNode.port.postMessage({ type: 'poll' });
         }
       }, 100);
+    },
+
+    initVisualizer() {
+      if (this.visualizer || !this.$refs?.visualizerCanvas || !window.BubbleCloudVisualizer) return;
+      this.visualizer = new window.BubbleCloudVisualizer(this.$refs.visualizerCanvas);
+      this.visualizer.update(this.visualizerMetrics);
+    },
+
+    syncVisualizerPlayback() {
+      this.initVisualizer();
+      if (!this.visualizer) return;
+      this.visualizer.update(this.visualizerMetrics);
+      if (this.isPlaying) {
+        this.visualizer.start();
+      } else {
+        this.visualizer.stop();
+      }
+    },
+
+    handleVisualizerMetrics(data) {
+      this.visualizerMetrics = {
+        activeVoices: Math.max(0, Number(data.activeVoices) || 0),
+        voiceLimit: Math.max(1, Number(data.voiceLimit) || this.activeVoiceLimit),
+        densityEstimate: clamp(Number(data.densityEstimate) || 0, 0, 1),
+        energy: clamp(Number(data.energy) || 0, 0, 1),
+        stereoSpread: clamp(Number(data.stereoSpread) || 0, 0, 1),
+        clipping: Boolean(data.clipping),
+        clipCount: Math.max(0, Number(data.clipCount) || 0),
+        engineState: Number(data.engineState) || 0,
+      };
+      this.syncVisualizerPlayback();
     },
 
     scheduleTelemetryUiUpdate() {
@@ -1313,6 +1348,7 @@ document.addEventListener('alpine:init', () => {
         this.duration = this.audioBuffer.duration;
       }
       this.setAudioStatus('Parado.');
+      this.syncVisualizerPlayback();
     },
 
     pausePlay() {
@@ -1321,12 +1357,14 @@ document.addEventListener('alpine:init', () => {
         this.isPlaying = false;
         this.stopTransportTimer();
         this.setAudioStatus('Synth pausado.');
+        this.syncVisualizerPlayback();
         return;
       }
       this.stopFilePlayback(false);
       this.isPlaying = false;
       this.stopTransportTimer();
       this.setAudioStatus('Pausado.');
+      this.syncVisualizerPlayback();
     },
 
     startSynth() {
@@ -1344,6 +1382,7 @@ document.addEventListener('alpine:init', () => {
       this.startedAt = now;
       this.setAudioStatus('Synth tocando.');
       this.startTransportTimer();
+      this.syncVisualizerPlayback();
     },
 
     stopSynth() {
@@ -1383,6 +1422,7 @@ document.addEventListener('alpine:init', () => {
         this.pausedAt = 0;
         this.currentTime = this.duration;
         this.seekTime = this.duration;
+        this.syncVisualizerPlayback();
       };
 
       const safeOffset = clamp(offsetSeconds || 0, 0, this.audioBuffer.duration);
@@ -1394,6 +1434,7 @@ document.addEventListener('alpine:init', () => {
       this.duration = this.audioBuffer.duration;
       this.setAudioStatus('Arquivo tocando.');
       this.startTransportTimer();
+      this.syncVisualizerPlayback();
     },
 
     stopFilePlayback(resetOffset) {

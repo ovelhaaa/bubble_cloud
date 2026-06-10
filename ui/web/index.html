@@ -13,6 +13,7 @@
     <script defer src="src/presets/presetIO.js"></script>
     <script defer src="macro_matrix.js"></script>
     <script defer src="macro_layer.js"></script>
+    <script defer src="visualizer/visualizer.js"></script>
     <script defer src="app.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 </head>
@@ -378,6 +379,20 @@
                 <!-- DSP Metrics -->
                 <div class="card dsp-metrics" x-show="audioInitialized" x-cloak>
                     <h3>DSP Internal Metrics</h3>
+                    <div class="visualizer-panel">
+                        <div class="visualizer-header">
+                            <span>Cloud Visualizer</span>
+                            <span x-text="`${visualizerMetrics.activeVoices} voices · ${Math.round(visualizerMetrics.energy * 100)}% energy`"></span>
+                        </div>
+                        <canvas
+                            class="bubble-visualizer-canvas"
+                            x-ref="visualizerCanvas"
+                            width="720"
+                            height="280"
+                            aria-label="Audio visualization driven by throttled AudioWorklet metrics"
+                        ></canvas>
+                        <p class="helper-text">Canvas renderiza via requestAnimationFrame; o AudioWorklet envia apenas métricas sanitizadas a 20 Hz.</p>
+                    </div>
                     <div class="metrics-grid">
                         <div class="metric-box">
                             <span class="metric-label">Envelope</span>
