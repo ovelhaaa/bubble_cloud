@@ -55,7 +55,7 @@ def _schema_ranges() -> dict[str, tuple[float, float, str]]:
     source = SCHEMA_JS.read_text(encoding="utf-8")
     ranges: dict[str, tuple[float, float, str]] = {}
     pattern = re.compile(
-        r"name: '([^']+)', min: ([^,]+), max: ([^,]+), defaultValue: [^,]+, type: '([^']+)'"
+        r"name:\s*['\"]([^'\"]+)['\"],\s*min:\s*([^,\s]+),\s*max:\s*([^,\s]+),\s*defaultValue:\s*[^,]+,\s*type:\s*['\"]([^'\"]+)['\"]"
     )
     for name, min_value, max_value, param_type in pattern.findall(source):
         ranges[name] = (float(min_value), float(max_value), param_type)
@@ -119,7 +119,8 @@ def test_canonical_factory_presets_stay_in_param_ranges_and_voice_profile_limits
         if metadata.get("recommended_min_profile") != profile_name:
             failures.append(f"{name}: recommended_min_profile does not match quality_profile {profile_name}")
         mcu = metadata.get("mcu_compatibility", {})
-        if mcu.get("profile") != profile_name or int(mcu.get("active_voice_limit", -1)) != active_voice_limit:
+        mcu_limit = mcu.get("active_voice_limit")
+        if mcu.get("profile") != profile_name or mcu_limit is None or int(mcu_limit) != active_voice_limit:
             failures.append(f"{name}: MCU compatibility metadata is not synchronized with params")
         if bool(preset.get("esp32_safe")) != (quality_profile <= 1 and active_voice_limit <= 16):
             failures.append(f"{name}: esp32_safe must reflect MCU_SAFE/MCU_PLUS voice budgets")

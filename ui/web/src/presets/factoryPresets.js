@@ -1374,13 +1374,14 @@
 ];
 
   function createFactoryPresets(baseParams) {
-    return CANONICAL_FACTORY_PRESETS.map((preset) => ({
-      ...preset,
-      params: { ...baseParams, ...preset.params },
-      base_params: { ...baseParams, ...preset.params },
-      macro_values: { ...preset.macro_values },
-      metadata: { ...preset.metadata },
-    }));
+    return CANONICAL_FACTORY_PRESETS.map((preset) => {
+      const cloned = JSON.parse(JSON.stringify(preset));
+      return {
+        ...cloned,
+        params: { ...baseParams, ...cloned.params },
+        base_params: { ...baseParams, ...cloned.params },
+      };
+    });
   }
 
   global.BubbleCloudFactoryPresets = { createFactoryPresets };

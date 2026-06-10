@@ -851,6 +851,12 @@ document.addEventListener('alpine:init', () => {
       this.baseParams = { ...(preset.base_params || preset.params) };
       this.params = this.baseParams;
       this.macroValues = window.BubbleCloudMacroLayer.normalizeMacroValues(preset.macro_values);
+      const presetQualityProfile = Number(this.baseParams.quality_profile);
+      if (Number.isFinite(presetQualityProfile)) {
+        this.selectedQualityProfile = presetQualityProfile;
+        this.metrics.voiceLimit = this.activeQualityProfile.voices;
+        this.pushQualityProfileToAudio();
+      }
       this.validateParamRanges();
       this.currentPresetSource = 'factory';
       this.currentPresetInfo = { ...preset };
