@@ -72,6 +72,11 @@
     { id: 'BUBBLE_ENGINE_PARAM_MOTION_RATE', name: 'motion_rate', min: 0, max: 1, defaultValue: 0.18, type: 'float' },
     { id: 'BUBBLE_ENGINE_PARAM_MOTION_DEPTH', name: 'motion_depth', min: 0, max: 1, defaultValue: 0, type: 'float' },
     { id: 'BUBBLE_ENGINE_PARAM_MOTION_SHAPE', name: 'motion_shape', min: 0, max: 2, defaultValue: 0, type: 'enum' },
+    { id: 'BUBBLE_ENGINE_PARAM_TEMPO_BPM', name: 'tempo_bpm', min: 20, max: 300, defaultValue: 120, type: 'float' },
+    { id: 'BUBBLE_ENGINE_PARAM_TEMPO_SYNC_ENABLED', name: 'tempo_sync_enabled', min: 0, max: 1, defaultValue: 0, type: 'bool' },
+    { id: 'BUBBLE_ENGINE_PARAM_RHYTHM_DIVISION', name: 'rhythm_division', min: 0, max: 3, defaultValue: 2, type: 'enum' },
+    { id: 'BUBBLE_ENGINE_PARAM_BURST_MODE', name: 'burst_mode', min: 0, max: 4, defaultValue: 0, type: 'enum' },
+    { id: 'BUBBLE_ENGINE_PARAM_RHYTHM_PATTERN', name: 'rhythm_pattern', min: 0, max: 4294967295, defaultValue: 4369, type: 'int' },
   ];
 
   const PARAM_BY_NAME = Object.freeze(Object.fromEntries(PARAM_SPECS.map((spec) => [spec.name, Object.freeze({ ...spec })])));

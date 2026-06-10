@@ -224,6 +224,11 @@ static bool SetPresetParam(BubbleEnginePreset_t* preset, BubbleEngineParameterId
         case BUBBLE_ENGINE_PARAM_MOTION_RATE: config->motion_rate = value; return true;
         case BUBBLE_ENGINE_PARAM_MOTION_DEPTH: config->motion_depth = value; return true;
         case BUBBLE_ENGINE_PARAM_MOTION_SHAPE: config->motion_shape = (BubbleMotionShape_t)((int32_t)value); return true;
+        case BUBBLE_ENGINE_PARAM_TEMPO_BPM: config->tempo_bpm = value; return true;
+        case BUBBLE_ENGINE_PARAM_TEMPO_SYNC_ENABLED: config->tempo_sync_enabled = (int32_t)value; return true;
+        case BUBBLE_ENGINE_PARAM_RHYTHM_DIVISION: config->rhythm_division = (BubbleRhythmDivision_t)((int32_t)value); return true;
+        case BUBBLE_ENGINE_PARAM_BURST_MODE: config->burst_mode = (BubbleBurstMode_t)((int32_t)value); return true;
+        case BUBBLE_ENGINE_PARAM_RHYTHM_PATTERN: config->rhythm_pattern = (uint32_t)value; return true;
         default: return false;
     }
 }
@@ -297,6 +302,11 @@ static bool GetPresetParam(const BubbleEnginePreset_t* preset, BubbleEngineParam
         case BUBBLE_ENGINE_PARAM_MOTION_RATE: *value = config->motion_rate; return true;
         case BUBBLE_ENGINE_PARAM_MOTION_DEPTH: *value = config->motion_depth; return true;
         case BUBBLE_ENGINE_PARAM_MOTION_SHAPE: *value = (float)config->motion_shape; return true;
+        case BUBBLE_ENGINE_PARAM_TEMPO_BPM: *value = config->tempo_bpm; return true;
+        case BUBBLE_ENGINE_PARAM_TEMPO_SYNC_ENABLED: *value = (float)config->tempo_sync_enabled; return true;
+        case BUBBLE_ENGINE_PARAM_RHYTHM_DIVISION: *value = (float)config->rhythm_division; return true;
+        case BUBBLE_ENGINE_PARAM_BURST_MODE: *value = (float)config->burst_mode; return true;
+        case BUBBLE_ENGINE_PARAM_RHYTHM_PATTERN: *value = (float)config->rhythm_pattern; return true;
         default: return false;
     }
 }

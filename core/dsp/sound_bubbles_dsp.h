@@ -64,6 +64,21 @@ typedef enum {
     BUBBLE_MOTION_SHAPE_HOLD = 2
 } BubbleMotionShape_t;
 
+typedef enum {
+    BUBBLE_RHYTHM_DIVISION_QUARTER = 0,
+    BUBBLE_RHYTHM_DIVISION_EIGHTH = 1,
+    BUBBLE_RHYTHM_DIVISION_SIXTEENTH = 2,
+    BUBBLE_RHYTHM_DIVISION_THIRTY_SECOND = 3
+} BubbleRhythmDivision_t;
+
+typedef enum {
+    BUBBLE_BURST_MODE_SINGLE = 0,
+    BUBBLE_BURST_MODE_SPRAY = 1,
+    BUBBLE_BURST_MODE_STRUM = 2,
+    BUBBLE_BURST_MODE_SWARM = 3,
+    BUBBLE_BURST_MODE_REVERSE_SWELL = 4
+} BubbleBurstMode_t;
+
 // --- Configuration Structs ---
 
 typedef struct {
@@ -165,6 +180,13 @@ typedef struct {
     float motion_depth;
     BubbleMotionShape_t motion_shape;
 
+    // Tempo/rhythm scheduler controls. When disabled, density uses free-running fractional spawning.
+    float tempo_bpm;
+    int32_t tempo_sync_enabled;
+    BubbleRhythmDivision_t rhythm_division;
+    BubbleBurstMode_t burst_mode;
+    uint32_t rhythm_pattern;
+
     // Product/runtime quality profile. It selects an active subset of the
     // compiled voice pool without changing per-voice DSP behavior.
     BubbleQualityProfile quality_profile;
@@ -263,6 +285,11 @@ typedef struct {
 
     float target_density;          // Current spawns per second
     float spawn_accumulator;       // Accumulates fractional spawns per block
+    float rhythm_step_accumulator; // Accumulates tempo-synced pattern steps in BUBBLES_BLOCK_SIZE ticks
+    int32_t rhythm_step_index;
+    int32_t strum_pending_count;
+    int32_t strum_step_index;
+    int32_t force_reverse_spawns;
 
     float internal_ducking_target; // Maintained internally by DSP core
     float smoothed_ducking_gain;   // Evaluated/smoothed exclusively in control-rate

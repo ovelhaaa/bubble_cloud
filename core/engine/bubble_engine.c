@@ -31,6 +31,11 @@ const BubbleParameterInfo BUBBLE_PARAMETER_INFO[] = {
     { BUBBLE_ENGINE_PARAM_MOTION_RATE, "motion_rate", 0.0f, 1.0f, 0.18f, BUBBLE_PARAMETER_CURVE_EXP, "norm", BUBBLE_PARAMETER_FLAG_DEVELOPER | BUBBLE_PARAMETER_FLAG_AUDIBLE },
     { BUBBLE_ENGINE_PARAM_MOTION_DEPTH, "motion_depth", 0.0f, 1.0f, 0.0f, BUBBLE_PARAMETER_CURVE_LINEAR, "norm", BUBBLE_PARAMETER_FLAG_DEVELOPER | BUBBLE_PARAMETER_FLAG_AUDIBLE },
     { BUBBLE_ENGINE_PARAM_MOTION_SHAPE, "motion_shape", 0.0f, 2.0f, 0.0f, BUBBLE_PARAMETER_CURVE_LINEAR, "enum", BUBBLE_PARAMETER_FLAG_DEVELOPER | BUBBLE_PARAMETER_FLAG_INTEGER },
+    { BUBBLE_ENGINE_PARAM_TEMPO_BPM, "tempo_bpm", 20.0f, 300.0f, 120.0f, BUBBLE_PARAMETER_CURVE_LINEAR, "bpm", BUBBLE_PARAMETER_FLAG_DEVELOPER | BUBBLE_PARAMETER_FLAG_AUDIBLE },
+    { BUBBLE_ENGINE_PARAM_TEMPO_SYNC_ENABLED, "tempo_sync_enabled", 0.0f, 1.0f, 0.0f, BUBBLE_PARAMETER_CURVE_TOGGLE, "bool", BUBBLE_PARAMETER_FLAG_DEVELOPER | BUBBLE_PARAMETER_FLAG_BOOLEAN },
+    { BUBBLE_ENGINE_PARAM_RHYTHM_DIVISION, "rhythm_division", 0.0f, 3.0f, 2.0f, BUBBLE_PARAMETER_CURVE_LINEAR, "enum", BUBBLE_PARAMETER_FLAG_DEVELOPER | BUBBLE_PARAMETER_FLAG_INTEGER },
+    { BUBBLE_ENGINE_PARAM_BURST_MODE, "burst_mode", 0.0f, 4.0f, 0.0f, BUBBLE_PARAMETER_CURVE_LINEAR, "enum", BUBBLE_PARAMETER_FLAG_DEVELOPER | BUBBLE_PARAMETER_FLAG_INTEGER },
+    { BUBBLE_ENGINE_PARAM_RHYTHM_PATTERN, "rhythm_pattern", 0.0f, 4294967295.0f, 4369.0f, BUBBLE_PARAMETER_CURVE_LINEAR, "bitmask", BUBBLE_PARAMETER_FLAG_DEVELOPER | BUBBLE_PARAMETER_FLAG_INTEGER },
     { BUBBLE_ENGINE_PARAM_RUNTIME_ENVELOPE, "runtime_envelope", 0.0f, 1.0f, 0.0f, BUBBLE_PARAMETER_CURVE_LINEAR, "norm", BUBBLE_PARAMETER_FLAG_RUNTIME }
 };
 
@@ -94,7 +99,7 @@ static int MacroIndex(BubbleParameterId parameter) {
 
 static bool IsDeveloperOnlyParameter(BubbleParameterId parameter) {
     return parameter >= BUBBLE_ENGINE_PARAM_NOISE_FLOOR &&
-           parameter <= BUBBLE_ENGINE_PARAM_MOTION_SHAPE &&
+           parameter <= BUBBLE_ENGINE_PARAM_RHYTHM_PATTERN &&
            parameter != BUBBLE_ENGINE_PARAM_QUALITY_PROFILE &&
            parameter != BUBBLE_ENGINE_PARAM_ACTIVE_VOICE_LIMIT;
 }
@@ -249,6 +254,11 @@ void bubble_engine_default_config(BubbleEngineConfig_t* config) {
     config->motion_rate = 0.18f;
     config->motion_depth = 0.0f;
     config->motion_shape = BUBBLE_MOTION_SHAPE_TRIANGLE;
+    config->tempo_bpm = 120.0f;
+    config->tempo_sync_enabled = 0;
+    config->rhythm_division = BUBBLE_RHYTHM_DIVISION_SIXTEENTH;
+    config->burst_mode = BUBBLE_BURST_MODE_SINGLE;
+    config->rhythm_pattern = 0x1111u;
     config->quality_profile = BUBBLE_QUALITY_PROFILE_WEB_STANDARD;
     config->active_voice_limit = BUBBLE_QUALITY_DEFAULT_VOICE_LIMIT;
 
@@ -434,6 +444,11 @@ bool bubble_engine_set_parameter(BubbleEngine_t* engine, BubbleEngineParameterId
         case BUBBLE_ENGINE_PARAM_MOTION_RATE: config.motion_rate = value; break;
         case BUBBLE_ENGINE_PARAM_MOTION_DEPTH: config.motion_depth = value; break;
         case BUBBLE_ENGINE_PARAM_MOTION_SHAPE: config.motion_shape = (BubbleMotionShape_t)((int32_t)value); break;
+        case BUBBLE_ENGINE_PARAM_TEMPO_BPM: config.tempo_bpm = Clampf(value, 20.0f, 300.0f); break;
+        case BUBBLE_ENGINE_PARAM_TEMPO_SYNC_ENABLED: config.tempo_sync_enabled = (value >= 0.5f) ? 1 : 0; break;
+        case BUBBLE_ENGINE_PARAM_RHYTHM_DIVISION: config.rhythm_division = (BubbleRhythmDivision_t)((int32_t)Clampf(value, 0.0f, 3.0f)); break;
+        case BUBBLE_ENGINE_PARAM_BURST_MODE: config.burst_mode = (BubbleBurstMode_t)((int32_t)Clampf(value, 0.0f, 4.0f)); break;
+        case BUBBLE_ENGINE_PARAM_RHYTHM_PATTERN: config.rhythm_pattern = (uint32_t)value; break;
         case BUBBLE_ENGINE_PARAM_QUALITY_PROFILE:
             return bubble_engine_set_quality_profile(engine, (BubbleQualityProfile)((int32_t)value));
         case BUBBLE_ENGINE_PARAM_ACTIVE_VOICE_LIMIT: config.active_voice_limit = (int32_t)value; break;
@@ -532,6 +547,11 @@ bool bubble_engine_get_parameter(const BubbleEngine_t* engine, BubbleEngineParam
         case BUBBLE_ENGINE_PARAM_MOTION_RATE: *value = config->motion_rate; break;
         case BUBBLE_ENGINE_PARAM_MOTION_DEPTH: *value = config->motion_depth; break;
         case BUBBLE_ENGINE_PARAM_MOTION_SHAPE: *value = (float)config->motion_shape; break;
+        case BUBBLE_ENGINE_PARAM_TEMPO_BPM: *value = config->tempo_bpm; break;
+        case BUBBLE_ENGINE_PARAM_TEMPO_SYNC_ENABLED: *value = (float)config->tempo_sync_enabled; break;
+        case BUBBLE_ENGINE_PARAM_RHYTHM_DIVISION: *value = (float)config->rhythm_division; break;
+        case BUBBLE_ENGINE_PARAM_BURST_MODE: *value = (float)config->burst_mode; break;
+        case BUBBLE_ENGINE_PARAM_RHYTHM_PATTERN: *value = (float)config->rhythm_pattern; break;
         case BUBBLE_ENGINE_PARAM_QUALITY_PROFILE: *value = (float)config->quality_profile; break;
         case BUBBLE_ENGINE_PARAM_ACTIVE_VOICE_LIMIT: *value = (float)config->active_voice_limit; break;
         case BUBBLE_ENGINE_PARAM_RUNTIME_ENVELOPE: *value = engine->env_follower_state; break;
