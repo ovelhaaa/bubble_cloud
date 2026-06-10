@@ -152,6 +152,12 @@ extern const BubbleParameterInfo BUBBLE_PARAMETER_INFO[];
 extern const int BUBBLE_PARAMETER_INFO_COUNT;
 const BubbleParameterInfo* bubble_engine_get_parameter_info(BubbleParameterId parameter);
 void bubble_engine_default_config(BubbleEngineConfig_t* config);
+void bubble_macro_map_default_values(float macro_values[BUBBLES_MACRO_COUNT]);
+void bubble_macro_map_resolve(const float macro_values[BUBBLES_MACRO_COUNT],
+                              const BubbleEngineConfig_t* base_config,
+                              BubbleEngineConfig_t* out_config,
+                              float* master_dry_gain,
+                              float* master_wet_gain);
 void bubble_engine_init(BubbleEngine_t* engine, int16_t* delay_buffer_memory, const BubbleEngineConfig_t* initial_config);
 void bubble_engine_reset(BubbleEngine_t* engine);
 void bubble_engine_process(BubbleEngine_t* engine, const float* in_mono, float* out_left, float* out_right, int num_samples);

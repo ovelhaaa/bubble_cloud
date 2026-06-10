@@ -18,6 +18,7 @@ def test_core_numerical_stability_vectors_and_extreme_presets(tmp_path: Path) ->
         "-Icore/dsp",
         "tests/dsp/numerical_stability_harness.c",
         "core/engine/bubble_engine.c",
+        "core/engine/bubble_macro_map.c",
         "core/dsp/sound_bubbles_dsp.c",
         "-lm",
         "-o",

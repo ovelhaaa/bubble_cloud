@@ -176,13 +176,13 @@ esp_err_t bubble_esp32_controls_apply(BubbleEngine_t* engine, const BubbleEsp32C
         }
     }
 
-    if (!bubble_engine_set_parameter(engine, BUBBLE_ENGINE_PARAM_FREEZE_ENABLED, state->freeze_enabled ? 1.0f : 0.0f)) {
+    if (!bubble_engine_set_parameter(engine, BUBBLE_PARAM_FREEZE, state->freeze_enabled ? 1.0f : 0.0f)) {
         return ESP_FAIL;
     }
 
     // Footswitch is the global wet-bypass gesture in this reference port.
     if (state->footswitch_pressed) {
-        (void)bubble_engine_set_parameter(engine, BUBBLE_ENGINE_PARAM_MIX_WET_GAIN, 0.0f);
+        (void)bubble_engine_set_parameter(engine, BUBBLE_PARAM_MIX, 0.0f);
     }
 
     return ESP_OK;

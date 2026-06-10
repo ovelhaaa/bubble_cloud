@@ -4,6 +4,8 @@
 #include <math.h>
 #include <stddef.h>
 
+void bubble_macro_map_default_values(float macro_values[BUBBLES_MACRO_COUNT]);
+
 const BubbleQualityProfileLimits_t BUBBLE_QUALITY_PROFILE_LIMITS[BUBBLE_QUALITY_PROFILE_COUNT] = {
     { BUBBLE_QUALITY_PROFILE_MCU_SAFE,     "MCU_SAFE",      35, 256,  8 },
     { BUBBLE_QUALITY_PROFILE_MCU_PLUS,     "MCU_PLUS",      50, 384, 16 },
@@ -162,14 +164,8 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
 
     engine->master_dry_gain = 1.0f;
     engine->master_wet_gain = 1.0f;
-    for (int i = 0; i < BUBBLES_MACRO_COUNT; i++) {
-        engine->macro_values[i] = 0.5f;
-        engine->macro_targets[i] = 0.5f;
-    }
-    engine->macro_values[8] = 0.0f;
-    engine->macro_targets[8] = 0.0f;
-    engine->macro_values[9] = 0.0f;
-    engine->macro_targets[9] = 0.0f;
+    bubble_macro_map_default_values(engine->macro_values);
+    bubble_macro_map_default_values(engine->macro_targets);
     engine->macro_dirty_mask = (1u << BUBBLES_MACRO_COUNT) - 1u;
     engine->developer_mode = 0;
     engine->final_limiter_gain = 1.0f;

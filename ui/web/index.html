@@ -276,8 +276,15 @@
                             </span>
                         </button>
 
-                        <div class="accordion-content" x-show="openAccordion === group.name" x-collapse x-cloak>
+                        <div class="accordion-content" x-show="openAccordion === group.name && (developerMode || group.name === 'Advanced')" x-collapse x-cloak>
                             <div class="param-row" x-show="group.name === 'Advanced'">
+                                <div class="param-labels">
+                                    <label for="developer-mode">Developer diagnostics</label>
+                                    <input id="developer-mode" type="checkbox" x-model="developerMode" @change="saveDraft()">
+                                </div>
+                                <p class="helper-text">Desligado: Simple/Advanced enviam apenas macros musicais. Ligado: controles internos abaixo sobrescrevem o core para diagnóstico e não fazem parte do fluxo principal de presets.</p>
+                            </div>
+                            <div class="param-row" x-show="group.name === 'Advanced' && developerMode">
                                 <div class="param-labels">
                                     <label for="advanced-raw-range">Advanced: raw range</label>
                                     <input id="advanced-raw-range" type="checkbox" x-model="showAdvancedRawRange" @change="saveDraft()">
@@ -285,7 +292,7 @@
                                 <p class="helper-text">Desligado: performance ranges musicais. Ligado: faixa técnica completa do engine.</p>
                             </div>
                             <template x-for="paramKey in group.params" :key="paramKey">
-                                <div class="param-row">
+                                <div class="param-row" x-show="developerMode">
                                     <div class="param-labels">
                                         <div class="param-label-wrapper">
                                             <label :for="paramKey" x-text="formatLabel(paramKey)" :title="getDirectionalTooltip(paramKey)"></label>

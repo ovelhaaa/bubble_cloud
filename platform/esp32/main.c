@@ -164,10 +164,10 @@ void app_main(void) {
     load_boot_preset_or_default();
 
     const BubbleEsp32PotConfig pots[] = {
-        { .channel = ADC_CHANNEL_0, .parameter = BUBBLE_ENGINE_PARAM_DENSITY_SUSTAIN, .min_value = 2.0f, .max_value = 50.0f },
-        { .channel = ADC_CHANNEL_3, .parameter = BUBBLE_ENGINE_PARAM_MIX_WET_GAIN, .min_value = 0.0f, .max_value = 1.0f },
-        { .channel = ADC_CHANNEL_6, .parameter = BUBBLE_ENGINE_PARAM_STEREO_WIDTH, .min_value = 0.0f, .max_value = 1.0f },
-        { .channel = ADC_CHANNEL_7, .parameter = BUBBLE_ENGINE_PARAM_FREEZE_AMOUNT, .min_value = 0.0f, .max_value = 1.0f },
+        { .channel = ADC_CHANNEL_0, .parameter = BUBBLE_PARAM_DENSITY, .min_value = 0.0f, .max_value = 1.0f },
+        { .channel = ADC_CHANNEL_3, .parameter = BUBBLE_PARAM_MIX, .min_value = 0.0f, .max_value = 1.0f },
+        { .channel = ADC_CHANNEL_6, .parameter = BUBBLE_PARAM_SPACE, .min_value = 0.0f, .max_value = 1.0f },
+        { .channel = ADC_CHANNEL_7, .parameter = BUBBLE_PARAM_FREEZE, .min_value = 0.0f, .max_value = 1.0f },
     };
     const BubbleEsp32RotaryConfig encoders[] = {
         { .gpio_a = 32, .gpio_b = 34, .gpio_button = 35 },

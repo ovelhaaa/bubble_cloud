@@ -45,66 +45,11 @@ static float Clamp01f(float value) {
     return value;
 }
 
-static float LerpF(float a, float b, float t) {
-    return a + (b - a) * Clamp01f(t);
-}
-
 static int MacroIndex(BubbleParameterId parameter) {
     if (parameter >= BUBBLE_PARAM_DENSITY && parameter <= BUBBLE_PARAM_MIX) {
         return (int)parameter - (int)BUBBLE_PARAM_DENSITY;
     }
     return -1;
-}
-
-static BubbleParameterId MacroForDeveloperParameter(BubbleParameterId parameter) {
-    switch (parameter) {
-        case BUBBLE_ENGINE_PARAM_DENSITY_BURST:
-        case BUBBLE_ENGINE_PARAM_DENSITY_SUSTAIN:
-        case BUBBLE_ENGINE_PARAM_DENSITY_DECAY:
-        case BUBBLE_ENGINE_PARAM_BURST_IMMEDIATE_COUNT: return BUBBLE_PARAM_DENSITY;
-        case BUBBLE_ENGINE_PARAM_WET_DRIVE:
-        case BUBBLE_ENGINE_PARAM_WET_OUTPUT_TRIM:
-        case BUBBLE_ENGINE_PARAM_SUSTAIN_DIFFUSION_AMOUNT:
-        case BUBBLE_ENGINE_PARAM_SUSTAIN_DIFFUSION_DELAY:
-        case BUBBLE_ENGINE_PARAM_SUSTAIN_DIFFUSION_FEEDBACK: return BUBBLE_PARAM_BLOOM;
-        case BUBBLE_ENGINE_PARAM_MICRO_DURATION_MS_MIN:
-        case BUBBLE_ENGINE_PARAM_MICRO_DURATION_MS_MAX:
-        case BUBBLE_ENGINE_PARAM_SHORT_DURATION_MS_MIN:
-        case BUBBLE_ENGINE_PARAM_SHORT_DURATION_MS_MAX:
-        case BUBBLE_ENGINE_PARAM_BODY_DURATION_MS_MIN:
-        case BUBBLE_ENGINE_PARAM_BODY_DURATION_MS_MAX:
-        case BUBBLE_ENGINE_PARAM_ATTACK_RATE_JITTER_DEPTH:
-        case BUBBLE_ENGINE_PARAM_REVERSE_PROBABILITY: return BUBBLE_PARAM_MOTION;
-        case BUBBLE_ENGINE_PARAM_DROPLET_PROBABILITY:
-        case BUBBLE_ENGINE_PARAM_DROPLET_GAIN:
-        case BUBBLE_ENGINE_PARAM_DROPLET_LENGTH_SCALE:
-        case BUBBLE_ENGINE_PARAM_ENVELOPE_VARIATION:
-        case BUBBLE_ENGINE_PARAM_TONE_VARIATION: return BUBBLE_PARAM_TEXTURE;
-        case BUBBLE_ENGINE_PARAM_STEREO_WIDTH:
-        case BUBBLE_ENGINE_PARAM_ATTACK_PAN_SPREAD:
-        case BUBBLE_ENGINE_PARAM_SUSTAIN_PAN_SPREAD: return BUBBLE_PARAM_SPACE;
-        case BUBBLE_ENGINE_PARAM_TRACKING_THRESH:
-        case BUBBLE_ENGINE_PARAM_SUSTAIN_THRESH:
-        case BUBBLE_ENGINE_PARAM_TRANSIENT_DELTA:
-        case BUBBLE_ENGINE_PARAM_DUCK_BURST_LEVEL:
-        case BUBBLE_ENGINE_PARAM_DUCK_ATTACK_COEF:
-        case BUBBLE_ENGINE_PARAM_DUCK_RELEASE_COEF: return BUBBLE_PARAM_GRAVITY;
-        case BUBBLE_ENGINE_PARAM_MEMORY_MIX:
-        case BUBBLE_ENGINE_PARAM_MEMORY_PULL:
-        case BUBBLE_ENGINE_PARAM_MEMORY_DARKENING:
-        case BUBBLE_ENGINE_PARAM_MEMORY_REGION_MIN_OFFSET_SAMPLES:
-        case BUBBLE_ENGINE_PARAM_MEMORY_REGION_MAX_OFFSET_SAMPLES: return BUBBLE_PARAM_MEMORY;
-        case BUBBLE_ENGINE_PARAM_ATTACK_BRIGHTNESS:
-        case BUBBLE_ENGINE_PARAM_SUSTAIN_DARKNESS: return BUBBLE_PARAM_CLARITY;
-        case BUBBLE_ENGINE_PARAM_WET_CLIP_AMOUNT: return BUBBLE_PARAM_WARMTH;
-        case BUBBLE_ENGINE_PARAM_FREEZE_AMOUNT:
-        case BUBBLE_ENGINE_PARAM_FREEZE_ENABLED: return BUBBLE_PARAM_FREEZE;
-        case BUBBLE_ENGINE_PARAM_SHIMMER_AMOUNT:
-        case BUBBLE_ENGINE_PARAM_PITCH_MODE: return BUBBLE_PARAM_SPARKLE;
-        case BUBBLE_ENGINE_PARAM_MIX_DRY_GAIN:
-        case BUBBLE_ENGINE_PARAM_MIX_WET_GAIN: return BUBBLE_PARAM_MIX;
-        default: return (BubbleParameterId)-1;
-    }
 }
 
 static bool IsDeveloperOnlyParameter(BubbleParameterId parameter) {
@@ -115,82 +60,16 @@ static bool IsDeveloperOnlyParameter(BubbleParameterId parameter) {
 }
 
 static void ApplyMacroConfig(BubbleEngine_t* engine) {
-    BubbleEngineConfig_t config = engine->config;
-    float density = engine->macro_values[MacroIndex(BUBBLE_PARAM_DENSITY)];
-    float bloom = engine->macro_values[MacroIndex(BUBBLE_PARAM_BLOOM)];
-    float motion = engine->macro_values[MacroIndex(BUBBLE_PARAM_MOTION)];
-    float texture = engine->macro_values[MacroIndex(BUBBLE_PARAM_TEXTURE)];
-    float space = engine->macro_values[MacroIndex(BUBBLE_PARAM_SPACE)];
-    float gravity = engine->macro_values[MacroIndex(BUBBLE_PARAM_GRAVITY)];
-    float memory = engine->macro_values[MacroIndex(BUBBLE_PARAM_MEMORY)];
-    float clarity = engine->macro_values[MacroIndex(BUBBLE_PARAM_CLARITY)];
-    float freeze = engine->macro_values[MacroIndex(BUBBLE_PARAM_FREEZE)];
-    float sparkle = engine->macro_values[MacroIndex(BUBBLE_PARAM_SPARKLE)];
-    float warmth = engine->macro_values[MacroIndex(BUBBLE_PARAM_WARMTH)];
-    float mix = engine->macro_values[MacroIndex(BUBBLE_PARAM_MIX)];
-
-    config.density_burst = LerpF(20.0f, 140.0f, density);
-    config.density_sustain = LerpF(8.0f, 55.0f, density);
-    config.density_decay = LerpF(1.0f, 18.0f, density);
-    config.burst_immediate_count = (int32_t)(LerpF(2.0f, 9.0f, density) + 0.5f);
-
-    config.sustain_diffusion_enable = bloom > 0.08f ? 1 : 0;
-    config.sustain_diffusion_amount = LerpF(0.0f, 0.72f, bloom);
-    config.sustain_diffusion_delay = (int32_t)(LerpF(8.0f, 42.0f, bloom) + 0.5f);
-    config.sustain_diffusion_feedback = LerpF(0.20f, 0.68f, bloom);
-    config.wet_drive = LerpF(0.75f, 1.45f, bloom);
-    config.wet_output_trim = LerpF(0.70f, 1.15f, bloom);
-
-    config.class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_min = LerpF(5.0f, 2.0f, motion);
-    config.class_configs[BUBBLE_CLASS_MICRO_ATTACK].duration_ms_max = LerpF(18.0f, 45.0f, motion);
-    config.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].duration_ms_min = LerpF(12.0f, 60.0f, motion);
-    config.class_configs[BUBBLE_CLASS_SHORT_INTERMEDIATE].duration_ms_max = LerpF(35.0f, 160.0f, motion);
-    config.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_min = LerpF(60.0f, 220.0f, motion);
-    config.class_configs[BUBBLE_CLASS_SUSTAIN_BODY].duration_ms_max = LerpF(140.0f, 520.0f, motion);
-    config.attack_rate_jitter = motion > 0.05f ? 1 : 0;
-    config.attack_rate_jitter_depth = LerpF(0.002f, 0.09f, motion);
-    config.reverse_probability = LerpF(0.0f, 0.35f, motion);
-
-    config.droplet_enable = texture > 0.10f ? 1 : 0;
-    config.droplet_probability = LerpF(0.02f, 0.38f, texture);
-    config.droplet_gain = LerpF(0.12f, 0.70f, texture);
-    config.droplet_length_scale = LerpF(0.28f, 0.95f, texture);
-    config.envelope_variation = LerpF(0.05f, 0.85f, texture);
-    config.tone_variation = LerpF(0.05f, 0.85f, texture);
-
-    config.stereo_width = LerpF(0.30f, 1.00f, space);
-    config.attack_pan_spread = LerpF(0.25f, 1.00f, space);
-    config.sustain_pan_spread = LerpF(0.10f, 0.85f, space);
-
-    config.tracking_thresh = LerpF(0.01f, 0.12f, gravity);
-    config.sustain_thresh = LerpF(0.02f, 0.18f, gravity);
-    config.transient_delta = LerpF(0.02f, 0.22f, 1.0f - gravity);
-    config.duck_burst_level = LerpF(0.45f, 0.08f, gravity);
-    config.duck_attack_coef = LerpF(0.55f, 0.97f, gravity);
-    config.duck_release_coef = LerpF(0.92f, 0.999f, gravity);
-
-    config.memory_mix = LerpF(0.12f, 0.72f, memory);
-    config.memory_pull = LerpF(0.08f, 0.62f, memory);
-    config.memory_darkening = LerpF(0.08f, 0.72f, memory);
-    config.memory_region.min_offset_samples = (int32_t)(LerpF(8000.0f, 50000.0f, memory) + 0.5f);
-    config.memory_region.max_offset_samples = (int32_t)(LerpF(24000.0f, 180000.0f, memory) + 0.5f);
-
-    config.attack_brightness = LerpF(0.80f, 1.65f, clarity) * LerpF(1.12f, 0.82f, warmth);
-    config.sustain_darkness = LerpF(0.72f, 0.10f, clarity) + LerpF(0.0f, 0.18f, warmth);
-    if (config.sustain_darkness > 1.0f) config.sustain_darkness = 1.0f;
-    config.wet_clip_amount = LerpF(0.04f, 0.55f, warmth);
-
-    config.freeze_amount = freeze;
-    config.freeze_enabled = freeze >= 0.5f ? 1 : 0;
-
-    config.shimmer_amount = sparkle;
-    config.pitch_mode = sparkle > 0.05f ? BUBBLE_PITCH_MODE_SHIMMER : BUBBLE_PITCH_MODE_UNISON;
-
-    engine->master_dry_gain = LerpF(0.85f, 0.25f, mix);
-    engine->master_wet_gain = LerpF(0.15f, 0.90f, mix);
-
+    if (engine == NULL) return;
+    BubbleEngineConfig_t config;
+    float master_dry_gain = engine->master_dry_gain;
+    float master_wet_gain = engine->master_wet_gain;
+    bubble_macro_map_resolve(engine->macro_values, &engine->config, &config, &master_dry_gain, &master_wet_gain);
+    engine->master_dry_gain = master_dry_gain;
+    engine->master_wet_gain = master_wet_gain;
     SoundBubbles_UpdateConfig(engine, &config);
 }
+
 
 static void ApplyMacroControlRate(BubbleEngine_t* engine) {
     if (engine == NULL || engine->macro_dirty_mask == 0u) return;
@@ -392,6 +271,10 @@ bool bubble_engine_set_parameter(BubbleEngine_t* engine, BubbleEngineParameterId
         return true;
     }
 
+    if (!engine->developer_mode && IsDeveloperOnlyParameter(parameter)) {
+        return false;
+    }
+
     BubbleEngineConfig_t config = engine->config;
     bool config_changed = true;
 
@@ -486,7 +369,6 @@ bool bubble_engine_get_parameter(const BubbleEngine_t* engine, BubbleEngineParam
     }
 
     if (!engine->developer_mode && IsDeveloperOnlyParameter(parameter)) {
-        (void)MacroForDeveloperParameter(parameter);
         return false;
     }
 

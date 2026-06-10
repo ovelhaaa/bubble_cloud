@@ -258,6 +258,23 @@ const WASM_PARAM_ID_MAP = Object.freeze({
   final_limiter_release_ms: 62,
 });
 
+const WASM_MACRO_PARAM_ID_MAP = Object.freeze({
+  density: 2000,
+  bloom: 2001,
+  motion: 2002,
+  texture: 2003,
+  space: 2004,
+  gravity: 2005,
+  memory: 2006,
+  clarity: 2007,
+  freeze: 2008,
+  sparkle: 2009,
+  warmth: 2010,
+  mix: 2011,
+});
+
+const WASM_DEVELOPER_MODE_PARAM_ID = 2999;
+
 function clamp(value, min, max) {
   if (Number.isNaN(value)) return min;
   return Math.min(max, Math.max(min, value));
@@ -300,6 +317,7 @@ document.addEventListener('alpine:init', () => {
     shiftMode: false,
     compareMode: false,
     showAdvancedRawRange: false,
+    developerMode: false,
     baseline: { ...BASELINE },
     factoryPresets: [],
     selectedPresetCategory: 'All',
@@ -501,6 +519,7 @@ document.addEventListener('alpine:init', () => {
           params: this.resolvedParams,
           base_params: this.baseParams,
           macro_values: this.macroValues,
+          developer_mode: this.developerMode,
           savedAt: Date.now(),
         })
       );
@@ -560,6 +579,7 @@ document.addEventListener('alpine:init', () => {
           this.baseParams = { ...this.baseParams, ...(parsed.base_params || parsed.params || {}) };
           this.params = this.baseParams;
           this.macroValues = window.BubbleCloudMacroLayer.normalizeMacroValues(parsed.macro_values);
+          this.developerMode = Boolean(parsed.developer_mode);
           this.isDraft = true;
           this.hasUnexportedChanges = true;
           this.validateParamRanges();
@@ -887,15 +907,28 @@ document.addEventListener('alpine:init', () => {
     },
 
     pushParamToAudio(key) {
-      if (!this.workletReady || !this.workletNode) return;
+      if (!this.workletReady || !this.workletNode || !this.developerMode) return;
       const id = WASM_PARAM_ID_MAP[key];
       if (id === undefined) return;
       const activeParams = this.compareMode ? this.baseParams : this.resolvedParams;
       this.workletNode.port.postMessage({ type: 'param', id, value: Number(activeParams[key]) });
     },
 
+    pushMacroToAudio(key) {
+      if (!this.workletReady || !this.workletNode) return;
+      const id = WASM_MACRO_PARAM_ID_MAP[key];
+      if (id === undefined) return;
+      const macroValues = this.compareMode ? window.BubbleCloudMacroLayer.createNeutralMacroValues() : this.macroValues;
+      this.workletNode.port.postMessage({ type: 'param', id, value: Number(macroValues[key]) });
+    },
+
     pushAllParamsToAudio() {
-      Object.keys(this.resolvedParams).forEach((key) => this.pushParamToAudio(key));
+      if (!this.workletReady || !this.workletNode) return;
+      this.workletNode.port.postMessage({ type: 'param', id: WASM_DEVELOPER_MODE_PARAM_ID, value: this.developerMode ? 1 : 0 });
+      Object.keys(this.macroValues).forEach((key) => this.pushMacroToAudio(key));
+      if (this.developerMode) {
+        Object.keys(this.resolvedParams).forEach((key) => this.pushParamToAudio(key));
+      }
     },
 
     queueParamFlush() {
@@ -1271,11 +1304,19 @@ document.addEventListener('alpine:init', () => {
 
     pushAllParamsToPort(port) {
       port.postMessage({ type: 'quality-profile', profile: Number(this.selectedQualityProfile) });
-      Object.keys(this.resolvedParams).forEach((key) => {
-        const id = WASM_PARAM_ID_MAP[key];
+      port.postMessage({ type: 'param', id: WASM_DEVELOPER_MODE_PARAM_ID, value: this.developerMode ? 1 : 0 });
+      Object.keys(this.macroValues).forEach((key) => {
+        const id = WASM_MACRO_PARAM_ID_MAP[key];
         if (id === undefined) return;
-        port.postMessage({ type: 'param', id, value: Number(this.resolvedParams[key]) });
+        port.postMessage({ type: 'param', id, value: Number(this.macroValues[key]) });
       });
+      if (this.developerMode) {
+        Object.keys(this.resolvedParams).forEach((key) => {
+          const id = WASM_PARAM_ID_MAP[key];
+          if (id === undefined) return;
+          port.postMessage({ type: 'param', id, value: Number(this.resolvedParams[key]) });
+        });
+      }
     },
 
     isMp3ExportAvailable() {
