@@ -1,0 +1,91 @@
+{
+  "schema_version": 3,
+  "preset_name": "Cosmic Swell",
+  "preset_slug": "cosmic-swell",
+  "engine_version": "post-diffusion-ui",
+  "created_at": "2026-06-10T00:00:00Z",
+  "ui_category": "Ambient",
+  "tags": [
+    "cosmic",
+    "swell",
+    "wide",
+    "shimmer",
+    "web-ultra"
+  ],
+  "esp32_safe": false,
+  "quality_tier": "HIGH_QUALITY",
+  "description": "Swell cósmico amplo com shimmer moderado e movimento orbital para transições e finais de música.",
+  "params": {
+    "burst_immediate_count": 2,
+    "density_burst": 30,
+    "density_sustain": 50,
+    "density_decay": 1.8,
+    "body_duration_ms_min": 210,
+    "body_duration_ms_max": 520,
+    "rng_seed": 1016,
+    "stereo_width": 1.0,
+    "attack_pan_spread": 0.86,
+    "sustain_pan_spread": 0.96,
+    "sustain_diffusion_enable": 1,
+    "sustain_diffusion_amount": 0.82,
+    "sustain_diffusion_stages": 2,
+    "sustain_diffusion_feedback": 0.68,
+    "droplet_enable": 1,
+    "droplet_probability": 0.08,
+    "droplet_gain": 0.3,
+    "memory_mix": 0.72,
+    "memory_pull": 0.58,
+    "attack_brightness": 1.12,
+    "sustain_darkness": 0.38,
+    "quality_profile": 3,
+    "active_voice_limit": 32,
+    "freeze_amount": 0.52,
+    "freeze_enabled": 1,
+    "reverse_probability": 0.22,
+    "pitch_mode": 1,
+    "shimmer_amount": 0.62,
+    "motion_rate": 0.38,
+    "motion_depth": 0.58,
+    "motion_shape": 0
+  },
+  "macro_values": {
+    "density": 0.6,
+    "bloom": 0.94,
+    "motion": 0.7,
+    "texture": 0.54,
+    "space": 0.96,
+    "gravity": 0.5,
+    "memory": 0.76,
+    "clarity": 0.4,
+    "freeze": 0.64,
+    "sparkle": 0.74,
+    "warmth": 0.48,
+    "mix": 0.76
+  },
+  "metadata": {
+    "recommended_min_profile": "WEB_ULTRA",
+    "mcu_compatibility": {
+      "compatible": false,
+      "profile": "WEB_ULTRA",
+      "active_voice_limit": 32
+    },
+    "feature_usage": {
+      "freeze": {
+        "enabled": true,
+        "amount": 0.52
+      },
+      "reverse": {
+        "probability": 0.22
+      },
+      "pitch": {
+        "mode": 1,
+        "shimmer_amount": 0.62
+      },
+      "motion": {
+        "rate": 0.38,
+        "depth": 0.58,
+        "shape": 0
+      }
+    }
+  }
+}

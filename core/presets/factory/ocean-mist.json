@@ -1,0 +1,85 @@
+{
+  "schema_version": 3,
+  "preset_name": "Ocean Mist",
+  "preset_slug": "ocean-mist",
+  "engine_version": "post-diffusion-ui",
+  "created_at": "2026-06-10T00:00:00Z",
+  "ui_category": "Ambient",
+  "tags": [
+    "ocean",
+    "mist",
+    "fluid",
+    "dark",
+    "mcu-plus"
+  ],
+  "esp32_safe": true,
+  "quality_tier": "ESP32_SAFE",
+  "description": "Névoa estéreo fluida e respirante, escura o suficiente para funcionar atrás de melodias.",
+  "params": {
+    "density_burst": 28,
+    "density_sustain": 30,
+    "density_decay": 2.2,
+    "body_duration_ms_min": 130,
+    "body_duration_ms_max": 340,
+    "rng_seed": 1006,
+    "stereo_width": 0.88,
+    "sustain_pan_spread": 0.78,
+    "sustain_diffusion_enable": 1,
+    "sustain_diffusion_amount": 0.54,
+    "sustain_diffusion_stages": 1,
+    "sustain_diffusion_feedback": 0.5,
+    "memory_mix": 0.58,
+    "memory_pull": 0.5,
+    "memory_darkening": 0.6,
+    "attack_brightness": 0.7,
+    "sustain_darkness": 0.7,
+    "quality_profile": 1,
+    "active_voice_limit": 16,
+    "freeze_amount": 0.24,
+    "freeze_enabled": 1,
+    "reverse_probability": 0.05,
+    "motion_rate": 0.24,
+    "motion_depth": 0.34,
+    "motion_shape": 0
+  },
+  "macro_values": {
+    "density": 0.46,
+    "bloom": 0.76,
+    "motion": 0.52,
+    "texture": 0.44,
+    "space": 0.82,
+    "gravity": 0.64,
+    "memory": 0.64,
+    "clarity": 0.34,
+    "freeze": 0.44,
+    "sparkle": 0.24,
+    "warmth": 0.58,
+    "mix": 0.57
+  },
+  "metadata": {
+    "recommended_min_profile": "MCU_PLUS",
+    "mcu_compatibility": {
+      "compatible": true,
+      "profile": "MCU_PLUS",
+      "active_voice_limit": 16
+    },
+    "feature_usage": {
+      "freeze": {
+        "enabled": true,
+        "amount": 0.24
+      },
+      "reverse": {
+        "probability": 0.05
+      },
+      "pitch": {
+        "mode": 0,
+        "shimmer_amount": 0.0
+      },
+      "motion": {
+        "rate": 0.24,
+        "depth": 0.34,
+        "shape": 0
+      }
+    }
+  }
+}

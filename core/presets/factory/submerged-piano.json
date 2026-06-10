@@ -1,0 +1,83 @@
+{
+  "schema_version": 3,
+  "preset_name": "Submerged Piano",
+  "preset_slug": "submerged-piano",
+  "engine_version": "post-diffusion-ui",
+  "created_at": "2026-06-10T00:00:00Z",
+  "ui_category": "Utility",
+  "tags": [
+    "piano",
+    "submerged",
+    "dark",
+    "memory",
+    "mcu-safe"
+  ],
+  "esp32_safe": true,
+  "quality_tier": "ESP32_SAFE",
+  "description": "Reflexos abafados e submersos para piano ou clean guitar, preservando transientes com corpo escuro.",
+  "params": {
+    "burst_immediate_count": 2,
+    "density_burst": 30,
+    "density_sustain": 18,
+    "density_decay": 3,
+    "body_duration_ms_min": 110,
+    "body_duration_ms_max": 260,
+    "rng_seed": 1007,
+    "stereo_width": 0.64,
+    "attack_pan_spread": 0.44,
+    "sustain_pan_spread": 0.56,
+    "sustain_diffusion_enable": 1,
+    "sustain_diffusion_amount": 0.28,
+    "sustain_diffusion_stages": 1,
+    "sustain_diffusion_feedback": 0.38,
+    "memory_mix": 0.62,
+    "memory_pull": 0.58,
+    "memory_darkening": 0.68,
+    "attack_brightness": 0.68,
+    "sustain_darkness": 0.78,
+    "quality_profile": 0,
+    "active_voice_limit": 8,
+    "motion_rate": 0.12,
+    "motion_depth": 0.1
+  },
+  "macro_values": {
+    "density": 0.34,
+    "bloom": 0.62,
+    "motion": 0.28,
+    "texture": 0.36,
+    "space": 0.6,
+    "gravity": 0.76,
+    "memory": 0.72,
+    "clarity": 0.46,
+    "freeze": 0.3,
+    "sparkle": 0.18,
+    "warmth": 0.64,
+    "mix": 0.5
+  },
+  "metadata": {
+    "recommended_min_profile": "MCU_SAFE",
+    "mcu_compatibility": {
+      "compatible": true,
+      "profile": "MCU_SAFE",
+      "active_voice_limit": 8
+    },
+    "feature_usage": {
+      "freeze": {
+        "enabled": false,
+        "amount": 0.0
+      },
+      "reverse": {
+        "probability": 0.0
+      },
+      "pitch": {
+        "mode": 0,
+        "shimmer_amount": 0.0
+      },
+      "motion": {
+        "rate": 0.12,
+        "depth": 0.1,
+        "shape": 0
+      }
+    }
+  }
+}

@@ -181,6 +181,8 @@
                             </div>
                             <p class="preset-description" x-text="preset.description"></p>
                             <p class="preset-meta"><span x-text="preset.ui_category"></span> • <span x-text="preset.quality_tier"></span></p>
+                            <p class="preset-meta">Perfil mínimo: <span x-text="preset.metadata?.recommended_min_profile || 'n/a'"></span> • MCU: <span x-text="preset.metadata?.mcu_compatibility?.compatible ? 'compatível' : 'web/desktop'"></span></p>
+                            <p class="preset-meta">Freeze <span x-text="preset.metadata?.feature_usage?.freeze?.amount ?? 0"></span> • Reverse <span x-text="preset.metadata?.feature_usage?.reverse?.probability ?? 0"></span> • Pitch <span x-text="preset.metadata?.feature_usage?.pitch?.mode ?? 0"></span> • Motion <span x-text="preset.metadata?.feature_usage?.motion?.depth ?? 0"></span></p>
                             <div class="preset-tags"><template x-for="tag in preset.tags" :key="tag"><span class="preset-tag" x-text="tag"></span></template></div>
                             <button class="btn btn-secondary" @click="loadFactoryPreset(preset.preset_slug)">Load preset</button>
                         </div>

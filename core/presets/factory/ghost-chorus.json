@@ -1,0 +1,83 @@
+{
+  "schema_version": 3,
+  "preset_name": "Ghost Chorus",
+  "preset_slug": "ghost-chorus",
+  "engine_version": "post-diffusion-ui",
+  "created_at": "2026-06-10T00:00:00Z",
+  "ui_category": "Utility",
+  "tags": [
+    "ghost",
+    "chorus",
+    "wide",
+    "soft",
+    "mcu-plus"
+  ],
+  "esp32_safe": true,
+  "quality_tier": "ESP32_SAFE",
+  "description": "Pseudo-chorus fantasmagórico, estéreo e levemente desafinado para bases limpas e vozes processadas.",
+  "params": {
+    "density_burst": 32,
+    "density_sustain": 28,
+    "density_decay": 3.2,
+    "rng_seed": 1011,
+    "stereo_width": 0.92,
+    "attack_pan_spread": 0.64,
+    "sustain_pan_spread": 0.84,
+    "envelope_variation": 0.62,
+    "sustain_diffusion_enable": 1,
+    "sustain_diffusion_amount": 0.44,
+    "sustain_diffusion_stages": 1,
+    "sustain_diffusion_feedback": 0.48,
+    "memory_mix": 0.5,
+    "memory_pull": 0.4,
+    "tone_variation": 0.58,
+    "attack_brightness": 0.88,
+    "sustain_darkness": 0.48,
+    "quality_profile": 1,
+    "active_voice_limit": 16,
+    "pitch_mode": 2,
+    "motion_rate": 0.32,
+    "motion_depth": 0.46,
+    "motion_shape": 0
+  },
+  "macro_values": {
+    "density": 0.48,
+    "bloom": 0.66,
+    "motion": 0.56,
+    "texture": 0.46,
+    "space": 0.72,
+    "gravity": 0.52,
+    "memory": 0.58,
+    "clarity": 0.44,
+    "freeze": 0.26,
+    "sparkle": 0.4,
+    "warmth": 0.52,
+    "mix": 0.54
+  },
+  "metadata": {
+    "recommended_min_profile": "MCU_PLUS",
+    "mcu_compatibility": {
+      "compatible": true,
+      "profile": "MCU_PLUS",
+      "active_voice_limit": 16
+    },
+    "feature_usage": {
+      "freeze": {
+        "enabled": false,
+        "amount": 0.0
+      },
+      "reverse": {
+        "probability": 0.0
+      },
+      "pitch": {
+        "mode": 2,
+        "shimmer_amount": 0.0
+      },
+      "motion": {
+        "rate": 0.32,
+        "depth": 0.46,
+        "shape": 0
+      }
+    }
+  }
+}
