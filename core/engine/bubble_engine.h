@@ -124,6 +124,9 @@ typedef enum BubbleParameterId {
     BUBBLE_ENGINE_PARAM_SHIMMER_AMOUNT = 60,
     BUBBLE_ENGINE_PARAM_FINAL_LIMITER_CEILING_DB = 61,
     BUBBLE_ENGINE_PARAM_FINAL_LIMITER_RELEASE_MS = 62,
+    BUBBLE_ENGINE_PARAM_MOTION_RATE = 63,
+    BUBBLE_ENGINE_PARAM_MOTION_DEPTH = 64,
+    BUBBLE_ENGINE_PARAM_MOTION_SHAPE = 65,
 
     BUBBLE_ENGINE_PARAM_RUNTIME_ENVELOPE = 1000,
     BUBBLE_ENGINE_PARAM_RUNTIME_STATE = 1001,
@@ -160,6 +163,7 @@ void bubble_macro_map_resolve(const float macro_values[BUBBLES_MACRO_COUNT],
                               float* master_wet_gain);
 void bubble_engine_init(BubbleEngine_t* engine, int16_t* delay_buffer_memory, const BubbleEngineConfig_t* initial_config);
 void bubble_engine_reset(BubbleEngine_t* engine);
+void bubble_engine_reset_motion_phase(BubbleEngine_t* engine);
 void bubble_engine_process(BubbleEngine_t* engine, const float* in_mono, float* out_left, float* out_right, int num_samples);
 bool bubble_engine_set_parameter(BubbleEngine_t* engine, BubbleEngineParameterId_t parameter, float value);
 bool bubble_engine_get_parameter(const BubbleEngine_t* engine, BubbleEngineParameterId_t parameter, float* value);

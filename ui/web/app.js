@@ -123,6 +123,9 @@ const PARAM_DEFINITIONS = {
   sustain_darkness: { min: 0, max: 1, step: 0.01, label: 'Sustain Darkness' },
   attack_rate_jitter: { min: 0, max: 1, step: 1, label: 'Attack Rate Jitter' },
   attack_rate_jitter_depth: { min: 0, max: 0.2, step: 0.001, label: 'Attack Rate Jitter Depth' },
+  motion_rate: { min: 0, max: 1, step: 0.01, label: 'Motion LFO Rate' },
+  motion_depth: { min: 0, max: 1, step: 0.01, label: 'Motion LFO Depth' },
+  motion_shape: { min: 0, max: 2, step: 1, label: 'Motion LFO Shape' },
 };
 
 const PARAM_HELP = {
@@ -182,11 +185,15 @@ const PARAM_HELP = {
   sustain_darkness: { musical: 'Escurecimento de sustain.', technical: 'Escurecimento de sustain.', increase: 'intensifica o efeito.', decrease: 'suaviza o efeito.' },
   attack_rate_jitter: { musical: 'Ativa micro-jitter no ataque.', technical: 'Ativa micro-jitter no ataque.', increase: 'intensifica o efeito.', decrease: 'suaviza o efeito.' },
   attack_rate_jitter_depth: { musical: 'Profundidade do micro-jitter.', technical: 'Profundidade do micro-jitter.', increase: 'intensifica o efeito.', decrease: 'suaviza o efeito.' },
+  motion_rate: { musical: 'Velocidade dos LFOs lentos do macro Motion.', technical: 'Taxa normalizada dos osciladores de fase acumulada em control-rate.', increase: 'movimento mais rápido.', decrease: 'movimento mais lento.' },
+  motion_depth: { musical: 'Profundidade global da modulação Motion.', technical: 'Escala bipolar aplicada aos LFOs de densidade, panorama, memory, sparkle, reverse e diffusion.', increase: 'mais variação automática.', decrease: 'menos variação automática.' },
+  motion_shape: { musical: 'Formato dos LFOs de Motion.', technical: '0=triangular, 1=suave, 2=sample-and-hold determinístico.', increase: 'altera o contorno para movimentos mais discretos.', decrease: 'retorna a contornos mais contínuos.' },
 };
 
 const PARAMETER_GROUPS = [
   { name: 'Stereo', params: ['stereo_width', 'attack_pan_spread', 'sustain_pan_spread'] },
   { name: 'Texture', params: ['smart_start_enable', 'smart_start_range', 'envelope_variation', 'envelope_family', 'droplet_enable', 'droplet_probability', 'droplet_gain', 'droplet_length_scale', 'attack_rate_jitter', 'attack_rate_jitter_depth'] },
+  { name: 'Motion', params: ['motion_rate', 'motion_depth', 'motion_shape'] },
   { name: 'Diffusion', params: ['wet_drive', 'wet_clip_amount', 'wet_output_trim', 'final_limiter_ceiling_db', 'final_limiter_release_ms', 'sustain_diffusion_enable', 'sustain_diffusion_amount', 'sustain_diffusion_stages', 'sustain_diffusion_delay', 'sustain_diffusion_feedback'] },
   { name: 'Tone', params: ['tone_variation', 'attack_brightness', 'sustain_darkness'] },
   { name: 'Memory', params: ['memory_mix', 'memory_pull', 'memory_darkening', 'attack_region_min_offset_samples', 'attack_region_max_offset_samples', 'body_region_min_offset_samples', 'body_region_max_offset_samples', 'memory_region_min_offset_samples', 'memory_region_max_offset_samples'] },
@@ -256,6 +263,9 @@ const WASM_PARAM_ID_MAP = Object.freeze({
   shimmer_amount: 60,
   final_limiter_ceiling_db: 61,
   final_limiter_release_ms: 62,
+  motion_rate: 63,
+  motion_depth: 64,
+  motion_shape: 65,
 });
 
 const WASM_MACRO_PARAM_ID_MAP = Object.freeze({

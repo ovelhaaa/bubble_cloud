@@ -34,6 +34,10 @@ const BubbleQualityProfileLimits_t BUBBLE_QUALITY_PROFILE_LIMITS[BUBBLE_QUALITY_
 #define SMART_START_ENERGY_RADIUS 3
 #define FINAL_LIMITER_DEFAULT_CEILING_DB -1.0f
 #define FINAL_LIMITER_DEFAULT_RELEASE_MS 50.0f
+#define BUBBLE_MOTION_FIXED_SEED 0xB06B1E5u
+#define BUBBLE_MOTION_SHAPE_TRIANGLE 0
+#define BUBBLE_MOTION_SHAPE_SMOOTH 1
+#define BUBBLE_MOTION_SHAPE_HOLD 2
 
 #if !defined(BUBBLES_QUALITY_ESP32_SAFE) && !defined(BUBBLES_QUALITY_WASM_FULL)
 #define BUBBLES_QUALITY_STANDARD 1
@@ -130,6 +134,9 @@ static inline float Clamp01(float x);
 static inline float Clamp(float x, float lo, float hi);
 static inline float Lerp(float a, float b, float t);
 static int32_t CountActiveVoices(const SoundBubblesEngine_t* engine);
+static uint32_t MotionHash(uint32_t state);
+static float MotionHashToBipolar(uint32_t state);
+static void MotionResetLfo(BubbleMotionLfoState_t* lfo, uint32_t seed);
 
 // --- Initialization & Config ---
 
@@ -139,6 +146,7 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     engine->delay_buffer = delay_buffer_memory;
     engine->config = *initial_config;
     ApplyQualityTierDefaults(&engine->config);
+    engine->motion_base_config = engine->config;
     engine->active_voice_limit = engine->config.active_voice_limit;
     SoundBubbles_SetRngSeed(engine, engine->config.rng_seed);
 
@@ -187,6 +195,7 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     engine->metrics_last_block.clip_count = 0;
     engine->metrics_last_block.limiter_gain = 1.0f;
     engine->metrics_tick_spawn_count = 0;
+    SoundBubbles_ResetMotionPhase(engine);
     engine->pending_spawn_head = 0;
     engine->pending_spawn_count = 0;
 
@@ -223,14 +232,33 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
 }
 
 void SoundBubbles_UpdateConfig(SoundBubblesEngine_t* engine, const EngineConfig_t* new_config) {
-    bool rng_seed_changed = (engine->config.rng_seed != new_config->rng_seed);
-    engine->config = *new_config;
-    ApplyQualityTierDefaults(&engine->config);
+    bool rng_seed_changed = (engine->motion_base_config.rng_seed != new_config->rng_seed);
+    engine->motion_base_config = *new_config;
+    ApplyQualityTierDefaults(&engine->motion_base_config);
+    engine->config = engine->motion_base_config;
     engine->active_voice_limit = engine->config.active_voice_limit;
     DeactivateVoicesAboveActiveLimit(engine);
     if (rng_seed_changed) {
         SoundBubbles_SetRngSeed(engine, engine->config.rng_seed);
     }
+}
+
+void SoundBubbles_UpdateRuntimeConfig(SoundBubblesEngine_t* engine, const EngineConfig_t* new_config) {
+    engine->config = *new_config;
+    ApplyQualityTierDefaults(&engine->config);
+    engine->active_voice_limit = engine->config.active_voice_limit;
+    DeactivateVoicesAboveActiveLimit(engine);
+}
+
+void SoundBubbles_ResetMotionPhase(SoundBubblesEngine_t* engine) {
+    if (engine == NULL) return;
+    engine->motion_state.seed = BUBBLE_MOTION_FIXED_SEED;
+    MotionResetLfo(&engine->motion_state.density, MotionHash(BUBBLE_MOTION_FIXED_SEED ^ 0x1001u));
+    MotionResetLfo(&engine->motion_state.panorama, MotionHash(BUBBLE_MOTION_FIXED_SEED ^ 0x2002u));
+    MotionResetLfo(&engine->motion_state.memory_pull, MotionHash(BUBBLE_MOTION_FIXED_SEED ^ 0x3003u));
+    MotionResetLfo(&engine->motion_state.sparkle, MotionHash(BUBBLE_MOTION_FIXED_SEED ^ 0x4004u));
+    MotionResetLfo(&engine->motion_state.reverse_probability, MotionHash(BUBBLE_MOTION_FIXED_SEED ^ 0x5005u));
+    MotionResetLfo(&engine->motion_state.diffusion_amount, MotionHash(BUBBLE_MOTION_FIXED_SEED ^ 0x6006u));
 }
 
 void SoundBubbles_SetRngSeed(SoundBubblesEngine_t* engine, uint32_t seed) {
@@ -1210,6 +1238,29 @@ static float ProcessSustainDiffusionSample(SoundBubblesEngine_t* engine, float i
     return y;
 }
 
+
+static uint32_t MotionHash(uint32_t state) {
+    state ^= state >> 16;
+    state *= 0x7feb352du;
+    state ^= state >> 15;
+    state *= 0x846ca68bu;
+    state ^= state >> 16;
+    return state;
+}
+
+static float MotionHashToBipolar(uint32_t state) {
+    uint32_t mantissa = (MotionHash(state) >> 8) & 0x00FFFFFFu;
+    return ((float)mantissa * (1.0f / 8388607.5f)) - 1.0f;
+}
+
+static void MotionResetLfo(BubbleMotionLfoState_t* lfo, uint32_t seed) {
+    if (lfo == NULL) return;
+    lfo->hold_state = MotionHash(seed);
+    lfo->phase = (float)((lfo->hold_state >> 8) & 0x00FFFFFFu) * (1.0f / 16777216.0f);
+    lfo->value = MotionHashToBipolar(lfo->hold_state ^ 0xA5A5A5A5u);
+}
+
+
 static int32_t ClampActiveVoiceLimit(int32_t requested_limit) {
     if (requested_limit < 1) return 1;
     if (requested_limit > BUBBLE_ENGINE_MAX_VOICES) return BUBBLE_ENGINE_MAX_VOICES;
@@ -1268,6 +1319,11 @@ static void ApplyQualityTierDefaults(EngineConfig_t* cfg) {
     cfg->freeze_enabled = (cfg->freeze_enabled != 0) ? 1 : 0;
     cfg->reverse_probability = Clamp01(cfg->reverse_probability);
     cfg->shimmer_amount = Clamp01(cfg->shimmer_amount);
+    cfg->motion_rate = Clamp(cfg->motion_rate, 0.0f, 1.0f);
+    cfg->motion_depth = Clamp01(cfg->motion_depth);
+    if (cfg->motion_shape < BUBBLE_MOTION_SHAPE_TRIANGLE || cfg->motion_shape > BUBBLE_MOTION_SHAPE_HOLD) {
+        cfg->motion_shape = BUBBLE_MOTION_SHAPE_TRIANGLE;
+    }
     if (cfg->pitch_mode < BUBBLE_PITCH_MODE_UNISON || cfg->pitch_mode > BUBBLE_PITCH_MODE_SHIMMER) {
         cfg->pitch_mode = BUBBLE_PITCH_MODE_UNISON;
     }

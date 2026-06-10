@@ -6,6 +6,9 @@
 
 #define BUBBLE_MACRO_SMOOTH_COEF 0.18f
 #define BUBBLE_MACRO_EPSILON 0.0005f
+#define BUBBLE_MOTION_SHAPE_TRIANGLE 0
+#define BUBBLE_MOTION_SHAPE_SMOOTH 1
+#define BUBBLE_MOTION_SHAPE_HOLD 2
 
 const BubbleParameterInfo BUBBLE_PARAMETER_INFO[] = {
     { BUBBLE_PARAM_DENSITY, "density", 0.0f, 1.0f, 0.5f, BUBBLE_PARAMETER_CURVE_LOG, "norm", BUBBLE_PARAMETER_FLAG_MACRO | BUBBLE_PARAMETER_FLAG_AUDIBLE },
@@ -27,6 +30,9 @@ const BubbleParameterInfo BUBBLE_PARAMETER_INFO[] = {
     { BUBBLE_ENGINE_PARAM_STEREO_WIDTH, "stereo_width", 0.0f, 1.0f, 0.7f, BUBBLE_PARAMETER_CURVE_LINEAR, "norm", BUBBLE_PARAMETER_FLAG_DEVELOPER | BUBBLE_PARAMETER_FLAG_AUDIBLE },
     { BUBBLE_ENGINE_PARAM_MIX_DRY_GAIN, "mix_dry_gain", 0.0f, 1.0f, 1.0f, BUBBLE_PARAMETER_CURVE_LINEAR, "gain", BUBBLE_PARAMETER_FLAG_DEVELOPER | BUBBLE_PARAMETER_FLAG_AUDIBLE },
     { BUBBLE_ENGINE_PARAM_MIX_WET_GAIN, "mix_wet_gain", 0.0f, 1.0f, 1.0f, BUBBLE_PARAMETER_CURVE_LINEAR, "gain", BUBBLE_PARAMETER_FLAG_DEVELOPER | BUBBLE_PARAMETER_FLAG_AUDIBLE },
+    { BUBBLE_ENGINE_PARAM_MOTION_RATE, "motion_rate", 0.0f, 1.0f, 0.18f, BUBBLE_PARAMETER_CURVE_EXP, "norm", BUBBLE_PARAMETER_FLAG_DEVELOPER | BUBBLE_PARAMETER_FLAG_AUDIBLE },
+    { BUBBLE_ENGINE_PARAM_MOTION_DEPTH, "motion_depth", 0.0f, 1.0f, 0.0f, BUBBLE_PARAMETER_CURVE_LINEAR, "norm", BUBBLE_PARAMETER_FLAG_DEVELOPER | BUBBLE_PARAMETER_FLAG_AUDIBLE },
+    { BUBBLE_ENGINE_PARAM_MOTION_SHAPE, "motion_shape", 0.0f, 2.0f, 0.0f, BUBBLE_PARAMETER_CURVE_LINEAR, "enum", BUBBLE_PARAMETER_FLAG_DEVELOPER | BUBBLE_PARAMETER_FLAG_INTEGER },
     { BUBBLE_ENGINE_PARAM_RUNTIME_ENVELOPE, "runtime_envelope", 0.0f, 1.0f, 0.0f, BUBBLE_PARAMETER_CURVE_LINEAR, "norm", BUBBLE_PARAMETER_FLAG_RUNTIME }
 };
 
@@ -45,6 +51,55 @@ static float Clamp01f(float value) {
     return value;
 }
 
+static float Clampf(float value, float lo, float hi) {
+    if (value < lo) return lo;
+    if (value > hi) return hi;
+    return value;
+}
+
+static uint32_t MotionHashLocal(uint32_t state) {
+    state ^= state >> 16;
+    state *= 0x7feb352du;
+    state ^= state >> 15;
+    state *= 0x846ca68bu;
+    state ^= state >> 16;
+    return state;
+}
+
+static float MotionHashToBipolarLocal(uint32_t state) {
+    uint32_t mantissa = (MotionHashLocal(state) >> 8) & 0x00FFFFFFu;
+    return ((float)mantissa * (1.0f / 8388607.5f)) - 1.0f;
+}
+
+static float MotionTickLfoLocal(BubbleMotionLfoState_t* lfo, float rate_hz, float rate_scale, int32_t shape) {
+    if (lfo == NULL) return 0.0f;
+    float inc = rate_hz * rate_scale * ((float)BUBBLES_BLOCK_SIZE / (float)BUBBLES_SAMPLE_RATE);
+    inc = Clampf(inc, 0.0f, 0.25f);
+    float next_phase = lfo->phase + inc;
+    bool wrapped = false;
+    if (next_phase >= 1.0f) {
+        next_phase -= 1.0f;
+        wrapped = true;
+    }
+    lfo->phase = next_phase;
+
+    if (shape == BUBBLE_MOTION_SHAPE_HOLD) {
+        if (wrapped) {
+            lfo->hold_state = MotionHashLocal(lfo->hold_state + 0x9E3779B9u);
+            lfo->value = MotionHashToBipolarLocal(lfo->hold_state);
+        }
+        return lfo->value;
+    }
+
+    float triangle = (lfo->phase < 0.5f) ? (4.0f * lfo->phase - 1.0f) : (3.0f - 4.0f * lfo->phase);
+    if (shape == BUBBLE_MOTION_SHAPE_SMOOTH) {
+        float magnitude = triangle < 0.0f ? -triangle : triangle;
+        float smooth = magnitude * magnitude * (3.0f - 2.0f * magnitude);
+        return (triangle < 0.0f) ? -smooth : smooth;
+    }
+    return triangle;
+}
+
 static int MacroIndex(BubbleParameterId parameter) {
     if (parameter >= BUBBLE_PARAM_DENSITY && parameter <= BUBBLE_PARAM_MIX) {
         return (int)parameter - (int)BUBBLE_PARAM_DENSITY;
@@ -54,9 +109,47 @@ static int MacroIndex(BubbleParameterId parameter) {
 
 static bool IsDeveloperOnlyParameter(BubbleParameterId parameter) {
     return parameter >= BUBBLE_ENGINE_PARAM_NOISE_FLOOR &&
-           parameter <= BUBBLE_ENGINE_PARAM_FINAL_LIMITER_RELEASE_MS &&
+           parameter <= BUBBLE_ENGINE_PARAM_MOTION_SHAPE &&
            parameter != BUBBLE_ENGINE_PARAM_QUALITY_PROFILE &&
            parameter != BUBBLE_ENGINE_PARAM_ACTIVE_VOICE_LIMIT;
+}
+
+static void ApplyRuntimeMotionConfig(BubbleEngine_t* engine) {
+    if (engine == NULL) return;
+
+    BubbleEngineConfig_t config = engine->motion_base_config;
+    float depth = Clamp01f(config.motion_depth);
+    if (depth <= 0.0001f) {
+        SoundBubbles_UpdateRuntimeConfig(engine, &config);
+        return;
+    }
+
+    float rate_hz = 0.015f + 0.285f * Clamp01f(config.motion_rate);
+    int32_t shape = config.motion_shape;
+    float density_lfo = MotionTickLfoLocal(&engine->motion_state.density, rate_hz, 0.73f, shape);
+    float panorama_lfo = MotionTickLfoLocal(&engine->motion_state.panorama, rate_hz, 0.49f, shape);
+    float memory_lfo = MotionTickLfoLocal(&engine->motion_state.memory_pull, rate_hz, 0.37f, shape);
+    float sparkle_lfo = MotionTickLfoLocal(&engine->motion_state.sparkle, rate_hz, 0.61f, shape);
+    float reverse_lfo = MotionTickLfoLocal(&engine->motion_state.reverse_probability, rate_hz, 0.29f, shape);
+    float diffusion_lfo = MotionTickLfoLocal(&engine->motion_state.diffusion_amount, rate_hz, 0.41f, shape);
+
+    float density_scale = 1.0f + density_lfo * (0.35f * depth);
+    config.density_burst *= density_scale;
+    config.density_sustain *= density_scale;
+    config.density_decay *= density_scale;
+
+    config.stereo_width = Clamp01f(config.stereo_width + panorama_lfo * (0.18f * depth));
+    config.attack_pan_spread = Clamp01f(config.attack_pan_spread + panorama_lfo * (0.22f * depth));
+    config.sustain_pan_spread = Clamp01f(config.sustain_pan_spread - panorama_lfo * (0.14f * depth));
+    config.memory_pull = Clamp01f(config.memory_pull + memory_lfo * (0.24f * depth));
+    config.shimmer_amount = Clamp01f(config.shimmer_amount + sparkle_lfo * (0.18f * depth));
+    if (config.shimmer_amount > 0.03f) {
+        config.pitch_mode = BUBBLE_PITCH_MODE_SHIMMER;
+    }
+    config.reverse_probability = Clamp01f(config.reverse_probability + reverse_lfo * (0.18f * depth));
+    config.sustain_diffusion_amount = Clamp01f(config.sustain_diffusion_amount + diffusion_lfo * (0.24f * depth));
+
+    SoundBubbles_UpdateRuntimeConfig(engine, &config);
 }
 
 static void ApplyMacroConfig(BubbleEngine_t* engine) {
@@ -64,15 +157,20 @@ static void ApplyMacroConfig(BubbleEngine_t* engine) {
     BubbleEngineConfig_t config;
     float master_dry_gain = engine->master_dry_gain;
     float master_wet_gain = engine->master_wet_gain;
-    bubble_macro_map_resolve(engine->macro_values, &engine->config, &config, &master_dry_gain, &master_wet_gain);
+    bubble_macro_map_resolve(engine->macro_values, &engine->motion_base_config, &config, &master_dry_gain, &master_wet_gain);
     engine->master_dry_gain = master_dry_gain;
     engine->master_wet_gain = master_wet_gain;
     SoundBubbles_UpdateConfig(engine, &config);
+    ApplyRuntimeMotionConfig(engine);
 }
 
 
 static void ApplyMacroControlRate(BubbleEngine_t* engine) {
-    if (engine == NULL || engine->macro_dirty_mask == 0u) return;
+    if (engine == NULL) return;
+    if (engine->macro_dirty_mask == 0u) {
+        ApplyRuntimeMotionConfig(engine);
+        return;
+    }
     uint32_t still_dirty = 0u;
     for (int i = 0; i < BUBBLE_PARAM_MACRO_COUNT; i++) {
         if ((engine->macro_dirty_mask & (1u << i)) == 0u) continue;
@@ -163,6 +261,9 @@ void bubble_engine_default_config(BubbleEngineConfig_t* config) {
     config->reverse_probability = 0.0f;
     config->pitch_mode = BUBBLE_PITCH_MODE_UNISON;
     config->shimmer_amount = 0.0f;
+    config->motion_rate = 0.18f;
+    config->motion_depth = 0.0f;
+    config->motion_shape = BUBBLE_MOTION_SHAPE_TRIANGLE;
     config->quality_profile = BUBBLE_QUALITY_PROFILE_WEB_STANDARD;
     config->active_voice_limit = BUBBLE_QUALITY_DEFAULT_VOICE_LIMIT;
 
@@ -196,6 +297,11 @@ void bubble_engine_init(BubbleEngine_t* engine, int16_t* delay_buffer_memory, co
         ApplyMacroConfig(engine);
         engine->macro_dirty_mask = 0u;
     }
+}
+
+void bubble_engine_reset_motion_phase(BubbleEngine_t* engine) {
+    if (engine == NULL) return;
+    SoundBubbles_ResetMotionPhase(engine);
 }
 
 void bubble_engine_reset(BubbleEngine_t* engine) {
@@ -275,7 +381,7 @@ bool bubble_engine_set_parameter(BubbleEngine_t* engine, BubbleEngineParameterId
         return false;
     }
 
-    BubbleEngineConfig_t config = engine->config;
+    BubbleEngineConfig_t config = engine->motion_base_config;
     bool config_changed = true;
 
     switch (parameter) {
@@ -340,6 +446,9 @@ bool bubble_engine_set_parameter(BubbleEngine_t* engine, BubbleEngineParameterId
         case BUBBLE_ENGINE_PARAM_SHIMMER_AMOUNT: config.shimmer_amount = value; break;
         case BUBBLE_ENGINE_PARAM_FINAL_LIMITER_CEILING_DB: config.final_limiter_ceiling_db = value; break;
         case BUBBLE_ENGINE_PARAM_FINAL_LIMITER_RELEASE_MS: config.final_limiter_release_ms = value; break;
+        case BUBBLE_ENGINE_PARAM_MOTION_RATE: config.motion_rate = value; break;
+        case BUBBLE_ENGINE_PARAM_MOTION_DEPTH: config.motion_depth = value; break;
+        case BUBBLE_ENGINE_PARAM_MOTION_SHAPE: config.motion_shape = (int32_t)value; break;
         case BUBBLE_ENGINE_PARAM_QUALITY_PROFILE:
             return bubble_engine_set_quality_profile(engine, (BubbleQualityProfile)((int32_t)value));
         case BUBBLE_ENGINE_PARAM_ACTIVE_VOICE_LIMIT: config.active_voice_limit = (int32_t)value; break;
@@ -372,7 +481,7 @@ bool bubble_engine_get_parameter(const BubbleEngine_t* engine, BubbleEngineParam
         return false;
     }
 
-    const BubbleEngineConfig_t* config = &engine->config;
+    const BubbleEngineConfig_t* config = &engine->motion_base_config;
     switch (parameter) {
         case BUBBLE_ENGINE_PARAM_NOISE_FLOOR: *value = config->noise_floor; break;
         case BUBBLE_ENGINE_PARAM_TRACKING_THRESH: *value = config->tracking_thresh; break;
@@ -435,6 +544,9 @@ bool bubble_engine_get_parameter(const BubbleEngine_t* engine, BubbleEngineParam
         case BUBBLE_ENGINE_PARAM_SHIMMER_AMOUNT: *value = config->shimmer_amount; break;
         case BUBBLE_ENGINE_PARAM_FINAL_LIMITER_CEILING_DB: *value = config->final_limiter_ceiling_db; break;
         case BUBBLE_ENGINE_PARAM_FINAL_LIMITER_RELEASE_MS: *value = config->final_limiter_release_ms; break;
+        case BUBBLE_ENGINE_PARAM_MOTION_RATE: *value = config->motion_rate; break;
+        case BUBBLE_ENGINE_PARAM_MOTION_DEPTH: *value = config->motion_depth; break;
+        case BUBBLE_ENGINE_PARAM_MOTION_SHAPE: *value = (float)config->motion_shape; break;
         case BUBBLE_ENGINE_PARAM_QUALITY_PROFILE: *value = (float)config->quality_profile; break;
         case BUBBLE_ENGINE_PARAM_ACTIVE_VOICE_LIMIT: *value = (float)config->active_voice_limit; break;
         case BUBBLE_ENGINE_PARAM_RUNTIME_ENVELOPE: *value = engine->env_follower_state; break;
@@ -472,7 +584,7 @@ bool bubble_engine_save_preset(const BubbleEngine_t* engine, BubbleEnginePreset_
         return false;
     }
 
-    preset->config = engine->config;
+    preset->config = engine->motion_base_config;
     preset->master_dry_gain = engine->master_dry_gain;
     preset->master_wet_gain = engine->master_wet_gain;
     for (int i = 0; i < BUBBLES_MACRO_COUNT; i++) {
@@ -503,7 +615,7 @@ bool bubble_engine_set_quality_profile(BubbleEngine_t* engine, BubbleQualityProf
         return false;
     }
 
-    BubbleEngineConfig_t config = engine->config;
+    BubbleEngineConfig_t config = engine->motion_base_config;
     config.quality_profile = profile;
     config.active_voice_limit = limits->voice_limit;
     SoundBubbles_UpdateConfig(engine, &config);

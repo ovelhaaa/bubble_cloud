@@ -154,6 +154,11 @@ typedef struct {
     int32_t pitch_mode;
     float shimmer_amount;
 
+    // Developer motion controls. Updated at control-rate only.
+    float motion_rate;
+    float motion_depth;
+    int32_t motion_shape;
+
     // Product/runtime quality profile. It selects an active subset of the
     // compiled voice pool without changing per-voice DSP behavior.
     BubbleQualityProfile quality_profile;
@@ -200,6 +205,22 @@ typedef struct {
     BubbleClass_t bubble_class;
     uint8_t generation;
 } PendingSpawn_t;
+
+typedef struct {
+    float phase;
+    float value;
+    uint32_t hold_state;
+} BubbleMotionLfoState_t;
+
+typedef struct BubbleMotionState {
+    BubbleMotionLfoState_t density;
+    BubbleMotionLfoState_t panorama;
+    BubbleMotionLfoState_t memory_pull;
+    BubbleMotionLfoState_t sparkle;
+    BubbleMotionLfoState_t reverse_probability;
+    BubbleMotionLfoState_t diffusion_amount;
+    uint32_t seed;
+} BubbleMotionState;
 
 typedef struct {
     int32_t spawn_count;
@@ -265,6 +286,8 @@ typedef struct {
 
     // Global Config & Block tracking
     EngineConfig_t config;
+    EngineConfig_t motion_base_config;
+    BubbleMotionState motion_state;
     int32_t active_voice_limit;
     int32_t block_counter;         // Triggers control ticks every 32 samples
     uint32_t rng_state;            // Internal deterministic PRNG state
@@ -312,6 +335,8 @@ SOUND_BUBBLES_DEPRECATED void SoundBubbles_Init(SoundBubblesEngine_t* engine, in
 
 // Config Update: Safely copy new core engine parameters
 SOUND_BUBBLES_DEPRECATED void SoundBubbles_UpdateConfig(SoundBubblesEngine_t* engine, const EngineConfig_t* new_config);
+SOUND_BUBBLES_DEPRECATED void SoundBubbles_UpdateRuntimeConfig(SoundBubblesEngine_t* engine, const EngineConfig_t* new_config);
+SOUND_BUBBLES_DEPRECATED void SoundBubbles_ResetMotionPhase(SoundBubblesEngine_t* engine);
 
 // Explicitly reset the deterministic PRNG state (0 maps to a fixed non-zero internal state).
 SOUND_BUBBLES_DEPRECATED void SoundBubbles_SetRngSeed(SoundBubblesEngine_t* engine, uint32_t seed);

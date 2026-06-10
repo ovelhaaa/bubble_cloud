@@ -96,6 +96,9 @@ static void SetMappedParameter(EngineConfig_t* config, float* master_dry_gain, f
         case BUBBLE_ENGINE_PARAM_FREEZE_AMOUNT: config->freeze_amount = value; break;
         case BUBBLE_ENGINE_PARAM_REVERSE_PROBABILITY: config->reverse_probability = value; break;
         case BUBBLE_ENGINE_PARAM_SHIMMER_AMOUNT: config->shimmer_amount = value; break;
+        case BUBBLE_ENGINE_PARAM_MOTION_RATE: config->motion_rate = value; break;
+        case BUBBLE_ENGINE_PARAM_MOTION_DEPTH: config->motion_depth = value; break;
+        case BUBBLE_ENGINE_PARAM_MOTION_SHAPE: config->motion_shape = (int32_t)value; break;
         default: break;
     }
 }
@@ -120,6 +123,8 @@ static const BubbleMacroTarget BUBBLE_MACRO_TARGETS[] = {
     { BUBBLE_PARAM_MOTION, BUBBLE_ENGINE_PARAM_BODY_DURATION_MS_MAX, 140.0f, 520.0f, BUBBLE_PARAMETER_CURVE_LOG, 0, 0 },
     { BUBBLE_PARAM_MOTION, BUBBLE_ENGINE_PARAM_ATTACK_RATE_JITTER_DEPTH, 0.002f, 0.09f, BUBBLE_PARAMETER_CURVE_EXP, 0, 0 },
     { BUBBLE_PARAM_MOTION, BUBBLE_ENGINE_PARAM_REVERSE_PROBABILITY, 0.0f, 0.35f, BUBBLE_PARAMETER_CURVE_EXP, 0, 0 },
+    { BUBBLE_PARAM_MOTION, BUBBLE_ENGINE_PARAM_MOTION_RATE, 0.10f, 0.55f, BUBBLE_PARAMETER_CURVE_EXP, 0, 0 },
+    { BUBBLE_PARAM_MOTION, BUBBLE_ENGINE_PARAM_MOTION_DEPTH, 0.0f, 0.78f, BUBBLE_PARAMETER_CURVE_LINEAR, 0, 0 },
 
     { BUBBLE_PARAM_TEXTURE, BUBBLE_ENGINE_PARAM_DROPLET_PROBABILITY, 0.02f, 0.38f, BUBBLE_PARAMETER_CURVE_EXP, 0, 0 },
     { BUBBLE_PARAM_TEXTURE, BUBBLE_ENGINE_PARAM_DROPLET_GAIN, 0.12f, 0.70f, BUBBLE_PARAMETER_CURVE_EXP, 0, 0 },
