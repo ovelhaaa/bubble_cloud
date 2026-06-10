@@ -176,7 +176,7 @@ esp_err_t bubble_esp32_controls_apply(BubbleEngine_t* engine, const BubbleEsp32C
         }
     }
 
-    if (!bubble_engine_set_parameter(engine, BUBBLE_PARAM_FREEZE, state->freeze_enabled ? 1.0f : 0.0f)) {
+    if (state->freeze_enabled && !bubble_engine_set_parameter(engine, BUBBLE_PARAM_FREEZE, 1.0f)) {
         return ESP_FAIL;
     }
 

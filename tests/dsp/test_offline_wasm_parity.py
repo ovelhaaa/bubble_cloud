@@ -39,6 +39,7 @@ def _build_renderer(tmp_path: Path) -> Path:
             "gcc",
             "platform/offline/sound_bubbles_render.c",
             "core/engine/bubble_engine.c",
+            "core/engine/bubble_macro_map.c",
             "core/dsp/sound_bubbles_dsp.c",
             "core/presets/bubble_preset.c",
             "-O2",

@@ -47,7 +47,7 @@ static int MacroIndex(BubbleParameterId macro) {
 
 static float MacroValue(const float macro_values[BUBBLES_MACRO_COUNT], BubbleParameterId macro) {
     const int index = MacroIndex(macro);
-    if (index < 0 || macro_values == NULL) return BUBBLE_NEUTRAL_MACRO_VALUE;
+    if (index < 0 || index >= BUBBLES_MACRO_COUNT || macro_values == NULL) return BUBBLE_NEUTRAL_MACRO_VALUE;
     return Clamp01(macro_values[index]);
 }
 
@@ -151,7 +151,7 @@ static const BubbleMacroTarget BUBBLE_MACRO_TARGETS[] = {
     { BUBBLE_PARAM_FREEZE, BUBBLE_ENGINE_PARAM_FREEZE_AMOUNT, 0.0f, 1.0f, BUBBLE_PARAMETER_CURVE_LINEAR, 0, 0 },
     { BUBBLE_PARAM_SPARKLE, BUBBLE_ENGINE_PARAM_SHIMMER_AMOUNT, 0.0f, 1.0f, BUBBLE_PARAMETER_CURVE_EXP, 0, 0 },
     { BUBBLE_PARAM_MIX, BUBBLE_ENGINE_PARAM_MIX_DRY_GAIN, 0.85f, 0.25f, BUBBLE_PARAMETER_CURVE_LINEAR, 0, 0 },
-    { BUBBLE_PARAM_MIX, BUBBLE_ENGINE_PARAM_MIX_WET_GAIN, 0.15f, 0.90f, BUBBLE_PARAMETER_CURVE_LINEAR, 0, 0 },
+    { BUBBLE_PARAM_MIX, BUBBLE_ENGINE_PARAM_MIX_WET_GAIN, 0.0f, 0.90f, BUBBLE_PARAMETER_CURVE_LINEAR, 0, 0 },
 };
 
 void bubble_macro_map_default_values(float macro_values[BUBBLES_MACRO_COUNT]) {
@@ -159,8 +159,14 @@ void bubble_macro_map_default_values(float macro_values[BUBBLES_MACRO_COUNT]) {
     for (int i = 0; i < BUBBLES_MACRO_COUNT; i++) {
         macro_values[i] = BUBBLE_NEUTRAL_MACRO_VALUE;
     }
-    macro_values[MacroIndex(BUBBLE_PARAM_FREEZE)] = 0.0f;
-    macro_values[MacroIndex(BUBBLE_PARAM_SPARKLE)] = 0.0f;
+    const int freeze_index = MacroIndex(BUBBLE_PARAM_FREEZE);
+    if (freeze_index >= 0 && freeze_index < BUBBLES_MACRO_COUNT) {
+        macro_values[freeze_index] = 0.0f;
+    }
+    const int sparkle_index = MacroIndex(BUBBLE_PARAM_SPARKLE);
+    if (sparkle_index >= 0 && sparkle_index < BUBBLES_MACRO_COUNT) {
+        macro_values[sparkle_index] = 0.0f;
+    }
 }
 
 void bubble_macro_map_resolve(const float macro_values[BUBBLES_MACRO_COUNT],
@@ -170,13 +176,10 @@ void bubble_macro_map_resolve(const float macro_values[BUBBLES_MACRO_COUNT],
                               float* master_wet_gain) {
     if (out_config == NULL) return;
 
-    bubble_engine_default_config(out_config);
     if (base_config != NULL) {
-        out_config->quality_profile = base_config->quality_profile;
-        out_config->active_voice_limit = base_config->active_voice_limit;
-        out_config->rng_seed = base_config->rng_seed;
-        out_config->final_limiter_ceiling_db = base_config->final_limiter_ceiling_db;
-        out_config->final_limiter_release_ms = base_config->final_limiter_release_ms;
+        *out_config = *base_config;
+    } else {
+        bubble_engine_default_config(out_config);
     }
 
     for (size_t i = 0; i < sizeof(BUBBLE_MACRO_TARGETS) / sizeof(BUBBLE_MACRO_TARGETS[0]); i++) {

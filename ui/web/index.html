@@ -282,14 +282,14 @@
                                     <label for="developer-mode">Developer diagnostics</label>
                                     <input id="developer-mode" type="checkbox" x-model="developerMode" @change="saveDraft()">
                                 </div>
-                                <p class="helper-text">Desligado: Simple/Advanced enviam apenas macros musicais. Ligado: controles internos abaixo sobrescrevem o core para diagnóstico e não fazem parte do fluxo principal de presets.</p>
+                                <p class="helper-text">Off: Simple/Advanced send only musical macros. On: internal controls below override the core for diagnostics and are not part of the main preset flow.</p>
                             </div>
                             <div class="param-row" x-show="group.name === 'Advanced' && developerMode">
                                 <div class="param-labels">
                                     <label for="advanced-raw-range">Advanced: raw range</label>
                                     <input id="advanced-raw-range" type="checkbox" x-model="showAdvancedRawRange" @change="saveDraft()">
                                 </div>
-                                <p class="helper-text">Desligado: performance ranges musicais. Ligado: faixa técnica completa do engine.</p>
+                                <p class="helper-text">Off: musical performance ranges. On: full technical range of the engine.</p>
                             </div>
                             <template x-for="paramKey in group.params" :key="paramKey">
                                 <div class="param-row" x-show="developerMode">
