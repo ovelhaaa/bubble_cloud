@@ -59,6 +59,30 @@ const BASELINE = {
   attack_rate_jitter_depth: 0.02,
 };
 
+
+const UI_MODES = Object.freeze({
+  SIMPLE: 'simple',
+  ADVANCED: 'advanced',
+  DEVELOPER: 'developer',
+});
+
+const HISTORY_LIMIT = 80;
+
+const MUSICAL_RANDOMIZE_RANGES = Object.freeze({
+  density: [0.28, 0.78],
+  bloom: [0.25, 0.82],
+  texture: [0.22, 0.78],
+  motion: [0.18, 0.72],
+  space: [0.25, 0.82],
+  gravity: [0.25, 0.72],
+  memory: [0.18, 0.68],
+  clarity: [0.32, 0.82],
+  freeze: [0.0, 0.32],
+  sparkle: [0.12, 0.68],
+  warmth: [0.28, 0.82],
+  mix: [0.32, 0.72],
+});
+
 const QUALITY_PROFILES = Object.freeze([
   { id: 0, key: 'MCU_SAFE', label: 'MCU Safe', voices: 8, cpu: 35, ramKb: 256 },
   { id: 1, key: 'MCU_PLUS', label: 'MCU Plus', voices: 16, cpu: 50, ramKb: 384 },
@@ -323,9 +347,19 @@ document.addEventListener('alpine:init', () => {
     },
     macroPrimaryPage: ['density', 'bloom', 'texture', 'motion', 'space', 'mix'],
     macroSecondaryPage: ['gravity', 'memory', 'clarity', 'freeze', 'sparkle', 'warmth'],
+    uiModes: UI_MODES,
+    uiMode: UI_MODES.SIMPLE,
     activeMacroPage: 0,
     shiftMode: false,
     compareMode: false,
+    abSlots: {
+      A: { label: 'A', baseParams: { ...BASELINE }, macroValues: window.BubbleCloudMacroLayer.createNeutralMacroValues() },
+      B: { label: 'B', baseParams: { ...BASELINE }, macroValues: window.BubbleCloudMacroLayer.createNeutralMacroValues() },
+    },
+    activeABSlot: 'A',
+    undoStack: [],
+    redoStack: [],
+    historyTransactionBefore: null,
     showAdvancedRawRange: false,
     developerMode: false,
     baseline: { ...BASELINE },
@@ -380,7 +414,7 @@ document.addEventListener('alpine:init', () => {
     seekTime: 0,
     duration: 0,
 
-    metrics: { envelope: 0, state: 0, voices: 0, voiceLimit: 24, peakL: 0, peakR: 0, clipCount: 0, limiterGain: 1 },
+    metrics: { envelope: 0, state: 0, voices: 0, voiceLimit: 24, peakL: 0, peakR: 0, clipCount: 0, limiterGain: 1, cpuLoad: 0 },
     telemetry: {
       targetDensity: { value: 0, ratio: 0, available: false },
       wetDuckAmount: { value: 0, ratio: 0, available: false },
@@ -389,6 +423,7 @@ document.addEventListener('alpine:init', () => {
     },
     recentStateTransition: 'N/A → N/A',
     previousEngineState: null,
+    telemetryUiUpdateQueued: false,
     lastMacroAffectedText: '',
     pollInterval: null,
     transportTimer: null,
@@ -440,12 +475,39 @@ document.addEventListener('alpine:init', () => {
       this.openAccordion = this.openAccordion === name ? '' : name;
     },
 
+    get allMacroKeys() {
+      return this.macroPipeline.filter((key) => this.macroLabels[key]);
+    },
+
+    get visibleParameterGroups() {
+      return this.uiMode === UI_MODES.DEVELOPER ? this.parameterGroups : [];
+    },
+
+    get currentUiModeLabel() {
+      if (this.uiMode === UI_MODES.DEVELOPER) return 'Developer';
+      if (this.uiMode === UI_MODES.ADVANCED) return 'Advanced';
+      return 'Simple';
+    },
+
+    setUiMode(mode) {
+      if (!Object.values(UI_MODES).includes(mode) || this.uiMode === mode) return;
+      this.recordHistory('UI mode');
+      this.uiMode = mode;
+      this.developerMode = mode === UI_MODES.DEVELOPER;
+      if (this.developerMode && !this.openAccordion) this.openAccordion = this.parameterGroups[0]?.name || 'Advanced';
+      this.saveDraft();
+      this.toast(`Modo ${this.currentUiModeLabel} ativo.`, 'info');
+    },
+
     get displayedMacroKeys() {
-      return this.activeMacroPage === 0 ? this.macroPrimaryPage : this.macroSecondaryPage;
+      if (this.uiMode === UI_MODES.SIMPLE) return this.macroPrimaryPage;
+      return this.allMacroKeys;
     },
 
     get macroPageTitle() {
-      return this.activeMacroPage === 0 ? 'Simple Macros' : 'Advanced Macros';
+      if (this.uiMode === UI_MODES.SIMPLE) return 'Simple Musical Macros';
+      if (this.uiMode === UI_MODES.ADVANCED) return 'Advanced Musical Macros';
+      return 'Developer: Musical Macros + Internal Groups';
     },
 
     get macroSliderStep() {
@@ -453,7 +515,11 @@ document.addEventListener('alpine:init', () => {
     },
 
     cycleMacroPage() {
-      this.activeMacroPage = this.activeMacroPage === 0 ? 1 : 0;
+      if (this.uiMode === UI_MODES.SIMPLE) {
+        this.setUiMode(UI_MODES.ADVANCED);
+        return;
+      }
+      this.setUiMode(UI_MODES.SIMPLE);
     },
 
     toggleShiftMode() {
@@ -530,6 +596,8 @@ document.addEventListener('alpine:init', () => {
           base_params: this.baseParams,
           macro_values: this.macroValues,
           developer_mode: this.developerMode,
+          ui_mode: this.uiMode,
+          ab_slots: this.abSlots,
           savedAt: Date.now(),
         })
       );
@@ -553,7 +621,76 @@ document.addEventListener('alpine:init', () => {
       this.queueParamFlush();
     },
 
+    createHistorySnapshot() {
+      return {
+        baseParams: { ...this.baseParams },
+        macroValues: { ...this.macroValues },
+        uiMode: this.uiMode,
+        developerMode: this.developerMode,
+      };
+    },
+
+    restoreHistorySnapshot(snapshot) {
+      if (!snapshot) return;
+      const nextBaseParams = { ...this.baseParams, ...(snapshot.baseParams || {}) };
+      const nextParams = nextBaseParams;
+      const nextMacroValues = window.BubbleCloudMacroLayer.normalizeMacroValues(snapshot.macroValues);
+      const nextUiMode = Object.values(UI_MODES).includes(snapshot.uiMode) ? snapshot.uiMode : UI_MODES.SIMPLE;
+      const nextDeveloperMode = nextUiMode === UI_MODES.DEVELOPER;
+
+      this.baseParams = nextBaseParams;
+      this.params = nextParams;
+      this.macroValues = nextMacroValues;
+      this.uiMode = nextUiMode;
+      this.developerMode = nextDeveloperMode;
+      this.isDraft = true;
+      this.hasUnexportedChanges = true;
+
+      this.validateParamRanges();
+      this.scheduleDraftPersist();
+      this.queueParamFlush();
+    },
+
+    recordHistory(label = 'Parameter change') {
+      this.undoStack.push({ label, snapshot: this.createHistorySnapshot() });
+      if (this.undoStack.length > HISTORY_LIMIT) this.undoStack.shift();
+      this.redoStack = [];
+    },
+
+    beginHistoryTransaction(label = 'Parameter change') {
+      if (this.historyTransactionBefore) return;
+      this.historyTransactionBefore = { label, snapshot: this.createHistorySnapshot() };
+    },
+
+    commitHistoryTransaction() {
+      if (!this.historyTransactionBefore) return;
+      const before = this.historyTransactionBefore;
+      this.historyTransactionBefore = null;
+      const after = JSON.stringify(this.createHistorySnapshot());
+      if (JSON.stringify(before.snapshot) === after) return;
+      this.undoStack.push(before);
+      if (this.undoStack.length > HISTORY_LIMIT) this.undoStack.shift();
+      this.redoStack = [];
+    },
+
+    undoParameterChange() {
+      const entry = this.undoStack.pop();
+      if (!entry) return;
+      this.redoStack.push({ label: 'Redo', snapshot: this.createHistorySnapshot() });
+      this.restoreHistorySnapshot(entry.snapshot);
+      this.toast(`Undo: ${entry.label}`, 'info');
+    },
+
+    redoParameterChange() {
+      const entry = this.redoStack.pop();
+      if (!entry) return;
+      this.undoStack.push({ label: 'Undo', snapshot: this.createHistorySnapshot() });
+      this.restoreHistorySnapshot(entry.snapshot);
+      this.toast('Redo aplicado.', 'info');
+    },
+
     onMacroInput(macroKey) {
+      this.beginHistoryTransaction(`Macro ${this.macroLabels[macroKey] || macroKey}`);
       const affected = (this.macroDestinations?.[macroKey] || [])
         .map((target) => this.formatLabel(target.param))
         .filter(Boolean);
@@ -561,13 +698,87 @@ document.addEventListener('alpine:init', () => {
       this.saveDraft();
     },
 
+    onParamInput(paramKey) {
+      this.beginHistoryTransaction(`Parameter ${this.formatLabel(paramKey)}`);
+      this.saveDraft();
+    },
+
+    randomizeMusical() {
+      this.recordHistory('Randomize musical');
+      this.allMacroKeys.forEach((key) => {
+        const [min, max] = MUSICAL_RANDOMIZE_RANGES[key] || [0.25, 0.75];
+        const value = min + Math.random() * (max - min);
+        this.macroValues[key] = Number(value.toFixed(3));
+      });
+      this.macroValues.mix = Math.min(this.macroValues.mix, 0.72);
+      this.validateMacroRanges();
+      this.lastMacroAffectedText = 'Randomize musical: ranges seguros aplicados aos 12 macros.';
+      this.saveDraft();
+      this.toast('Randomize musical aplicado com ranges seguros.', 'success');
+    },
+
+    captureABSlot(slot) {
+      const normalizedSlot = slot === 'B' ? 'B' : 'A';
+      this.abSlots[normalizedSlot] = {
+        label: normalizedSlot,
+        baseParams: { ...this.baseParams },
+        macroValues: { ...this.macroValues },
+      };
+      this.activeABSlot = normalizedSlot;
+      this.scheduleDraftPersist();
+      this.toast(`Slot ${normalizedSlot} capturado.`, 'success');
+    },
+
+    recallABSlot(slot) {
+      const normalizedSlot = slot === 'B' ? 'B' : 'A';
+      const stored = this.abSlots[normalizedSlot];
+      if (!stored) return;
+      this.recordHistory(`Recall ${normalizedSlot}`);
+      this.activeABSlot = normalizedSlot;
+      this.baseParams = { ...this.baseParams, ...(stored.baseParams || {}) };
+      this.params = this.baseParams;
+      this.macroValues = window.BubbleCloudMacroLayer.normalizeMacroValues(stored.macroValues);
+      this.validateParamRanges();
+      this.saveDraft();
+      this.toast(`Comparação A/B: ouvindo slot ${normalizedSlot}.`, 'info');
+    },
+
+    swapABSlots() {
+      this.recordHistory('Swap A/B');
+      const nextABSlots = {
+        A: this.abSlots.B,
+        B: this.abSlots.A,
+      };
+      const stored = nextABSlots[this.activeABSlot];
+      let nextBaseParams = this.baseParams;
+      let nextParams = this.params;
+      let nextMacroValues = this.macroValues;
+
+      if (stored) {
+        nextBaseParams = { ...this.baseParams, ...(stored.baseParams || {}) };
+        nextParams = nextBaseParams;
+        nextMacroValues = window.BubbleCloudMacroLayer.normalizeMacroValues(stored.macroValues);
+      }
+
+      this.abSlots = nextABSlots;
+      this.baseParams = nextBaseParams;
+      this.params = nextParams;
+      this.macroValues = nextMacroValues;
+
+      this.validateParamRanges();
+      this.saveDraft();
+      this.toast('Slots A/B trocados.', 'info');
+    },
+
     resetMacros() {
+      this.recordHistory('Reset macros');
       this.macroValues = window.BubbleCloudMacroLayer.createNeutralMacroValues();
       this.saveDraft();
       this.toast('Macros resetados para neutro.', 'success');
     },
 
     commitResolvedToBase() {
+      this.recordHistory('Commit resolved to base');
       this.validateParamRanges();
       this.baseParams = { ...this.resolvedParams };
       this.params = this.baseParams;
@@ -589,7 +800,14 @@ document.addEventListener('alpine:init', () => {
           this.baseParams = { ...this.baseParams, ...(parsed.base_params || parsed.params || {}) };
           this.params = this.baseParams;
           this.macroValues = window.BubbleCloudMacroLayer.normalizeMacroValues(parsed.macro_values);
-          this.developerMode = Boolean(parsed.developer_mode);
+          this.uiMode = Object.values(UI_MODES).includes(parsed.ui_mode) ? parsed.ui_mode : (parsed.developer_mode ? UI_MODES.DEVELOPER : UI_MODES.SIMPLE);
+          this.developerMode = this.uiMode === UI_MODES.DEVELOPER;
+          if (parsed.ab_slots && typeof parsed.ab_slots === 'object') {
+            this.abSlots = {
+              ...this.abSlots,
+              ...parsed.ab_slots,
+            };
+          }
           this.isDraft = true;
           this.hasUnexportedChanges = true;
           this.validateParamRanges();
@@ -610,6 +828,7 @@ document.addEventListener('alpine:init', () => {
     },
 
     confirmReset() {
+      this.recordHistory('Reset baseline');
       this.baseParams = { ...this.baseline };
       this.params = this.baseParams;
       this.macroValues = window.BubbleCloudMacroLayer.createNeutralMacroValues();
@@ -624,6 +843,7 @@ document.addEventListener('alpine:init', () => {
     },
 
     loadFactoryPreset(slug) {
+      this.recordHistory('Load factory preset');
       const preset = this.factoryPresets.find((item) => item.preset_slug === slug);
       if (!preset) return;
       this.baseParams = { ...(preset.base_params || preset.params) };
@@ -642,6 +862,7 @@ document.addEventListener('alpine:init', () => {
     },
 
     resetToLoadedPresetDefaults() {
+      this.recordHistory('Reset loaded preset defaults');
       this.baseParams = { ...(this.loadedPresetReference.base_params || this.loadedPresetReference.params) };
       this.params = this.baseParams;
       this.macroValues = window.BubbleCloudMacroLayer.normalizeMacroValues(this.loadedPresetReference.macro_values);
@@ -882,7 +1103,8 @@ document.addEventListener('alpine:init', () => {
             this.metrics.peakR = Number(data.peakR) || 0;
             this.metrics.clipCount = Number(data.clipCount) || 0;
             this.metrics.limiterGain = Number(data.limiterGain) || 1;
-            this.updateTelemetryIndicators();
+            this.metrics.cpuLoad = Number(data.cpuLoad) || 0;
+            this.scheduleTelemetryUiUpdate();
           } else if (data.type === 'init-failed' || data.type === 'wasm-error' || data.type === 'processor-error') {
             this.workletReady = false;
             this.setAudioStatus(data.message || 'Falha na inicialização do WASM.', true);
@@ -907,7 +1129,7 @@ document.addEventListener('alpine:init', () => {
       this.selectedQualityProfile = Number(profileId);
       this.metrics.voiceLimit = this.activeQualityProfile.voices;
       this.pushQualityProfileToAudio();
-      this.updateTelemetryIndicators();
+      this.scheduleTelemetryUiUpdate();
       this.toast(`Perfil de qualidade: ${this.activeQualityProfile.label}`, 'info');
     },
 
@@ -957,6 +1179,15 @@ document.addEventListener('alpine:init', () => {
           this.workletNode.port.postMessage({ type: 'poll' });
         }
       }, 100);
+    },
+
+    scheduleTelemetryUiUpdate() {
+      if (this.telemetryUiUpdateQueued) return;
+      this.telemetryUiUpdateQueued = true;
+      requestAnimationFrame(() => {
+        this.telemetryUiUpdateQueued = false;
+        this.updateTelemetryIndicators();
+      });
     },
 
     updateTelemetryIndicators() {
