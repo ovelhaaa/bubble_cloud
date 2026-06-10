@@ -7,6 +7,18 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
     this.ready = false;
     this.bypass = false;
     this.metrics = { envelope: 0, state: 0, voices: 0, voiceLimit: 24, peakL: 0, peakR: 0, clipCount: 0, limiterGain: 1, cpuLoad: 0 };
+    this.visualizerMetrics = {
+      activeVoices: 0,
+      voiceLimit: 24,
+      densityEstimate: 0,
+      energy: 0,
+      stereoSpread: 0,
+      clipping: false,
+      clipCount: 0,
+      engineState: 0,
+    };
+    this.visualizerMessageIntervalMs = 50;
+    this.lastVisualizerMessageAt = 0;
     this.qualityProfile = 2;
 
     this.wasm = null;
@@ -143,6 +155,52 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
     return this.wasm[`_${name}`] ? this.wasm.cwrap(name, returnType, argTypes) : fallback;
   }
 
+  clamp01(value) {
+    return Math.max(0, Math.min(1, Number(value) || 0));
+  }
+
+  estimateDensityForVisualizer(state, envelope, voices, voiceLimit) {
+    const voiceRatio = this.clamp01(voices / Math.max(1, voiceLimit));
+    const envelopeRatio = this.clamp01(envelope);
+    const stateWeight = state === 3 ? 1 : state === 2 ? 0.72 : state === 1 ? 0.38 : 0;
+    return this.clamp01(voiceRatio * 0.62 + envelopeRatio * 0.24 + stateWeight * 0.14);
+  }
+
+  updateVisualizerMetrics(blockSize, processNow) {
+    let sumSquares = 0;
+    let sumSideSquares = 0;
+    let sumMidSquares = 0;
+    for (let i = 0; i < blockSize; i += 1) {
+      const left = this.outLHeap[i] || 0;
+      const right = this.outRHeap[i] || 0;
+      const mid = (left + right) * 0.5;
+      const side = (left - right) * 0.5;
+      sumSquares += left * left + right * right;
+      sumMidSquares += mid * mid;
+      sumSideSquares += side * side;
+    }
+
+    const energy = Math.sqrt(sumSquares / Math.max(1, blockSize * 2));
+    const stereoSpread = Math.sqrt(sumSideSquares / Math.max(1e-9, sumMidSquares + sumSideSquares));
+    const clipCount = Number(this.metrics.clipCount) || 0;
+
+    this.visualizerMetrics = {
+      activeVoices: Number(this.metrics.voices) || 0,
+      voiceLimit: Number(this.metrics.voiceLimit) || 24,
+      densityEstimate: this.estimateDensityForVisualizer(this.metrics.state, this.metrics.envelope, this.metrics.voices, this.metrics.voiceLimit),
+      energy: this.clamp01(energy),
+      stereoSpread: this.clamp01(stereoSpread),
+      clipping: clipCount > 0 || Math.max(Math.abs(this.metrics.peakL), Math.abs(this.metrics.peakR)) >= 0.999,
+      clipCount,
+      engineState: Number(this.metrics.state) || 0,
+    };
+
+    if (processNow - this.lastVisualizerMessageAt >= this.visualizerMessageIntervalMs) {
+      this.lastVisualizerMessageAt = processNow;
+      this.port.postMessage({ type: 'visualizer-metrics', ...this.visualizerMetrics });
+    }
+  }
+
   async initialize() {
     this.port.postMessage({ type: 'loading' });
     try {
@@ -234,6 +292,7 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
       this.metrics.peakR = this.wasmGetPeakR();
       this.metrics.clipCount = this.wasmGetClipCount();
       this.metrics.limiterGain = this.wasmGetLimiterGain();
+      this.updateVisualizerMetrics(blockSize, processEnd);
     } catch (err) {
       if (outL) outL.fill(0);
       if (outR) outR.fill(0);
