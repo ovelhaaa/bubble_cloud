@@ -75,6 +75,10 @@ static inline float Filter1Pole_ProcessHPF(Filter1Pole_t* f, float input);
 static float UpdateEnvelope(float prev_state, float input_peak, float attack_coef, float release_coef);
 static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_peak);
 static void Scheduler_SpawnImmediateBurst(SoundBubblesEngine_t* engine);
+static int Scheduler_SpawnBurstMode(SoundBubblesEngine_t* engine, int max_spawns);
+static BubbleClass_t Scheduler_SelectClassForState(SoundBubblesEngine_t* engine);
+static bool Scheduler_IsRhythmStepActive(const SoundBubblesEngine_t* engine, int32_t step_index);
+static float Scheduler_TicksPerRhythmStep(const SoundBubblesEngine_t* engine);
 static void Scheduler_RunTick(SoundBubblesEngine_t* engine);
 static int Voice_FindInactiveSlot(SoundBubblesEngine_t* engine);
 static int Voice_Allocate(SoundBubblesEngine_t* engine);
@@ -162,6 +166,11 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
 
     engine->target_density = 0.0f;
     engine->spawn_accumulator = 0.0f;
+    engine->rhythm_step_accumulator = 1.0f;
+    engine->rhythm_step_index = 0;
+    engine->strum_pending_count = 0;
+    engine->strum_step_index = 0;
+    engine->force_reverse_spawns = 0;
 
     engine->internal_ducking_target = 1.0f;
     engine->smoothed_ducking_gain = 1.0f;
@@ -642,58 +651,132 @@ static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_
 }
 
 static void Scheduler_SpawnImmediateBurst(SoundBubblesEngine_t* engine) {
-    // Defensively clamp immediate burst count
-    int burst_count = engine->config.burst_immediate_count;
-    if (burst_count < 0) burst_count = 0;
-    if (burst_count > engine->active_voice_limit) burst_count = engine->active_voice_limit;
+    (void)Scheduler_SpawnBurstMode(engine, engine->active_voice_limit);
+}
 
-    for (int i = 0; i < burst_count; i++) {
-        if (Voice_RequestSpawn(engine, BUBBLE_CLASS_MICRO_ATTACK, 0)) {
-            engine->metrics_tick_spawn_count++;
-        }
+static BubbleClass_t Scheduler_SelectClassForState(SoundBubblesEngine_t* engine) {
+    float r = RandomFloat01(engine);
+    switch (engine->engine_state) {
+        case ENGINE_STATE_TRANSIENT_BURST:
+            return BUBBLE_CLASS_MICRO_ATTACK;
+        case ENGINE_STATE_ATTACK_ONGOING:
+            return (r < 0.8f) ? BUBBLE_CLASS_MICRO_ATTACK : BUBBLE_CLASS_SHORT_INTERMEDIATE;
+        case ENGINE_STATE_SUSTAIN_BODY:
+            return (r < 0.7f) ? BUBBLE_CLASS_SUSTAIN_BODY : BUBBLE_CLASS_SHORT_INTERMEDIATE;
+        case ENGINE_STATE_SPARSE_DECAY:
+            return BUBBLE_CLASS_SUSTAIN_BODY;
+        default:
+            return BUBBLE_CLASS_SHORT_INTERMEDIATE;
     }
+}
+
+static int Scheduler_SpawnBurstMode(SoundBubblesEngine_t* engine, int max_spawns) {
+    int burst_count = engine->config.burst_immediate_count;
+    if (burst_count < 1) burst_count = 1;
+    if (burst_count > engine->active_voice_limit) burst_count = engine->active_voice_limit;
+    if (max_spawns < burst_count) burst_count = max_spawns;
+
+    int spawned = 0;
+    switch (engine->config.burst_mode) {
+        case BUBBLE_BURST_MODE_SPRAY:
+            for (int i = 0; i < burst_count; i++) {
+                BubbleClass_t c = (i == 0) ? BUBBLE_CLASS_MICRO_ATTACK : Scheduler_SelectClassForState(engine);
+                if (Voice_RequestSpawn(engine, c, 0)) { engine->metrics_tick_spawn_count++; spawned++; }
+            }
+            break;
+        case BUBBLE_BURST_MODE_STRUM:
+            if (engine->strum_pending_count < burst_count) engine->strum_pending_count = burst_count;
+            break;
+        case BUBBLE_BURST_MODE_SWARM:
+        {
+            int swarm_count = burst_count * 2;
+            if (swarm_count < 4) swarm_count = 4;
+            if (swarm_count > max_spawns) swarm_count = max_spawns;
+            if (swarm_count > engine->active_voice_limit) swarm_count = engine->active_voice_limit;
+            for (int i = 0; i < swarm_count; i++) {
+                if (Voice_RequestSpawn(engine, Scheduler_SelectClassForState(engine), 0)) { engine->metrics_tick_spawn_count++; spawned++; }
+            }
+            break;
+        }
+        case BUBBLE_BURST_MODE_REVERSE_SWELL:
+            engine->force_reverse_spawns += burst_count;
+            for (int i = 0; i < burst_count; i++) {
+                BubbleClass_t c = (i == 0) ? BUBBLE_CLASS_SHORT_INTERMEDIATE : BUBBLE_CLASS_SUSTAIN_BODY;
+                if (Voice_RequestSpawn(engine, c, 0)) { engine->metrics_tick_spawn_count++; spawned++; }
+            }
+            break;
+        case BUBBLE_BURST_MODE_SINGLE:
+        default:
+            if (Voice_RequestSpawn(engine, Scheduler_SelectClassForState(engine), 0)) { engine->metrics_tick_spawn_count++; spawned++; }
+            break;
+    }
+    return spawned;
+}
+
+static bool Scheduler_IsRhythmStepActive(const SoundBubblesEngine_t* engine, int32_t step_index) {
+    uint32_t pattern = engine->config.rhythm_pattern & 0xFFFFu;
+    if (pattern == 0u) pattern = 0x0001u;
+    int bit = step_index % 16;
+    if (bit < 0) bit += 16;
+    return ((pattern >> bit) & 1u) != 0u;
+}
+
+static float Scheduler_TicksPerRhythmStep(const SoundBubblesEngine_t* engine) {
+    float bpm = engine->config.tempo_bpm;
+    if (!isfinite(bpm) || bpm < 20.0f) bpm = 20.0f;
+    if (bpm > 300.0f) bpm = 300.0f;
+    float steps_per_quarter = 4.0f;
+    switch (engine->config.rhythm_division) {
+        case BUBBLE_RHYTHM_DIVISION_QUARTER: steps_per_quarter = 1.0f; break;
+        case BUBBLE_RHYTHM_DIVISION_EIGHTH: steps_per_quarter = 2.0f; break;
+        case BUBBLE_RHYTHM_DIVISION_THIRTY_SECOND: steps_per_quarter = 8.0f; break;
+        case BUBBLE_RHYTHM_DIVISION_SIXTEENTH:
+        default: steps_per_quarter = 4.0f; break;
+    }
+    float ticks_per_second = (float)BUBBLES_SAMPLE_RATE / (float)BUBBLES_BLOCK_SIZE;
+    float steps_per_second = (bpm / 60.0f) * steps_per_quarter;
+    return ticks_per_second / fmaxf(steps_per_second, 1.0e-6f);
 }
 
 static void Scheduler_RunTick(SoundBubblesEngine_t* engine) {
     int spawns_this_tick = Voice_FlushPendingSpawns(engine, SCHED_MAX_SPAWNS_PER_TICK);
+
+    if (engine->strum_pending_count > 0 && spawns_this_tick < SCHED_MAX_SPAWNS_PER_TICK) {
+        BubbleClass_t c = (engine->strum_step_index % 3 == 0) ? BUBBLE_CLASS_MICRO_ATTACK :
+                          ((engine->strum_step_index % 3 == 1) ? BUBBLE_CLASS_SHORT_INTERMEDIATE : BUBBLE_CLASS_SUSTAIN_BODY);
+        if (Voice_RequestSpawn(engine, c, 0)) { engine->metrics_tick_spawn_count++; spawns_this_tick++; }
+        engine->strum_pending_count--;
+        engine->strum_step_index++;
+    }
 
     if (engine->engine_state == ENGINE_STATE_SILENCE) {
         engine->spawn_accumulator = 0.0f;
         return;
     }
 
-    // Convert target_density (spawns/sec) to fractional spawns per block
+    if (engine->config.tempo_sync_enabled) {
+        float ticks_per_step = Scheduler_TicksPerRhythmStep(engine);
+        engine->rhythm_step_accumulator += 1.0f / ticks_per_step;
+        while (engine->rhythm_step_accumulator >= 1.0f) {
+            if (Scheduler_IsRhythmStepActive(engine, engine->rhythm_step_index) && spawns_this_tick < SCHED_MAX_SPAWNS_PER_TICK) {
+                spawns_this_tick += Scheduler_SpawnBurstMode(engine, SCHED_MAX_SPAWNS_PER_TICK - spawns_this_tick);
+            }
+            engine->rhythm_step_index++;
+            engine->rhythm_step_accumulator -= 1.0f;
+        }
+        return;
+    }
+
     float spawns_per_tick = engine->target_density * ((float)BUBBLES_BLOCK_SIZE / (float)BUBBLES_SAMPLE_RATE);
     engine->spawn_accumulator += spawns_per_tick;
 
     while (engine->spawn_accumulator >= 1.0f && spawns_this_tick < SCHED_MAX_SPAWNS_PER_TICK) {
-        BubbleClass_t selected_class;
-        float r = RandomFloat01(engine);
-
-        switch (engine->engine_state) {
-            case ENGINE_STATE_TRANSIENT_BURST:
-                selected_class = BUBBLE_CLASS_MICRO_ATTACK;
-                break;
-            case ENGINE_STATE_ATTACK_ONGOING:
-                selected_class = (r < 0.8f) ? BUBBLE_CLASS_MICRO_ATTACK : BUBBLE_CLASS_SHORT_INTERMEDIATE;
-                break;
-            case ENGINE_STATE_SUSTAIN_BODY:
-                selected_class = (r < 0.7f) ? BUBBLE_CLASS_SUSTAIN_BODY : BUBBLE_CLASS_SHORT_INTERMEDIATE;
-                break;
-            case ENGINE_STATE_SPARSE_DECAY:
-                selected_class = BUBBLE_CLASS_SUSTAIN_BODY;
-                break;
-            default:
-                selected_class = BUBBLE_CLASS_SHORT_INTERMEDIATE;
-                break;
-        }
-
-        if (Voice_RequestSpawn(engine, selected_class, 0)) {
-            engine->metrics_tick_spawn_count++;
-        }
-
+        int spawned = Scheduler_SpawnBurstMode(engine, SCHED_MAX_SPAWNS_PER_TICK - spawns_this_tick);
         engine->spawn_accumulator -= 1.0f;
-        spawns_this_tick++;
+        spawns_this_tick += spawned;
+        if (spawned <= 0 && engine->config.burst_mode != BUBBLE_BURST_MODE_STRUM) {
+            break;
+        }
     }
 
     if (engine->spawn_accumulator > 1.0f) {
@@ -871,7 +954,12 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     v->phase = 0.0f;
     v->amp = 1.0f;
     v->quantized_rate = ResolvePitchModeRate(engine);
-    v->read_direction = (RandomFloat01(engine) < Clamp01(engine->config.reverse_probability)) ? 1u : 0u;
+    if (engine->force_reverse_spawns > 0) {
+        v->read_direction = 1u;
+        engine->force_reverse_spawns--;
+    } else {
+        v->read_direction = (RandomFloat01(engine) < Clamp01(engine->config.reverse_probability)) ? 1u : 0u;
+    }
     v->rate = (v->read_direction != 0u) ? -v->quantized_rate : v->quantized_rate;
     if (engine->config.attack_rate_jitter && b_class == BUBBLE_CLASS_MICRO_ATTACK) {
         float d = Clamp(engine->config.attack_rate_jitter_depth, 0.0f, 0.2f);
