@@ -1,0 +1,84 @@
+{
+  "schema_version": 3,
+  "preset_name": "Infinite Guitar",
+  "preset_slug": "infinite-guitar",
+  "engine_version": "post-diffusion-ui",
+  "created_at": "2026-06-10T00:00:00Z",
+  "ui_category": "Ambient",
+  "tags": [
+    "infinite",
+    "guitar",
+    "freeze",
+    "sustain",
+    "web-standard"
+  ],
+  "esp32_safe": false,
+  "quality_tier": "HIGH_QUALITY",
+  "description": "Sustain quase infinito para notas e ebows, com freeze musical e memória longa sem mascarar totalmente o dry.",
+  "params": {
+    "burst_immediate_count": 1,
+    "density_burst": 18,
+    "density_sustain": 38,
+    "density_decay": 1,
+    "body_duration_ms_min": 200,
+    "body_duration_ms_max": 520,
+    "rng_seed": 1009,
+    "stereo_width": 0.9,
+    "sustain_pan_spread": 0.8,
+    "sustain_diffusion_enable": 1,
+    "sustain_diffusion_amount": 0.7,
+    "sustain_diffusion_stages": 2,
+    "sustain_diffusion_feedback": 0.7,
+    "memory_mix": 0.86,
+    "memory_pull": 0.78,
+    "memory_darkening": 0.48,
+    "attack_brightness": 0.78,
+    "sustain_darkness": 0.58,
+    "quality_profile": 2,
+    "active_voice_limit": 24,
+    "freeze_amount": 0.96,
+    "freeze_enabled": 1,
+    "motion_rate": 0.1,
+    "motion_depth": 0.12
+  },
+  "macro_values": {
+    "density": 0.42,
+    "bloom": 0.9,
+    "motion": 0.24,
+    "texture": 0.4,
+    "space": 0.8,
+    "gravity": 0.7,
+    "memory": 0.9,
+    "clarity": 0.32,
+    "freeze": 0.96,
+    "sparkle": 0.32,
+    "warmth": 0.7,
+    "mix": 0.62
+  },
+  "metadata": {
+    "recommended_min_profile": "WEB_STANDARD",
+    "mcu_compatibility": {
+      "compatible": false,
+      "profile": "WEB_STANDARD",
+      "active_voice_limit": 24
+    },
+    "feature_usage": {
+      "freeze": {
+        "enabled": true,
+        "amount": 0.96
+      },
+      "reverse": {
+        "probability": 0.0
+      },
+      "pitch": {
+        "mode": 0,
+        "shimmer_amount": 0.0
+      },
+      "motion": {
+        "rate": 0.1,
+        "depth": 0.12,
+        "shape": 0
+      }
+    }
+  }
+}

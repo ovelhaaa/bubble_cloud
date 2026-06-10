@@ -1,0 +1,86 @@
+{
+  "schema_version": 3,
+  "preset_name": "Warm Nebula",
+  "preset_slug": "warm-nebula",
+  "engine_version": "post-diffusion-ui",
+  "created_at": "2026-06-10T00:00:00Z",
+  "ui_category": "Ambient",
+  "tags": [
+    "warm",
+    "nebula",
+    "cinematic",
+    "dense",
+    "web-standard"
+  ],
+  "esp32_safe": false,
+  "quality_tier": "HIGH_QUALITY",
+  "description": "Nebulosa quente e densa, com granulação arredondada e cauda ampla para camadas cinematográficas.",
+  "params": {
+    "density_burst": 34,
+    "density_sustain": 42,
+    "density_decay": 2,
+    "body_duration_ms_min": 180,
+    "body_duration_ms_max": 480,
+    "rng_seed": 1013,
+    "stereo_width": 0.94,
+    "sustain_pan_spread": 0.88,
+    "wet_drive": 1.18,
+    "wet_clip_amount": 0.24,
+    "wet_output_trim": 0.92,
+    "sustain_diffusion_enable": 1,
+    "sustain_diffusion_amount": 0.68,
+    "sustain_diffusion_stages": 2,
+    "sustain_diffusion_feedback": 0.58,
+    "memory_mix": 0.72,
+    "memory_pull": 0.64,
+    "memory_darkening": 0.54,
+    "attack_brightness": 0.68,
+    "sustain_darkness": 0.66,
+    "quality_profile": 2,
+    "active_voice_limit": 24,
+    "freeze_amount": 0.36,
+    "freeze_enabled": 1,
+    "motion_rate": 0.16,
+    "motion_depth": 0.2
+  },
+  "macro_values": {
+    "density": 0.64,
+    "bloom": 0.82,
+    "motion": 0.36,
+    "texture": 0.52,
+    "space": 0.86,
+    "gravity": 0.68,
+    "memory": 0.78,
+    "clarity": 0.26,
+    "freeze": 0.56,
+    "sparkle": 0.24,
+    "warmth": 0.94,
+    "mix": 0.7
+  },
+  "metadata": {
+    "recommended_min_profile": "WEB_STANDARD",
+    "mcu_compatibility": {
+      "compatible": false,
+      "profile": "WEB_STANDARD",
+      "active_voice_limit": 24
+    },
+    "feature_usage": {
+      "freeze": {
+        "enabled": true,
+        "amount": 0.36
+      },
+      "reverse": {
+        "probability": 0.0
+      },
+      "pitch": {
+        "mode": 0,
+        "shimmer_amount": 0.0
+      },
+      "motion": {
+        "rate": 0.16,
+        "depth": 0.2,
+        "shape": 0
+      }
+    }
+  }
+}

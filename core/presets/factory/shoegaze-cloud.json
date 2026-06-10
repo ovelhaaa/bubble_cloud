@@ -1,0 +1,88 @@
+{
+  "schema_version": 3,
+  "preset_name": "Shoegaze Cloud",
+  "preset_slug": "shoegaze-cloud",
+  "engine_version": "post-diffusion-ui",
+  "created_at": "2026-06-10T00:00:00Z",
+  "ui_category": "Ambient",
+  "tags": [
+    "shoegaze",
+    "cloud",
+    "warm",
+    "diffuse",
+    "wall"
+  ],
+  "esp32_safe": false,
+  "quality_tier": "HIGH_QUALITY",
+  "description": "Muralha difusa e saturada, quente e enevoada, para guitarras dream-pop/shoegaze com ataque dissolvido.",
+  "params": {
+    "burst_immediate_count": 2,
+    "density_burst": 36,
+    "density_sustain": 44,
+    "density_decay": 2,
+    "body_duration_ms_min": 170,
+    "body_duration_ms_max": 430,
+    "rng_seed": 1004,
+    "stereo_width": 0.98,
+    "attack_pan_spread": 0.7,
+    "sustain_pan_spread": 0.92,
+    "wet_drive": 1.35,
+    "wet_clip_amount": 0.3,
+    "wet_output_trim": 0.9,
+    "sustain_diffusion_enable": 1,
+    "sustain_diffusion_amount": 0.72,
+    "sustain_diffusion_stages": 2,
+    "sustain_diffusion_feedback": 0.62,
+    "memory_mix": 0.74,
+    "memory_pull": 0.62,
+    "memory_darkening": 0.56,
+    "attack_brightness": 0.72,
+    "sustain_darkness": 0.68,
+    "quality_profile": 2,
+    "active_voice_limit": 24,
+    "freeze_amount": 0.44,
+    "freeze_enabled": 1,
+    "motion_rate": 0.2,
+    "motion_depth": 0.24
+  },
+  "macro_values": {
+    "density": 0.7,
+    "bloom": 0.88,
+    "motion": 0.4,
+    "texture": 0.64,
+    "space": 0.86,
+    "gravity": 0.66,
+    "memory": 0.8,
+    "clarity": 0.2,
+    "freeze": 0.58,
+    "sparkle": 0.34,
+    "warmth": 0.86,
+    "mix": 0.72
+  },
+  "metadata": {
+    "recommended_min_profile": "WEB_STANDARD",
+    "mcu_compatibility": {
+      "compatible": false,
+      "profile": "WEB_STANDARD",
+      "active_voice_limit": 24
+    },
+    "feature_usage": {
+      "freeze": {
+        "enabled": true,
+        "amount": 0.44
+      },
+      "reverse": {
+        "probability": 0.0
+      },
+      "pitch": {
+        "mode": 0,
+        "shimmer_amount": 0.0
+      },
+      "motion": {
+        "rate": 0.2,
+        "depth": 0.24,
+        "shape": 0
+      }
+    }
+  }
+}

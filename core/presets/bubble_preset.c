@@ -311,6 +311,48 @@ static bool GetPresetParam(const BubbleEnginePreset_t* preset, BubbleEngineParam
     }
 }
 
+
+static const char* BUBBLE_PRESET_MACRO_NAMES[BUBBLES_MACRO_COUNT] = {
+    "density",
+    "bloom",
+    "motion",
+    "texture",
+    "space",
+    "gravity",
+    "memory",
+    "clarity",
+    "freeze",
+    "sparkle",
+    "warmth",
+    "mix"
+};
+
+static bool ValidateMacroValue(const char* name, float value, char* error, size_t error_size) {
+    if (!isfinite(value) || value < 0.0f || value > 1.0f) {
+        char message[192];
+        snprintf(message, sizeof(message), "Preset validation failed: macro_values.%s is outside 0..1.", name != NULL ? name : "<unknown>");
+        SetError(error, error_size, message);
+        return false;
+    }
+    return true;
+}
+
+static bool LoadMacroValues(const char* json, BubbleEnginePreset_t* preset, char* error, size_t error_size) {
+    const char* macros_begin = NULL;
+    const char* macros_end = NULL;
+    if (!FindJsonObjectRange(json, "macro_values", &macros_begin, &macros_end)) return true;
+
+    for (int i = 0; i < BUBBLES_MACRO_COUNT; ++i) {
+        const char* macro_name = BUBBLE_PRESET_MACRO_NAMES[i];
+        float value = 0.0f;
+        if (!ReadParamNumber(json, macros_begin, macros_end, macro_name, &value)) continue;
+        if (!ValidateMacroValue(macro_name, value, error, error_size)) return false;
+        preset->macro_values[i] = value;
+        preset->macro_targets[i] = value;
+    }
+    return true;
+}
+
 static bool ValidatePresetRelations(const BubbleEnginePreset_t* preset, char* error, size_t error_size) {
     const BubbleEngineConfig_t* c = &preset->config;
     if (c->attack_region.min_offset_samples > c->attack_region.max_offset_samples ||
@@ -427,6 +469,8 @@ bool bubble_preset_load_json(const char* json, BubbleEnginePreset_t* preset, cha
         }
     }
 
+    if (!LoadMacroValues(json, preset, error, error_size)) return false;
+
     return ValidatePresetRelations(preset, error, error_size);
 }
 
@@ -519,7 +563,15 @@ bool bubble_preset_save_json(const BubbleEnginePreset_t* preset, char* out_json,
     if (!first) {
         if (!Append(out_json, out_json_size, &used, "\n")) goto overflow;
     }
-    if (!Append(out_json, out_json_size, &used, "  }\n}\n")) goto overflow;
+    if (!Append(out_json, out_json_size, &used, "  },\n  \"macro_values\": {\n")) goto overflow;
+    for (int i = 0; i < BUBBLES_MACRO_COUNT; ++i) {
+        const char* macro_name = BUBBLE_PRESET_MACRO_NAMES[i];
+        const float value = preset->macro_values[i];
+        if (!ValidateMacroValue(macro_name, value, error, error_size)) return false;
+        if (i > 0 && !Append(out_json, out_json_size, &used, ",\n")) goto overflow;
+        if (!Append(out_json, out_json_size, &used, "    \"%s\": %.9g", macro_name, value)) goto overflow;
+    }
+    if (!Append(out_json, out_json_size, &used, "\n  }\n}\n")) goto overflow;
     return true;
 
 overflow:
