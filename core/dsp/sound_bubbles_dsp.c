@@ -714,11 +714,10 @@ static int Scheduler_SpawnBurstMode(SoundBubblesEngine_t* engine, int max_spawns
 }
 
 static bool Scheduler_IsRhythmStepActive(const SoundBubblesEngine_t* engine, int32_t step_index) {
-    uint32_t pattern = engine->config.rhythm_pattern;
-    if (pattern == 0u) pattern = 0x00000001u;
-    int length = (pattern > 0xFFFFu) ? 32 : 16;
-    int bit = step_index % length;
-    if (bit < 0) bit += length;
+    uint32_t pattern = engine->config.rhythm_pattern & 0xFFFFu;
+    if (pattern == 0u) pattern = 0x0001u;
+    int bit = step_index % 16;
+    if (bit < 0) bit += 16;
     return ((pattern >> bit) & 1u) != 0u;
 }
 
@@ -773,11 +772,11 @@ static void Scheduler_RunTick(SoundBubblesEngine_t* engine) {
 
     while (engine->spawn_accumulator >= 1.0f && spawns_this_tick < SCHED_MAX_SPAWNS_PER_TICK) {
         int spawned = Scheduler_SpawnBurstMode(engine, SCHED_MAX_SPAWNS_PER_TICK - spawns_this_tick);
+        engine->spawn_accumulator -= 1.0f;
+        spawns_this_tick += spawned;
         if (spawned <= 0 && engine->config.burst_mode != BUBBLE_BURST_MODE_STRUM) {
             break;
         }
-        spawns_this_tick += spawned;
-        engine->spawn_accumulator -= 1.0f;
     }
 
     if (engine->spawn_accumulator > 1.0f) {

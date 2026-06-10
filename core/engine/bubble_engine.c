@@ -35,7 +35,7 @@ const BubbleParameterInfo BUBBLE_PARAMETER_INFO[] = {
     { BUBBLE_ENGINE_PARAM_TEMPO_SYNC_ENABLED, "tempo_sync_enabled", 0.0f, 1.0f, 0.0f, BUBBLE_PARAMETER_CURVE_TOGGLE, "bool", BUBBLE_PARAMETER_FLAG_DEVELOPER | BUBBLE_PARAMETER_FLAG_BOOLEAN },
     { BUBBLE_ENGINE_PARAM_RHYTHM_DIVISION, "rhythm_division", 0.0f, 3.0f, 2.0f, BUBBLE_PARAMETER_CURVE_LINEAR, "enum", BUBBLE_PARAMETER_FLAG_DEVELOPER | BUBBLE_PARAMETER_FLAG_INTEGER },
     { BUBBLE_ENGINE_PARAM_BURST_MODE, "burst_mode", 0.0f, 4.0f, 0.0f, BUBBLE_PARAMETER_CURVE_LINEAR, "enum", BUBBLE_PARAMETER_FLAG_DEVELOPER | BUBBLE_PARAMETER_FLAG_INTEGER },
-    { BUBBLE_ENGINE_PARAM_RHYTHM_PATTERN, "rhythm_pattern", 0.0f, 4294967295.0f, 4369.0f, BUBBLE_PARAMETER_CURVE_LINEAR, "bitmask", BUBBLE_PARAMETER_FLAG_DEVELOPER | BUBBLE_PARAMETER_FLAG_INTEGER },
+    { BUBBLE_ENGINE_PARAM_RHYTHM_PATTERN, "rhythm_pattern", 0.0f, 65535.0f, 4369.0f, BUBBLE_PARAMETER_CURVE_LINEAR, "bitmask", BUBBLE_PARAMETER_FLAG_DEVELOPER | BUBBLE_PARAMETER_FLAG_INTEGER },
     { BUBBLE_ENGINE_PARAM_RUNTIME_ENVELOPE, "runtime_envelope", 0.0f, 1.0f, 0.0f, BUBBLE_PARAMETER_CURVE_LINEAR, "norm", BUBBLE_PARAMETER_FLAG_RUNTIME }
 };
 
@@ -448,7 +448,7 @@ bool bubble_engine_set_parameter(BubbleEngine_t* engine, BubbleEngineParameterId
         case BUBBLE_ENGINE_PARAM_TEMPO_SYNC_ENABLED: config.tempo_sync_enabled = (value >= 0.5f) ? 1 : 0; break;
         case BUBBLE_ENGINE_PARAM_RHYTHM_DIVISION: config.rhythm_division = (BubbleRhythmDivision_t)((int32_t)Clampf(value, 0.0f, 3.0f)); break;
         case BUBBLE_ENGINE_PARAM_BURST_MODE: config.burst_mode = (BubbleBurstMode_t)((int32_t)Clampf(value, 0.0f, 4.0f)); break;
-        case BUBBLE_ENGINE_PARAM_RHYTHM_PATTERN: config.rhythm_pattern = (uint32_t)value; break;
+        case BUBBLE_ENGINE_PARAM_RHYTHM_PATTERN: config.rhythm_pattern = (uint32_t)Clampf(value, 0.0f, 65535.0f); break;
         case BUBBLE_ENGINE_PARAM_QUALITY_PROFILE:
             return bubble_engine_set_quality_profile(engine, (BubbleQualityProfile)((int32_t)value));
         case BUBBLE_ENGINE_PARAM_ACTIVE_VOICE_LIMIT: config.active_voice_limit = (int32_t)value; break;

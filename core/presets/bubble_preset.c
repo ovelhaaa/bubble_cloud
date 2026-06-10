@@ -228,7 +228,7 @@ static bool SetPresetParam(BubbleEnginePreset_t* preset, BubbleEngineParameterId
         case BUBBLE_ENGINE_PARAM_TEMPO_SYNC_ENABLED: config->tempo_sync_enabled = (int32_t)value; return true;
         case BUBBLE_ENGINE_PARAM_RHYTHM_DIVISION: config->rhythm_division = (BubbleRhythmDivision_t)((int32_t)value); return true;
         case BUBBLE_ENGINE_PARAM_BURST_MODE: config->burst_mode = (BubbleBurstMode_t)((int32_t)value); return true;
-        case BUBBLE_ENGINE_PARAM_RHYTHM_PATTERN: config->rhythm_pattern = (uint32_t)value; return true;
+        case BUBBLE_ENGINE_PARAM_RHYTHM_PATTERN: config->rhythm_pattern = (uint32_t)value & 0xFFFFu; return true;
         default: return false;
     }
 }
