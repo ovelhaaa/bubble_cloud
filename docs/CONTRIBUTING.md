@@ -55,7 +55,7 @@ Não é permitido que um perfil mude formato de preset, nomes/ranges de macro, c
 
 - Prefira macros normalizados para presets de usuário.
 - Use parâmetros brutos apenas quando houver justificativa e validação.
-- Inclua `schema_version`, `engine_version`, `recommended_min_profile` e `rng_seed` quando aplicável.
+- Inclua `schema_version`, `engine_version`, `params.rng_seed` e `params.quality_profile` quando aplicável; use `metadata.recommended_min_profile` apenas como metadado de UI/validação.
 - Garanta que presets de fábrica continuem passando validações.
 
 ## Testes recomendados

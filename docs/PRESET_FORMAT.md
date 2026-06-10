@@ -27,17 +27,19 @@ process
 
 ## Campos recomendados em JSON
 
-Um preset versionado deve conter, no mínimo:
+Um preset versionado deve usar os nomes canônicos que o parser C (`bubble_preset_load_json`) e o schema JS (`presetSchema.js`) leem e serializam: `params` para parâmetros DSP brutos e `macro_values` para macros musicais.
 
 ```json
 {
   "schema_version": 3,
   "engine_version": "post-diffusion-ui",
-  "name": "Example",
-  "author": "Bubble Cloud",
+  "preset_name": "Example",
   "description": "Short musical intent",
-  "recommended_min_profile": "MCU_SAFE",
-  "macros": {
+  "params": {
+    "rng_seed": 1,
+    "quality_profile": 0
+  },
+  "macro_values": {
     "density": 0.5,
     "bloom": 0.5,
     "motion": 0.5,
@@ -50,19 +52,18 @@ Um preset versionado deve conter, no mínimo:
     "sparkle": 0.0,
     "warmth": 0.5,
     "mix": 0.5
-  },
-  "parameters": {},
-  "quality": {
-    "profile": "MCU_SAFE"
-  },
-  "rng_seed": 1
+  }
 }
 ```
 
-## Macros vs parâmetros brutos
+Campos opcionais de UI, como `preset_slug`, `created_at`, `ui_category`, `tags`, `esp32_safe`, `quality_tier` e `metadata`, podem existir nos presets de fábrica e na UI. O parser C não usa esses campos para configurar áudio; eles devem ser tratados como metadados de host.
 
-- **Macros** são o contrato público principal e devem estar em espaço normalizado `0.0..1.0`.
-- **Parâmetros brutos** são permitidos para presets de desenvolvimento ou migração, mas devem usar nomes canônicos do schema e valores clampados.
+## `macro_values` vs `params`
+
+- **`macro_values`** é o contrato público principal para controles musicais e deve conter macros normalizados em `0.0..1.0`.
+- **`params`** contém parâmetros DSP brutos usando nomes canônicos do schema, por exemplo `rng_seed`, `quality_profile` e `active_voice_limit`.
+- **`rng_seed` deve ficar dentro de `params`**, porque é carregado como parâmetro interno do motor.
+- **`quality_profile` deve ficar dentro de `params`** como enum numérico (`0` = `MCU_SAFE`, `1` = `MCU_PLUS`, `2` = `WEB_STANDARD`, `3` = `WEB_ULTRA`). Um objeto raiz `quality` não é processado pelo parser C.
 - **Developer mode** pode revelar campos brutos; presets de usuário devem continuar legíveis em termos musicais.
 
 ## Versionamento e migração
@@ -84,7 +85,9 @@ Um preset versionado deve conter, no mínimo:
 
 ## Diferenças por perfil de qualidade
 
-Um preset pode declarar `recommended_min_profile`. Se o host usar um perfil menor:
+A qualidade efetiva para o core deve ser serializada em `params.quality_profile` e, quando necessário, `params.active_voice_limit`. Presets de fábrica também podem declarar `metadata.recommended_min_profile` para UI/validação, mas esse metadado não substitui `params.quality_profile` no parser C.
+
+Se o host usar um perfil menor que o recomendado por metadados ou UI:
 
 - Ele pode limitar vozes e reduzir densidade em passagens exigentes.
 - Ele não deve mudar nomes, ranges ou significado das macros.
