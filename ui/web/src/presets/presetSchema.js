@@ -69,6 +69,9 @@
     { id: 'BUBBLE_ENGINE_PARAM_SHIMMER_AMOUNT', name: 'shimmer_amount', min: 0, max: 1, defaultValue: 0, type: 'float' },
     { id: 'BUBBLE_ENGINE_PARAM_FINAL_LIMITER_CEILING_DB', name: 'final_limiter_ceiling_db', min: -24, max: 0, defaultValue: -1, type: 'float' },
     { id: 'BUBBLE_ENGINE_PARAM_FINAL_LIMITER_RELEASE_MS', name: 'final_limiter_release_ms', min: 5, max: 500, defaultValue: 50, type: 'float' },
+    { id: 'BUBBLE_ENGINE_PARAM_MOTION_RATE', name: 'motion_rate', min: 0, max: 1, defaultValue: 0.18, type: 'float' },
+    { id: 'BUBBLE_ENGINE_PARAM_MOTION_DEPTH', name: 'motion_depth', min: 0, max: 1, defaultValue: 0, type: 'float' },
+    { id: 'BUBBLE_ENGINE_PARAM_MOTION_SHAPE', name: 'motion_shape', min: 0, max: 2, defaultValue: 0, type: 'enum' },
   ];
 
   const PARAM_BY_NAME = Object.freeze(Object.fromEntries(PARAM_SPECS.map((spec) => [spec.name, Object.freeze({ ...spec })])));

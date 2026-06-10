@@ -221,6 +221,9 @@ static bool SetPresetParam(BubbleEnginePreset_t* preset, BubbleEngineParameterId
         case BUBBLE_ENGINE_PARAM_SHIMMER_AMOUNT: config->shimmer_amount = value; return true;
         case BUBBLE_ENGINE_PARAM_FINAL_LIMITER_CEILING_DB: config->final_limiter_ceiling_db = value; return true;
         case BUBBLE_ENGINE_PARAM_FINAL_LIMITER_RELEASE_MS: config->final_limiter_release_ms = value; return true;
+        case BUBBLE_ENGINE_PARAM_MOTION_RATE: config->motion_rate = value; return true;
+        case BUBBLE_ENGINE_PARAM_MOTION_DEPTH: config->motion_depth = value; return true;
+        case BUBBLE_ENGINE_PARAM_MOTION_SHAPE: config->motion_shape = (BubbleMotionShape_t)((int32_t)value); return true;
         default: return false;
     }
 }
@@ -291,6 +294,9 @@ static bool GetPresetParam(const BubbleEnginePreset_t* preset, BubbleEngineParam
         case BUBBLE_ENGINE_PARAM_SHIMMER_AMOUNT: *value = config->shimmer_amount; return true;
         case BUBBLE_ENGINE_PARAM_FINAL_LIMITER_CEILING_DB: *value = config->final_limiter_ceiling_db; return true;
         case BUBBLE_ENGINE_PARAM_FINAL_LIMITER_RELEASE_MS: *value = config->final_limiter_release_ms; return true;
+        case BUBBLE_ENGINE_PARAM_MOTION_RATE: *value = config->motion_rate; return true;
+        case BUBBLE_ENGINE_PARAM_MOTION_DEPTH: *value = config->motion_depth; return true;
+        case BUBBLE_ENGINE_PARAM_MOTION_SHAPE: *value = (float)config->motion_shape; return true;
         default: return false;
     }
 }
