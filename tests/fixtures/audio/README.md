@@ -16,7 +16,6 @@ here; CI writes them under `$RUNNER_TEMP` and local runs should use `build/`,
 | `farran_ez-soft-indie-guitar-sample-456142.wav` | Pixabay, "Soft Indie Guitar Sample" by Farran_Ez. | Pixabay Content License. |
 | `freesound_community-electric-guitar-phrase-38142.wav` | Pixabay mirror of Freesound Community content, "Electric Guitar Phrase". | Pixabay Content License as distributed by Pixabay. |
 | `freesound_community-guitar-103460.wav` | Pixabay mirror of Freesound Community content, "Guitar". | Pixabay Content License as distributed by Pixabay. |
-| `freesound_community-spanish-guitar-loop-17221.wav` | Pixabay mirror of Freesound Community content, "Spanish Guitar Loop". | Pixabay Content License as distributed by Pixabay. |
 | `ncone-bgm-blues-guitar-loop-192099.wav` | Pixabay, "Bgm-blues-guitar-loop" by Ncone. | Pixabay Content License. |
 | `u_1aiqn32afi-clean-country-lick-bend-289052.wav` | Pixabay, "Clean Country Lick-Bend" by u_1aiqn32afi. | Pixabay Content License. |
 

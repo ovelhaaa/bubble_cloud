@@ -8,6 +8,7 @@ on:
       - "core/dsp/sound_bubbles_dsp.h"
       - "core/sound_bubbles_dsp.h"
       - "platform/offline/test_harness.c"
+      - "core/engine/bubble_macro_map.c"
       - ".github/workflows/main.yaml"
 
 jobs:
@@ -26,7 +27,7 @@ jobs:
       - name: Build harness
         run: |
           mkdir -p "$RUNNER_TEMP/bin" "$RUNNER_TEMP/harness"
-          gcc platform/offline/test_harness.c core/dsp/sound_bubbles_dsp.c -O2 -Wall -Wextra -std=c11 -lm -Icore -Icore/dsp -o "$RUNNER_TEMP/bin/test_harness"
+          gcc platform/offline/test_harness.c core/dsp/sound_bubbles_dsp.c core/engine/bubble_engine.c core/engine/bubble_macro_map.c -O2 -Wall -Wextra -std=c11 -lm -Icore -Icore/dsp -o "$RUNNER_TEMP/bin/test_harness"
 
       - name: Run harness
         run: |
