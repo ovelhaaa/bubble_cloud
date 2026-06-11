@@ -23,6 +23,10 @@ When `--metrics-out` is supplied, the renderer writes CSV rows with:
 - `out_rms_r`
 - `out_peak_l`
 - `out_peak_r`
+- `peak_l`
+- `peak_r`
+- `clip_count`
+- `limiter_gain`
 
 ## Typical workflow
 

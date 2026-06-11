@@ -16,7 +16,6 @@ on:
           - 'tests/fixtures/audio/farran_ez-soft-indie-guitar-sample-456142.wav'
           - 'tests/fixtures/audio/freesound_community-electric-guitar-phrase-38142.wav'
           - 'tests/fixtures/audio/freesound_community-guitar-103460.wav'
-          - 'tests/fixtures/audio/freesound_community-spanish-guitar-loop-17221.wav'
           - 'tests/fixtures/audio/ncone-bgm-blues-guitar-loop-192099.wav'
           - 'tests/fixtures/audio/u_1aiqn32afi-clean-country-lick-bend-289052.wav'
   push:
