@@ -51,7 +51,7 @@ cd ui/web
 python3 -m http.server 8000
 ```
 
-Then open `http://localhost:8000`, click **Ativar Áudio**, and choose either **Custom File** or **Synth Pluck**.
+Then open http://localhost:8000, click **Start Audio**, and choose either **Custom File** or **Synth Pluck**.
 
 ## Building
 
