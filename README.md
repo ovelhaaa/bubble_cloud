@@ -1,109 +1,129 @@
-# Bubble Cloud - Web & Embedded DSP Architecture
+# Bubble Cloud
 
-This repository holds the `bubble_cloud` highly musical, performance-responsive granular guitar pedal. It is built from a core C DSP engine intended to run on the ESP32-S3, but it has been extended with WebAssembly (WASM) to offer an interactive preview running purely in the browser.
+Bubble Cloud is a shared C granular/micro-looping engine for a performance-responsive guitar effect, with three active host targets:
 
-## Architecture
+- a static browser editor/player that runs the engine through WebAssembly and an `AudioWorklet`;
+- an offline command-line renderer and validation harness for deterministic WAV/metrics checks;
+- an ESP-IDF integration layer for ESP32-style embedded hardware.
 
-- `core/dsp/`: Platform-independent granular DSP internals, filters, voices, and scheduling (`sound_bubbles_dsp.c`, `sound_bubbles_dsp.h`).
-- `core/engine/`: Public `bubble_engine_*` API, parameter handling, and quality profiles.
-- `core/presets/`: Preset loading/validation code plus factory JSON presets in `core/presets/factory/`.
-- `core/schema/`: Public preset IDs, ranges, defaults, and schema format.
-- `platform/wasm/`: The Emscripten C wrapper that exposes the engine API to JavaScript.
-- `platform/esp32/`: ESP-IDF hardware integration.
-- `platform/offline/`: Offline renderer and harness utilities written in C.
-- `ui/web/`: Static web frontend assets, including the `AudioWorklet` browser preview.
-- `tests/`: Automated tests and audio fixtures.
-- `docs/`: Project documentation, contracts, and implementation notes.
+The repository is organized around one audio contract: hosts configure `bubble_engine`, pass mono audio into the shared DSP core, and receive stereo output. UI, storage, file I/O, WebAudio, I2S, and validation code live outside the real-time DSP path.
 
-## Running the Web Version Locally
+## Current repository layout
 
-The web interface is composed purely of static HTML, CSS, JS, and a single `.js` file containing the WASM binary.
+| Path | Purpose |
+| --- | --- |
+| `core/dsp/` | Platform-independent granular DSP implementation, voice pool, scheduling, diffusion, limiter, runtime metrics, and fixed audio constants. |
+| `core/engine/` | Public `bubble_engine_*` API, parameter metadata, macro resolution, quality profiles, and preset snapshots. |
+| `core/presets/` | C preset parser plus canonical factory preset JSON files. |
+| `core/schema/` | Canonical preset parameter names, ranges, defaults, and types shared by C/JS validation. |
+| `platform/wasm/` | Thin Emscripten wrapper exposing the engine to JavaScript. |
+| `platform/offline/` | Native renderers, WAV I/O, metrics comparison, and the synthetic C test harness. |
+| `platform/esp32/` | ESP-IDF application glue for codec/I2S, controls, OLED display, and preset storage. |
+| `ui/web/` | Static browser UI, `AudioWorklet`, visualizer, preset import/export, factory preset cards, and generated WASM/macro assets. |
+| `docs/` | Architecture, preset format, validation, macro, WASM, embedded, and sonic-parity documentation. |
+| `tests/` | Python/MJS/C regression tests, audio fixtures, preset validators, and performance checks. |
 
-1. Ensure the WASM file is compiled:
-   ```sh
-   make wasm
-   ```
-2. Serve the `ui/web/` directory. For example, using Python:
-   ```sh
-   cd ui/web
-   python3 -m http.server 8000
-   ```
-3. Open `http://localhost:8000` in your browser. Click **Start Audio** to begin the AudioContext, and **Play Test Signal** to hear simulated pluck sounds passing through the WASM-powered DSP engine in real time. Adjusting sliders will update the DSP parameters instantly.
+## Engine state at a glance
 
-## Limitations & Next Steps
+- **Audio model:** mono input, shared 44.1 kHz DSP constants, stereo output, fixed two-second delay buffer, and a bounded 32-voice compiled pool with runtime quality profiles controlling the active voice limit.
+- **Public controls:** 12 normalized musical macros (`density`, `bloom`, `motion`, `texture`, `space`, `gravity`, `memory`, `clarity`, `freeze`, `sparkle`, `warmth`, `mix`) plus developer/raw parameters when developer mode is enabled.
+- **Musical features:** semantic read regions (`attack_region`, `body_region`, `memory_region`), stereo spread, smart starts, envelope families, droplets, sustain diffusion, tone/memory shaping, freeze, reverse probability, shimmer/pitch modes, tempo/rhythm controls, and final limiter metrics.
+- **Determinism:** `rng_seed`, quality profile, preset values, input audio, and block order are part of the reproducibility contract.
+- **Real-time rules:** no heap allocation, I/O, locks, or UI work in the audio callback path; hosts provide the large delay buffer and apply parameter snapshots between blocks.
 
-- **Audio Inputs**: The browser demo currently only supports playing a synthesized sawtooth "pluck" sound to test transients. Live mic input (`getUserMedia`) or file upload playback are natural next steps for a full testing environment.
-- **Embedded Implementation**: The ESP32 hardware layer lives in `platform/esp32/` and remains a thin integration around the shared core engine.
-- **Real-Time CPU constraints**: Running a complex DSP in the browser using WASM handles well for this algorithm, but on very low-end mobile devices it might drop frames.
+## Web editor / player
+
+The web application is static HTML/CSS/JS plus a single-file Emscripten output (`ui/web/bubble_cloud_wasm.js`). It currently supports:
+
+- WebAudio startup from a user gesture and DSP processing in an `AudioWorklet`;
+- custom audio-file upload/drop playback and a synthetic pluck mode;
+- quality-profile selection (`MCU_SAFE`, `MCU_PLUS`, `WEB_STANDARD`, `WEB_ULTRA`);
+- Simple/Advanced/Developer UI modes over the macro/raw parameter model;
+- factory preset cards, reset/compare workflows, undo/redo, musical randomization, and commit-to-base controls;
+- canonical preset JSON import/export, current-state snapshot export, and processed MP3 export when the encoder worker is available;
+- UI meters/visualizer driven by throttled runtime metrics so visual updates do not block audio.
+
+Run it locally:
+
+```sh
+make wasm
+cd ui/web
+python3 -m http.server 8000
+```
+
+Then open http://localhost:8000, click **Start Audio**, and choose either **Custom File** or **Synth Pluck**.
 
 ## Building
 
-A standard `Makefile` is provided to compile both the offline tools and the WASM frontend.
+```sh
+make offline   # build build/sound_bubbles_render with gcc
+make wasm      # generate ui/web/macro_matrix.js and ui/web/bubble_cloud_wasm.js with emcc
+make all       # build both targets
+make clean     # remove generated build/WASM/macro artifacts
+```
 
-- `make offline`: Builds the offline renderer and test harness using `gcc`.
-- `make wasm`: Builds the WebAssembly output using `emcc`. You must have the [Emscripten SDK (emsdk)](https://emscripten.org/docs/getting_started/downloads.html) installed and active.
+`make wasm` requires an active Emscripten SDK. The WASM target uses `-s SINGLE_FILE=1` so the `.wasm` payload is embedded in the generated JavaScript module, which simplifies loading from the AudioWorklet context.
 
-**Important Note for WASM:** We compile using `-s SINGLE_FILE=1` to embed the `.wasm` data directly into the `.js` glue code. This significantly simplifies loading inside the `AudioWorklet` scope since we don't have to battle relative path issues for fetching `.wasm` files.
+## Offline rendering and validation
 
-## Read-region semantics (core preset model)
+Build the native renderer first:
 
-The core engine now models granular read positions using three semantic regions (distance behind the write head), rather than per-class ad-hoc offset+jitter pairs:
+```sh
+make offline
+```
 
-- **`attack_region`**: ~10–80 ms behind write head (captures pick/edge detail).
-- **`body_region`**: ~80–250 ms behind write head (captures note core and early bloom).
-- **`memory_region`**: ~250–900 ms behind write head (captures trailing texture and phrase memory).
+Render a fixture with a preset:
 
-Each region is represented as `min_offset_samples` / `max_offset_samples` in `EngineConfig_t`.
-Spawned voices map from `(bubble class, engine state)` to one of these regions, then choose a deterministic PRNG position inside that range. This keeps presets musically meaningful while preserving exact repeatability for a fixed RNG seed.
+```sh
+./build/sound_bubbles_render \
+  tests/fixtures/audio/test_in.wav \
+  core/presets/factory/ambient-bloom.json \
+  build/ambient-bloom.wav \
+  --quality-profile WEB_STANDARD \
+  --metrics-out build/ambient-bloom_metrics.csv \
+  --repro-check
+```
 
-## Preset schema notes (canonical v3: canonical out, tolerant in)
+Compare two metrics captures:
 
-The browser UI now exports presets using a single canonical schema (`schema_version: 3`) with explicit metadata:
+```sh
+./build/sound_bubbles_render compare ref_metrics.csv cand_metrics.csv \
+  --max-threshold 1e-6 \
+  --mean-threshold 1e-7
+```
 
-- `schema_version`, `engine_version`, `created_at`
-- `preset_name`, `preset_slug`, `description`
-- `ui_category`, `tags`
-- `esp32_safe`, `quality_tier`
-- `params`
-- optional `metadata` (including preserved unknown input fields under `metadata.extra`)
+The synthetic harness is still available through the `DSP Harness` GitHub workflow and can also be compiled directly with `platform/offline/test_harness.c`, `core/dsp/sound_bubbles_dsp.c`, `core/engine/bubble_engine.c`, and `core/engine/bubble_macro_map.c`.
 
-Import is tolerant: legacy JSON without `schema_version` (or with old key names like `master_dry_gain` / `master_wet_gain`) is migrated to canonical form before apply. Out-of-range values are clamped, missing fields are filled with safe defaults, and warnings are surfaced in the UI.
+## Presets
 
-### Export actions in UI
+The canonical external preset format is JSON with `schema_version: 3`, `engine_version`, metadata, `params`, and `macro_values`.
 
-- **Export Preset**: saves only the current canonical preset object.
-- **Export Current State**: saves a session snapshot (transport/mode + embedded canonical preset).
+- `macro_values` is the product-facing musical control surface and should use normalized `0.0..1.0` values.
+- `params` stores raw DSP/engine values such as `rng_seed`, `quality_profile`, `active_voice_limit`, freeze/reverse/motion settings, and other developer parameters.
+- The C parser and JS schema are tolerant of legacy input where supported, but generated/exported presets should stay canonical.
+- `core/presets/factory/` is the canonical factory-preset corpus used by C/offline tooling; `ui/web/src/presets/factoryPresets.js` contains the curated factory set shown in the browser UI.
 
-### Factory presets (UI)
+See `docs/PRESET_FORMAT.md`, `docs/macro_ranges.md`, and `docs/macro_matrix.yaml` for details.
 
-The UI ships with six musical factory presets:
+## Documentation map
 
-1. **Glass Bloom** — bright, wide stereo, lively attack, clean sustain.
-2. **Soft Halo** — softer rounded cloud for clean chord work.
-3. **Memory Pad** — darker long sustain with stronger memory/body behavior.
-4. **Shimmer Dust** — sparkling granular spread with jitter + droplets.
-5. **Frozen Attack** — transient-focused, more percussive attack fragmentation.
-6. **Smoky Chorus** — darker pseudo-chorus texture for base layering.
+- `docs/ARCHITECTURE.md` — shared engine/platform boundaries and real-time rules.
+- `docs/DSP_DESIGN.md` — DSP behavior, states, scheduling, and quality-profile invariants.
+- `docs/PRESET_FORMAT.md` — canonical JSON preset contract and migration expectations.
+- `docs/WASM_INTEGRATION.md` — browser/WASM integration notes and parity guidance.
+- `docs/EMBEDDED_PORTING.md` — embedded host responsibilities and callback constraints.
+- `docs/VALIDATION_NOTES.md` — offline renderer metrics and comparison workflow.
+- `docs/SONIC_PARITY_CONTRACT.md` — requirements for keeping targets sonically aligned.
+- Root-level historical spec files (`DSP_SPECIFICATION.md`, `SOUND_BUBBLES_V1_BASELINE_SPEC.md`, `EMBEDDED_DSP_ARCHITECTURE.md`, `ENGINE_BEHAVIOR_SPEC.md`, `VALIDATION_PLAN.md`) remain useful as design history, but `core/`, `platform/`, `ui/web/`, `tests/`, and `docs/` are the current implementation references.
 
-Each preset declares `esp32_safe` and `quality_tier` so heavier configurations are explicitly labeled.
+## CI and GitHub Actions
 
-## New musical controls (spawn-time / bus-rate focused)
+- `.github/workflows/build-verify.yml` builds both WASM and offline targets.
+- `.github/workflows/deploy-pages.yml` builds the single-file WASM module, copies `ui/web/` into `dist/`, and deploys GitHub Pages.
+- `.github/workflows/main.yaml` builds/runs the C DSP harness and uploads raw/WAV artifacts.
+- `.github/workflows/render_all.yml` renders every JSON preset against a selected fixture and uploads WAV artifacts.
+- `.github/workflows/render_diagnostics.yml` is a legacy synthetic-diagnostics workflow that skips gracefully unless `platform/offline/sound_bubbles_synth.c` is restored.
 
-The core DSP now includes optional low-cost musical extensions designed for ESP32-safe execution:
+## Contributing
 
-- **Stereo**: `stereo_width`, `attack_pan_spread`, `sustain_pan_spread`
-- **Texture**: `smart_start_enable`, `smart_start_range`, `envelope_variation`, `envelope_family`, droplet and attack-rate jitter controls
-- **Diffusion**: wet bus soft-clip (`wet_drive`, `wet_clip_amount`, `wet_output_trim`) and sustain all-pass diffusion controls
-- **Tone**: `tone_variation`, `attack_brightness`, `sustain_darkness`
-- **Memory**: `memory_mix`, `memory_pull`, `memory_darkening`
-
-All options remain deterministic for fixed `rng_seed`, avoid dynamic allocation in audio loops, and are implemented in the shared C core used by both WASM/browser and embedded targets.
-
-## GitHub Actions & Workflows
-
-The project contains several GitHub Actions workflows with separated responsibilities:
-
-- **`.github/workflows/deploy-pages.yml`**: Automatically builds the WebAssembly `.js` file, creates a `dist/` directory containing the frontend code from `ui/web/`, and deploys the web interface to GitHub Pages. It runs on push to `main` or manual trigger.
-- **`.github/workflows/main.yaml` (DSP Harness)**: Runs offline C tests to ensure the core DSP engine compiles and correctly synthesizes raw audio.
-- **`.github/workflows/render_all.yml`**: An offline renderer that processes all JSON preset configurations in `core/presets/factory/` against an input WAV file and uploads output WAV artifacts for downloading.
-- **`.github/workflows/render_diagnostics.yml`**: Runs the offline synth renderer against multiple diagnostic scenarios (sine, triangle, expressive phrase) to test the engine's response to different waveforms and dynamic tracking, providing unique WAV artifacts per matrix run.
+Before changing DSP behavior, presets, macros, quality limits, or real-time boundaries, update the matching documentation and run the relevant tests. Start with `docs/CONTRIBUTING.md` for repository rules and recommended checks.
