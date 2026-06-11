@@ -1,15 +1,24 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_current_dsp_feature_controls_and_scheduler_behaviors(tmp_path: Path) -> None:
-    binary = tmp_path / "dsp_feature_harness"
+    compiler = shutil.which("gcc") or shutil.which("clang") or shutil.which("cc")
+    if compiler is None:
+        pytest.skip("No C compiler (gcc, clang, cc) found in PATH")
+
+    binary_suffix = ".exe" if sys.platform == "win32" else ""
+    binary = tmp_path / f"dsp_feature_harness{binary_suffix}"
     compile_cmd = [
-        "gcc",
+        compiler,
         "-O2",
         "-Wall",
         "-Wextra",

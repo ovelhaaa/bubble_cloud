@@ -163,7 +163,7 @@ static int test_tempo_patterns_burst_modes_motion_and_metrics(void) {
     init_engine(&engine, delay, &config);
     CHECK(bubble_engine_set_parameter(&engine, BUBBLE_PARAM_DEVELOPER_MODE, 1.0f), "enable developer mode");
     CHECK(bubble_engine_set_parameter(&engine, BUBBLE_ENGINE_PARAM_TEMPO_SYNC_ENABLED, 1.0f), "enable tempo sync");
-    CHECK(bubble_engine_set_parameter(&engine, BUBBLE_ENGINE_PARAM_RHYTHM_PATTERN, 0x0002u), "make first rhythm step inactive");
+    CHECK(bubble_engine_set_parameter(&engine, BUBBLE_ENGINE_PARAM_RHYTHM_PATTERN, 2.0f), "make first rhythm step inactive");
     engine.env_follower_state = 0.5f;
     bubble_engine_set_metrics_callback(&engine, capture_metrics, &capture);
     process_constant(&engine, 0.5f, BUBBLES_BLOCK_SIZE);
@@ -175,7 +175,7 @@ static int test_tempo_patterns_burst_modes_motion_and_metrics(void) {
     capture.calls = 0;
     CHECK(bubble_engine_set_parameter(&engine, BUBBLE_PARAM_DEVELOPER_MODE, 1.0f), "enable developer mode for active rhythm");
     CHECK(bubble_engine_set_parameter(&engine, BUBBLE_ENGINE_PARAM_TEMPO_SYNC_ENABLED, 1.0f), "enable tempo sync active rhythm");
-    CHECK(bubble_engine_set_parameter(&engine, BUBBLE_ENGINE_PARAM_RHYTHM_PATTERN, 0x0001u), "make first rhythm step active");
+    CHECK(bubble_engine_set_parameter(&engine, BUBBLE_ENGINE_PARAM_RHYTHM_PATTERN, 1.0f), "make first rhythm step active");
     CHECK(bubble_engine_set_parameter(&engine, BUBBLE_ENGINE_PARAM_BURST_MODE, (float)BUBBLE_BURST_MODE_SWARM), "use swarm burst mode");
     CHECK(bubble_engine_set_parameter(&engine, BUBBLE_ENGINE_PARAM_BURST_IMMEDIATE_COUNT, 3.0f), "set swarm base count");
     engine.env_follower_state = 0.5f;
