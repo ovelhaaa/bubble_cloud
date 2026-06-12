@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "hal/i2c_types.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,6 +18,7 @@ typedef struct {
 } BubbleEsp32CodecRegisterWrite;
 
 typedef struct {
+    i2c_port_t i2c_port;
     int sda_gpio;
     int scl_gpio;
     uint32_t i2c_hz;

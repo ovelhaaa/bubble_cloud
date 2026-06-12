@@ -4,6 +4,7 @@ idf_component_register(
         "codec.c"
         "controls.c"
         "display_oled.c"
+        "display_tft.c"
         "preset_storage.c"
         "main.c"
         "../../core/engine/bubble_engine.c"

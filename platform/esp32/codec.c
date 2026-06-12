@@ -1,5 +1,7 @@
 #include "codec.h"
 
+#include "board_config.h"
+
 #include "driver/i2c_master.h"
 #include "esp_check.h"
 #include "freertos/FreeRTOS.h"
@@ -21,10 +23,11 @@ static const BubbleEsp32CodecRegisterWrite s_default_init[] = {
 
 static BubbleEsp32CodecConfig default_config(void) {
     return (BubbleEsp32CodecConfig) {
-        .sda_gpio = 21,
-        .scl_gpio = 27,
-        .i2c_hz = 400000,
-        .i2c_address = 0x18,
+        .i2c_port = BUBBLE_ESP32_BOARD_CODEC_CONTROL_I2C_PORT,
+        .sda_gpio = BUBBLE_ESP32_BOARD_CODEC_CONTROL_I2C_SDA_GPIO,
+        .scl_gpio = BUBBLE_ESP32_BOARD_CODEC_CONTROL_I2C_SCL_GPIO,
+        .i2c_hz = BUBBLE_ESP32_BOARD_CODEC_CONTROL_I2C_HZ,
+        .i2c_address = BUBBLE_ESP32_BOARD_CODEC_CONTROL_I2C_ADDRESS,
         .init_sequence = s_default_init,
         .init_sequence_count = sizeof(s_default_init) / sizeof(s_default_init[0]),
     };
@@ -46,7 +49,7 @@ esp_err_t bubble_esp32_codec_init(const BubbleEsp32CodecConfig* config) {
 
     BubbleEsp32CodecConfig active = config != NULL ? *config : default_config();
     if (active.i2c_hz == 0) {
-        active.i2c_hz = 400000;
+        active.i2c_hz = BUBBLE_ESP32_BOARD_CODEC_CONTROL_I2C_HZ;
     }
     if (active.init_sequence == NULL || active.init_sequence_count == 0) {
         active.init_sequence = s_default_init;
@@ -54,7 +57,7 @@ esp_err_t bubble_esp32_codec_init(const BubbleEsp32CodecConfig* config) {
     }
 
     i2c_master_bus_config_t bus_config = {
-        .i2c_port = I2C_NUM_0,
+        .i2c_port = active.i2c_port,
         .sda_io_num = active.sda_gpio,
         .scl_io_num = active.scl_gpio,
         .clk_source = I2C_CLK_SRC_DEFAULT,

@@ -1,5 +1,7 @@
 #include "controls.h"
 
+#include "board_config.h"
+
 #include <string.h>
 
 #include "driver/gpio.h"
@@ -11,6 +13,50 @@ static BubbleEsp32PotConfig s_pots[BUBBLE_ESP32_MAX_POTS];
 static adc_oneshot_unit_handle_t s_adc;
 static uint8_t s_encoder_last_state[BUBBLE_ESP32_MAX_ROTARY_ENCODERS];
 static bool s_initialized;
+
+static const BubbleEsp32RotaryConfig s_default_encoders[] = {
+    {
+        .gpio_a = BUBBLE_ESP32_BOARD_ENCODER_0_GPIO_A,
+        .gpio_b = BUBBLE_ESP32_BOARD_ENCODER_0_GPIO_B,
+        .gpio_button = BUBBLE_ESP32_BOARD_ENCODER_0_GPIO_CLICK,
+    },
+    {
+        .gpio_a = BUBBLE_ESP32_BOARD_ENCODER_1_GPIO_A,
+        .gpio_b = BUBBLE_ESP32_BOARD_ENCODER_1_GPIO_B,
+        .gpio_button = BUBBLE_ESP32_BOARD_ENCODER_1_GPIO_CLICK,
+    },
+    {
+        .gpio_a = BUBBLE_ESP32_BOARD_ENCODER_2_GPIO_A,
+        .gpio_b = BUBBLE_ESP32_BOARD_ENCODER_2_GPIO_B,
+        .gpio_button = BUBBLE_ESP32_BOARD_ENCODER_2_GPIO_CLICK,
+    },
+};
+
+_Static_assert(BUBBLE_ESP32_BOARD_ENCODER_COUNT == sizeof(s_default_encoders) / sizeof(s_default_encoders[0]),
+               "board_config encoder count must match the default encoder table");
+_Static_assert(BUBBLE_ESP32_BOARD_ENCODER_COUNT <= BUBBLE_ESP32_MAX_ROTARY_ENCODERS,
+               "board_config encoder count exceeds controls state capacity");
+
+static const BubbleEsp32PotConfig s_default_pots[] = {
+    {
+        .channel = BUBBLE_ESP32_BOARD_EXPRESSION_ADC_CHANNEL,
+        .parameter = BUBBLE_PARAM_MIX,
+        .min_value = 0.0f,
+        .max_value = 1.0f,
+    },
+};
+
+static BubbleEsp32ControlsConfig default_config(void) {
+    return (BubbleEsp32ControlsConfig) {
+        .adc_unit = BUBBLE_ESP32_BOARD_EXPRESSION_ADC_UNIT,
+        .encoders = s_default_encoders,
+        .encoder_count = sizeof(s_default_encoders) / sizeof(s_default_encoders[0]),
+        .pots = s_default_pots,
+        .pot_count = sizeof(s_default_pots) / sizeof(s_default_pots[0]),
+        .bypass_footswitch_gpio = BUBBLE_ESP32_BOARD_FOOTSWITCH_BYPASS_GPIO,
+        .action_footswitch_gpio = BUBBLE_ESP32_BOARD_FOOTSWITCH_ACTION_GPIO,
+    };
+}
 
 static const int8_t QUADRATURE_TABLE[16] = {
     0, -1, 1, 0,
@@ -48,29 +94,27 @@ esp_err_t bubble_esp32_controls_init(const BubbleEsp32ControlsConfig* config) {
     if (s_initialized) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (config == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    if (config->encoder_count > BUBBLE_ESP32_MAX_ROTARY_ENCODERS || config->pot_count > BUBBLE_ESP32_MAX_POTS) {
+    const BubbleEsp32ControlsConfig active = config != NULL ? *config : default_config();
+    if (active.encoder_count > BUBBLE_ESP32_MAX_ROTARY_ENCODERS || active.pot_count > BUBBLE_ESP32_MAX_POTS) {
         return ESP_ERR_INVALID_SIZE;
     }
 
     memset(&s_config, 0, sizeof(s_config));
-    s_config = *config;
+    s_config = active;
     if (s_config.adc_unit == 0) {
         s_config.adc_unit = ADC_UNIT_1;
     }
-    if (config->encoder_count > 0) {
-        if (config->encoders == NULL) {
+    if (active.encoder_count > 0) {
+        if (active.encoders == NULL) {
             return ESP_ERR_INVALID_ARG;
         }
-        memcpy(s_encoders, config->encoders, config->encoder_count * sizeof(s_encoders[0]));
+        memcpy(s_encoders, active.encoders, active.encoder_count * sizeof(s_encoders[0]));
     }
-    if (config->pot_count > 0) {
-        if (config->pots == NULL) {
+    if (active.pot_count > 0) {
+        if (active.pots == NULL) {
             return ESP_ERR_INVALID_ARG;
         }
-        memcpy(s_pots, config->pots, config->pot_count * sizeof(s_pots[0]));
+        memcpy(s_pots, active.pots, active.pot_count * sizeof(s_pots[0]));
     }
     s_config.encoders = s_encoders;
     s_config.pots = s_pots;
@@ -91,11 +135,11 @@ esp_err_t bubble_esp32_controls_init(const BubbleEsp32ControlsConfig* config) {
         s_encoder_last_state[i] = read_encoder_state(&s_encoders[i]);
     }
 
-    esp_err_t err = configure_input_pullup(s_config.footswitch_gpio);
+    esp_err_t err = configure_input_pullup(s_config.bypass_footswitch_gpio);
     if (err != ESP_OK) {
         return err;
     }
-    err = configure_input_pullup(s_config.freeze_switch_gpio);
+    err = configure_input_pullup(s_config.action_footswitch_gpio);
     if (err != ESP_OK) {
         return err;
     }
@@ -157,8 +201,8 @@ esp_err_t bubble_esp32_controls_poll(BubbleEsp32ControlsState* state) {
         state->pot_normalized[i] = normalized;
     }
 
-    state->footswitch_pressed = read_active_low_gpio(s_config.footswitch_gpio) != 0;
-    state->freeze_enabled = read_active_low_gpio(s_config.freeze_switch_gpio) != 0;
+    state->bypass_pressed = read_active_low_gpio(s_config.bypass_footswitch_gpio) != 0;
+    state->action_pressed = read_active_low_gpio(s_config.action_footswitch_gpio) != 0;
     return ESP_OK;
 }
 
@@ -176,12 +220,12 @@ esp_err_t bubble_esp32_controls_apply(BubbleEngine_t* engine, const BubbleEsp32C
         }
     }
 
-    if (state->freeze_enabled && !bubble_engine_set_parameter(engine, BUBBLE_PARAM_FREEZE, 1.0f)) {
+    if (state->action_pressed && !bubble_engine_set_parameter(engine, BUBBLE_PARAM_FREEZE, 1.0f)) {
         return ESP_FAIL;
     }
 
-    // Footswitch is the global wet-bypass gesture in this reference port.
-    if (state->footswitch_pressed) {
+    // BYPASS footswitch is the global wet-bypass gesture in this reference port.
+    if (state->bypass_pressed) {
         (void)bubble_engine_set_parameter(engine, BUBBLE_PARAM_MIX, 0.0f);
     }
 

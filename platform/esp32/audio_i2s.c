@@ -15,11 +15,11 @@ static BubbleEsp32I2sConfig s_config;
 
 static BubbleEsp32I2sConfig default_config(void) {
     return (BubbleEsp32I2sConfig) {
-        .bclk_gpio = 26,
-        .ws_gpio = 25,
-        .din_gpio = 33,
-        .dout_gpio = 22,
-        .mclk_gpio = 0,
+        .bclk_gpio = BUBBLE_ESP32_BOARD_CODEC_I2S_BCLK_GPIO,
+        .ws_gpio = BUBBLE_ESP32_BOARD_CODEC_I2S_WS_GPIO,
+        .din_gpio = BUBBLE_ESP32_BOARD_CODEC_I2S_DIN_GPIO,
+        .dout_gpio = BUBBLE_ESP32_BOARD_CODEC_I2S_DOUT_GPIO,
+        .mclk_gpio = BUBBLE_ESP32_BOARD_CODEC_I2S_MCLK_GPIO,
         .sample_rate_hz = BUBBLE_ESP32_AUDIO_SAMPLE_RATE_HZ,
         .block_frames = BUBBLE_ESP32_AUDIO_BLOCK_FRAMES,
     };
