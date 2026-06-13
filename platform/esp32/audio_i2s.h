@@ -5,13 +5,14 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "board_config.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define BUBBLE_ESP32_AUDIO_SAMPLE_RATE_HZ 44100
-#define BUBBLE_ESP32_AUDIO_BLOCK_FRAMES 32
+#define BUBBLE_ESP32_AUDIO_SAMPLE_RATE_HZ BUBBLE_ESP32_BOARD_AUDIO_SAMPLE_RATE_HZ
+#define BUBBLE_ESP32_AUDIO_BLOCK_FRAMES BUBBLE_ESP32_BOARD_AUDIO_BLOCK_FRAMES
 
 typedef struct {
     int bclk_gpio;

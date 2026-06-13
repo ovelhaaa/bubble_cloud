@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define BUBBLE_ESP32_MAX_ROTARY_ENCODERS 2
+#define BUBBLE_ESP32_MAX_ROTARY_ENCODERS 3
 #define BUBBLE_ESP32_MAX_POTS 8
 
 typedef struct {
@@ -35,16 +35,16 @@ typedef struct {
     size_t encoder_count;
     const BubbleEsp32PotConfig* pots;
     size_t pot_count;
-    int footswitch_gpio;
-    int freeze_switch_gpio;
+    int bypass_footswitch_gpio;
+    int action_footswitch_gpio;
 } BubbleEsp32ControlsConfig;
 
 typedef struct {
     int32_t encoder_delta[BUBBLE_ESP32_MAX_ROTARY_ENCODERS];
     bool encoder_pressed[BUBBLE_ESP32_MAX_ROTARY_ENCODERS];
     float pot_normalized[BUBBLE_ESP32_MAX_POTS];
-    bool footswitch_pressed;
-    bool freeze_enabled;
+    bool bypass_pressed;
+    bool action_pressed;
 } BubbleEsp32ControlsState;
 
 esp_err_t bubble_esp32_controls_init(const BubbleEsp32ControlsConfig* config);

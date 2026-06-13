@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "audio_i2s.h"
+#include "board_config.h"
 #include "codec.h"
 #include "controls.h"
 #include "display_oled.h"
@@ -163,31 +164,14 @@ void app_main(void) {
     ESP_ERROR_CHECK(bubble_esp32_preset_storage_init());
     load_boot_preset_or_default();
 
-    const BubbleEsp32PotConfig pots[] = {
-        { .channel = ADC_CHANNEL_0, .parameter = BUBBLE_PARAM_DENSITY, .min_value = 0.0f, .max_value = 1.0f },
-        { .channel = ADC_CHANNEL_3, .parameter = BUBBLE_PARAM_MIX, .min_value = 0.0f, .max_value = 1.0f },
-        { .channel = ADC_CHANNEL_6, .parameter = BUBBLE_PARAM_SPACE, .min_value = 0.0f, .max_value = 1.0f },
-        { .channel = ADC_CHANNEL_7, .parameter = BUBBLE_PARAM_FREEZE, .min_value = 0.0f, .max_value = 1.0f },
-    };
-    const BubbleEsp32RotaryConfig encoders[] = {
-        { .gpio_a = 32, .gpio_b = 34, .gpio_button = 35 },
-    };
-    const BubbleEsp32ControlsConfig controls = {
-        .adc_unit = ADC_UNIT_1,
-        .encoders = encoders,
-        .encoder_count = sizeof(encoders) / sizeof(encoders[0]),
-        .pots = pots,
-        .pot_count = sizeof(pots) / sizeof(pots[0]),
-        .footswitch_gpio = 4,
-        .freeze_switch_gpio = 5,
-    };
+    ESP_LOGI(TAG, "Board model: %s", BUBBLE_ESP32_BOARD_MODEL);
 
     s_controls_queue = xQueueCreate(1, sizeof(BubbleEsp32ControlsState));
     ESP_ERROR_CHECK(s_controls_queue != NULL ? ESP_OK : ESP_ERR_NO_MEM);
 
     ESP_ERROR_CHECK(bubble_esp32_codec_init(NULL));
     ESP_ERROR_CHECK(bubble_esp32_i2s_init(NULL));
-    ESP_ERROR_CHECK(bubble_esp32_controls_init(&controls));
+    ESP_ERROR_CHECK(bubble_esp32_controls_init(NULL));
     ESP_ERROR_CHECK(bubble_esp32_oled_init(NULL));
 
     xTaskCreatePinnedToCore(audio_task, "bubble_audio", 4096, NULL, configMAX_PRIORITIES - 1, NULL, 0);
