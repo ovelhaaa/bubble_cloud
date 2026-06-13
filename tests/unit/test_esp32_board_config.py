@@ -55,6 +55,27 @@ def test_default_encoder_pins_do_not_overlap_expression_adc_gpio() -> None:
     assert not conflicts, f"Expression ADC GPIO {expression_gpio} conflicts with encoder pins: {conflicts}"
 
 
+def test_default_encoder_pins_avoid_uart0_console_gpios() -> None:
+    reserved_uart0_gpios = {1, 3}
+    encoder_pins = {
+        name: _int_macro(name)
+        for name in [
+            "BUBBLE_ESP32_BOARD_ENCODER_0_GPIO_A",
+            "BUBBLE_ESP32_BOARD_ENCODER_0_GPIO_B",
+            "BUBBLE_ESP32_BOARD_ENCODER_0_GPIO_CLICK",
+            "BUBBLE_ESP32_BOARD_ENCODER_1_GPIO_A",
+            "BUBBLE_ESP32_BOARD_ENCODER_1_GPIO_B",
+            "BUBBLE_ESP32_BOARD_ENCODER_1_GPIO_CLICK",
+            "BUBBLE_ESP32_BOARD_ENCODER_2_GPIO_A",
+            "BUBBLE_ESP32_BOARD_ENCODER_2_GPIO_B",
+            "BUBBLE_ESP32_BOARD_ENCODER_2_GPIO_CLICK",
+        ]
+    }
+
+    conflicts = {name: gpio for name, gpio in encoder_pins.items() if gpio in reserved_uart0_gpios}
+    assert not conflicts, f"Encoder pins must avoid UART0 console GPIOs {reserved_uart0_gpios}: {conflicts}"
+
+
 def test_controls_skip_internal_pullups_on_esp32_input_only_gpios() -> None:
     source = CONTROLS_C.read_text()
     assert "supports_internal_pullup" in source
