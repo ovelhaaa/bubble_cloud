@@ -51,6 +51,9 @@ esp_err_t bubble_esp32_codec_init(const BubbleEsp32CodecConfig* config) {
     if (active.i2c_hz == 0) {
         active.i2c_hz = BUBBLE_ESP32_BOARD_CODEC_CONTROL_I2C_HZ;
     }
+    if (active.i2c_address == 0) {
+        active.i2c_address = BUBBLE_ESP32_BOARD_CODEC_CONTROL_I2C_ADDRESS;
+    }
     if (active.init_sequence == NULL || active.init_sequence_count == 0) {
         active.init_sequence = s_default_init;
         active.init_sequence_count = sizeof(s_default_init) / sizeof(s_default_init[0]);
