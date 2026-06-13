@@ -75,6 +75,11 @@ static uint8_t read_encoder_state(const BubbleEsp32RotaryConfig* encoder) {
     return (uint8_t)((a << 1) | b);
 }
 
+static bool supports_internal_pullup(int gpio_num) {
+    // GPIOs 34-39 are input-only on ESP32 and do not have internal pull-up/down resistors.
+    return gpio_num < 34 || gpio_num > 39;
+}
+
 static esp_err_t configure_input_pullup(int gpio_num) {
     if (gpio_num < 0) {
         return ESP_OK;
@@ -83,7 +88,7 @@ static esp_err_t configure_input_pullup(int gpio_num) {
     gpio_config_t config = {
         .pin_bit_mask = 1ULL << (uint32_t)gpio_num,
         .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_up_en = supports_internal_pullup(gpio_num) ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE,
     };
