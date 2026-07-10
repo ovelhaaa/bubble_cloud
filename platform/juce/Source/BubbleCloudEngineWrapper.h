@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <memory>
+#include <map>
 
 extern "C" {
 #include "bubble_engine.h"
@@ -36,6 +37,5 @@ private:
     double currentSampleRate = 44100.0;
     
     // Need to keep track of macros
-    #include <map>
     std::map<BubbleParameterId, float> macroValues;
 };

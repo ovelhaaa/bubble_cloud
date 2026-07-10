@@ -18,25 +18,7 @@ BubbleCloudAudioProcessor::BubbleCloudAudioProcessor()
     };
 
     for (const auto& name : paramNames) {
-        treeState.addParameterListener(name, [this, name](const juce::String&, float value) {
-            BubbleEngineParameterId_t paramId = BUBBLE_ENGINE_PARAM_DENSITY;
-            
-            if (name == "DENSITY") paramId = BUBBLE_ENGINE_PARAM_DENSITY;
-            else if (name == "PANORAMA") paramId = BUBBLE_ENGINE_PARAM_PANORAMA;
-            else if (name == "MEMORY_PULL") paramId = BUBBLE_ENGINE_PARAM_MEMORY_PULL;
-            else if (name == "SPARKLE") paramId = BUBBLE_ENGINE_PARAM_SPARKLE;
-            else if (name == "REVERSE") paramId = BUBBLE_ENGINE_PARAM_REVERSE;
-            else if (name == "DIFFUSION") paramId = BUBBLE_ENGINE_PARAM_DIFFUSION;
-            else if (name == "WET_PRESENCE") paramId = BUBBLE_ENGINE_PARAM_WET_PRESENCE;
-            else if (name == "DUCKING") paramId = BUBBLE_ENGINE_PARAM_DUCKING;
-            else if (name == "DECAY") paramId = BUBBLE_ENGINE_PARAM_DECAY;
-            else if (name == "ATTACK_RATE") paramId = BUBBLE_ENGINE_PARAM_ATTACK_RATE;
-            else if (name == "PITCH_MODE") paramId = BUBBLE_ENGINE_PARAM_PITCH_MODE;
-            else if (name == "QUALITY_PROFILE") paramId = BUBBLE_ENGINE_PARAM_QUALITY_PROFILE;
-            else if (name == "FREEZE") paramId = BUBBLE_ENGINE_PARAM_FREEZE;
-            
-            engineWrapper.setParameter(paramId, value);
-        });
+        treeState.addParameterListener(name, this);
     }
 }
 
@@ -70,22 +52,15 @@ void BubbleCloudAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     engineWrapper.prepare(sampleRate, samplesPerBlock);
 
     // Initial sync
-    for (auto* param : treeState.getParameterTree().getParameters()) {
-        float value = param->getValue();
-        // Trigger listener manually since JUCE doesn't fire listeners initially
-        if (param->paramID == "DENSITY") engineWrapper.setParameter(BUBBLE_ENGINE_PARAM_DENSITY, value);
-        else if (param->paramID == "PANORAMA") engineWrapper.setParameter(BUBBLE_ENGINE_PARAM_PANORAMA, value);
-        else if (param->paramID == "MEMORY_PULL") engineWrapper.setParameter(BUBBLE_ENGINE_PARAM_MEMORY_PULL, value);
-        else if (param->paramID == "SPARKLE") engineWrapper.setParameter(BUBBLE_ENGINE_PARAM_SPARKLE, value);
-        else if (param->paramID == "REVERSE") engineWrapper.setParameter(BUBBLE_ENGINE_PARAM_REVERSE, value);
-        else if (param->paramID == "DIFFUSION") engineWrapper.setParameter(BUBBLE_ENGINE_PARAM_DIFFUSION, value);
-        else if (param->paramID == "WET_PRESENCE") engineWrapper.setParameter(BUBBLE_ENGINE_PARAM_WET_PRESENCE, value);
-        else if (param->paramID == "DUCKING") engineWrapper.setParameter(BUBBLE_ENGINE_PARAM_DUCKING, value);
-        else if (param->paramID == "DECAY") engineWrapper.setParameter(BUBBLE_ENGINE_PARAM_DECAY, value);
-        else if (param->paramID == "ATTACK_RATE") engineWrapper.setParameter(BUBBLE_ENGINE_PARAM_ATTACK_RATE, value);
-        else if (param->paramID == "PITCH_MODE") engineWrapper.setParameter(BUBBLE_ENGINE_PARAM_PITCH_MODE, value);
-        else if (param->paramID == "QUALITY_PROFILE") engineWrapper.setParameter(BUBBLE_ENGINE_PARAM_QUALITY_PROFILE, value);
-        else if (param->paramID == "FREEZE") engineWrapper.setParameter(BUBBLE_ENGINE_PARAM_FREEZE, value);
+    auto paramNames = {
+        "DENSITY", "PANORAMA", "MEMORY_PULL", "SPARKLE", "REVERSE", "DIFFUSION",
+        "WET_PRESENCE", "DUCKING", "DECAY", "ATTACK_RATE", "PITCH_MODE",
+        "QUALITY_PROFILE", "FREEZE"
+    };
+    for (const auto& name : paramNames) {
+        if (auto* p = treeState.getParameter(name)) {
+            parameterChanged(name, p->getValue());
+        }
     }
 }
 
@@ -137,15 +112,6 @@ juce::AudioProcessorEditor* BubbleCloudAudioProcessor::createEditor()
 
 void BubbleCloudAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
-    // Use the core's JSON serializer
-    BubbleEnginePreset_t preset;
-    preset.config = engineWrapper.getConfig();
-    preset.master_dry_gain = 0.0f; // No dry parameter yet
-    preset.master_wet_gain = 1.0f; 
-
-    // We also need to store the macro values since those dictate the UI!
-    // But bubble_preset_save_json saves the engine config, not the macros.
-    // Actually, in APVTS, you can just save the APVTS state as XML.
     auto state = treeState.copyState();
     std::unique_ptr<juce::XmlElement> xml (state.createXml());
     copyXmlToBinary (*xml, destData);
@@ -158,12 +124,6 @@ void BubbleCloudAudioProcessor::setStateInformation(const void* data, int sizeIn
     if (xmlState != nullptr)
         if (xmlState->hasTagName (treeState.state.getType()))
             treeState.replaceState (juce::ValueTree::fromXml (*xmlState));
-}
-
-// This creates new instances of the plugin
-juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
-{
-    return new BubbleCloudAudioProcessor();
 }
 
 void BubbleCloudAudioProcessor::parameterChanged(const juce::String& parameterID, float newValue)
@@ -186,4 +146,10 @@ void BubbleCloudAudioProcessor::parameterChanged(const juce::String& parameterID
     else return;
     
     engineWrapper.setParameter(paramId, newValue);
+}
+
+// This creates new instances of the plugin
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
+{
+    return new BubbleCloudAudioProcessor();
 }

@@ -36,9 +36,9 @@ void BubbleCloudEngineWrapper::prepare(double sampleRate, int samplesPerBlock)
     engineR.rng_state ^= 0x55555555;
     
     // Apply previously set parameters (macros)
-    for (int i = 0; i < BUBBLE_ENGINE_NUM_PARAMS; ++i) {
-        bubble_engine_set_parameter(&engineL, (BubbleParameterId)i, macroValues[i]);
-        bubble_engine_set_parameter(&engineR, (BubbleParameterId)i, macroValues[i]);
+    for (auto const& [k, v] : macroValues) {
+        bubble_engine_set_parameter(&engineL, k, v);
+        bubble_engine_set_parameter(&engineR, k, v);
     }
 }
 
