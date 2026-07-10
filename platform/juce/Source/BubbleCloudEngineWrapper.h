@@ -5,7 +5,6 @@
 
 extern "C" {
 #include "bubble_engine.h"
-#include "bubble_macro_map.h"
 }
 
 class BubbleCloudEngineWrapper
