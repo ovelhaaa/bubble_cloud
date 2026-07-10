@@ -165,3 +165,25 @@ juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new BubbleCloudAudioProcessor();
 }
+
+void BubbleCloudAudioProcessor::parameterChanged(const juce::String& parameterID, float newValue)
+{
+    BubbleParameterId paramId = BUBBLE_PARAM_DENSITY;
+    
+    if (parameterID == "DENSITY") paramId = BUBBLE_PARAM_DENSITY;
+    else if (parameterID == "PANORAMA") paramId = BUBBLE_ENGINE_PARAM_STEREO_WIDTH;
+    else if (parameterID == "MEMORY_PULL") paramId = BUBBLE_ENGINE_PARAM_MEMORY_PULL;
+    else if (parameterID == "SPARKLE") paramId = BUBBLE_PARAM_SPARKLE;
+    else if (parameterID == "REVERSE") paramId = BUBBLE_ENGINE_PARAM_SMART_START_ENABLE;
+    else if (parameterID == "DIFFUSION") paramId = BUBBLE_ENGINE_PARAM_SUSTAIN_DIFFUSION_AMOUNT;
+    else if (parameterID == "WET_PRESENCE") paramId = BUBBLE_ENGINE_PARAM_MIX_WET_GAIN;
+    else if (parameterID == "DUCKING") paramId = BUBBLE_ENGINE_PARAM_DUCK_BURST_LEVEL;
+    else if (parameterID == "DECAY") paramId = BUBBLE_ENGINE_PARAM_DENSITY_DECAY;
+    else if (parameterID == "ATTACK_RATE") paramId = BUBBLE_ENGINE_PARAM_ATTACK_REGION_MAX_OFFSET_SAMPLES;
+    else if (parameterID == "PITCH_MODE") paramId = BUBBLE_ENGINE_PARAM_TONE_VARIATION;
+    else if (parameterID == "QUALITY_PROFILE") paramId = BUBBLE_ENGINE_PARAM_NOISE_FLOOR;
+    else if (parameterID == "FREEZE") paramId = BUBBLE_PARAM_FREEZE;
+    else return;
+    
+    engineWrapper.setParameter(paramId, newValue);
+}

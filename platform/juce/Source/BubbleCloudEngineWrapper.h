@@ -17,8 +17,8 @@ public:
     void process(const float* inLeft, const float* inRight, float* outLeft, float* outRight, int numSamples);
     
     // Parameter setting
-    void setParameter(BubbleEngineParameterId_t paramId, float value);
-    float getParameter(BubbleEngineParameterId_t paramId) const;
+    void setParameter(BubbleParameterId paramId, float value);
+    float getParameter(BubbleParameterId paramId) const;
     
     // State getting/setting for preset saving
     EngineConfig_t getConfig() const;
@@ -36,5 +36,6 @@ private:
     double currentSampleRate = 44100.0;
     
     // Need to keep track of macros
-    float macroValues[BUBBLE_ENGINE_NUM_PARAMS] = {0.0f};
+    #include <map>
+    std::map<BubbleParameterId, float> macroValues;
 };

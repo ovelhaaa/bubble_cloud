@@ -3,7 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "BubbleCloudEngineWrapper.h"
 
-class BubbleCloudAudioProcessor : public juce::AudioProcessor
+class BubbleCloudAudioProcessor : public juce::AudioProcessor, public juce::AudioProcessorValueTreeState::Listener
 {
 public:
     BubbleCloudAudioProcessor();
@@ -30,6 +30,8 @@ public:
 
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
+    
+    void parameterChanged (const juce::String& parameterID, float newValue) override;
 
     juce::AudioProcessorValueTreeState treeState;
 

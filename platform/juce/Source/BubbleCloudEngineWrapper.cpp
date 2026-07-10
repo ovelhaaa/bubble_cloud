@@ -33,12 +33,12 @@ void BubbleCloudEngineWrapper::prepare(double sampleRate, int samplesPerBlock)
     bubble_engine_init(&engineR, delayBufferR.data(), &configR);
     
     // Decorrelate the right channel's RNG seed so it doesn't sound completely mono
-    engineR.core.rng_state ^= 0x55555555;
+    engineR.rng_state ^= 0x55555555;
     
     // Apply previously set parameters (macros)
     for (int i = 0; i < BUBBLE_ENGINE_NUM_PARAMS; ++i) {
-        bubble_engine_set_parameter(&engineL, (BubbleEngineParameterId_t)i, macroValues[i]);
-        bubble_engine_set_parameter(&engineR, (BubbleEngineParameterId_t)i, macroValues[i]);
+        bubble_engine_set_parameter(&engineL, (BubbleParameterId)i, macroValues[i]);
+        bubble_engine_set_parameter(&engineR, (BubbleParameterId)i, macroValues[i]);
     }
 }
 
@@ -70,14 +70,14 @@ void BubbleCloudEngineWrapper::process(const float* inLeft, const float* inRight
     bubble_engine_process(&engineR, monoMixBuffer.data(), dumpR_L.data(), outRight, numSamples);
 }
 
-void BubbleCloudEngineWrapper::setParameter(BubbleEngineParameterId_t paramId, float value)
+void BubbleCloudEngineWrapper::setParameter(BubbleParameterId paramId, float value)
 {
     macroValues[paramId] = value;
     bubble_engine_set_parameter(&engineL, paramId, value);
     bubble_engine_set_parameter(&engineR, paramId, value);
 }
 
-float BubbleCloudEngineWrapper::getParameter(BubbleEngineParameterId_t paramId) const
+float BubbleCloudEngineWrapper::getParameter(BubbleParameterId paramId) const
 {
     return macroValues[paramId];
 }
@@ -92,6 +92,6 @@ void BubbleCloudEngineWrapper::setConfig(const EngineConfig_t& config)
     EngineConfig_t safeConfig = config;
     safeConfig.sample_rate = (float)currentSampleRate;
     
-    bubble_engine_set_config(&engineL, &safeConfig);
-    bubble_engine_set_config(&engineR, &safeConfig);
+    SoundBubbles_UpdateConfig(&engineL, &safeConfig);
+    SoundBubbles_UpdateConfig(&engineR, &safeConfig);
 }
