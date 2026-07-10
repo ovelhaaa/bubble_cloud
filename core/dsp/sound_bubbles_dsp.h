@@ -6,11 +6,9 @@
 #include "../engine/bubble_quality.h"
 
 // --- System & Algorithmic Constants ---
-#define BUBBLES_SAMPLE_RATE 44100
 #define BUBBLES_BLOCK_SIZE 32
 #define BUBBLES_MAX_VOICES BUBBLE_ENGINE_MAX_VOICES
-#define BUBBLES_BUFFER_SIZE_SAMPLES 88200 // Exactly 2 seconds at 44.1kHz
-#define BUBBLES_FADE_SAMPLES 44           // ~1ms preemption fade at 44.1kHz
+#define BUBBLES_FADE_SAMPLES 44           // ~1ms preemption fade at 44.1kHz (kept as abstract default, logic adapts)
 #define BUBBLES_GUARD_ZONE_SAMPLES 64
 #define SCHED_MAX_SPAWNS_PER_TICK 3
 #define BUBBLES_PENDING_SPAWN_CAPACITY 4
@@ -97,6 +95,7 @@ typedef struct {
 
 // Pure DSP Engine configuration (Strictly baseline approved fields)
 typedef struct {
+    float sample_rate;
     float noise_floor;
     float tracking_thresh;
     float sustain_thresh;
@@ -362,9 +361,12 @@ typedef struct {
 #define SOUND_BUBBLES_DEPRECATED
 #endif
 
-// Initialization: Caller provides pre-allocated delay_buffer (88,200 elements) and initial config.
+// Initialization: Caller provides pre-allocated delay_buffer (allocated via SoundBubbles_RequiredBufferSamples) and initial config.
 // Determinism contract: same rng_seed + same input samples + same config/params => identical class/read/duration random decisions.
 SOUND_BUBBLES_DEPRECATED void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memory, const EngineConfig_t* initial_config);
+
+// Returns the number of samples required for the delay buffer based on the target sample rate.
+size_t SoundBubbles_RequiredBufferSamples(float sample_rate);
 
 // Config Update: Safely copy new core engine parameters
 SOUND_BUBBLES_DEPRECATED void SoundBubbles_UpdateConfig(SoundBubblesEngine_t* engine, const EngineConfig_t* new_config);

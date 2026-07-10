@@ -6,7 +6,7 @@
 
 #include "engine/bubble_engine.h"
 
-#define TEST_FRAMES (BUBBLES_SAMPLE_RATE * 2)
+#define TEST_FRAMES (44100 * 2)
 #define MAX_ACCEPTABLE_ABS_SAMPLE 1.01f
 
 typedef enum {
@@ -38,13 +38,13 @@ static void fill_vector(TestVector vector, float* input, int frames) {
     uint32_t rng = 0x12345678u;
     memset(input, 0, (size_t)frames * sizeof(float));
     for (int i = 0; i < frames; ++i) {
-        float t = (float)i / (float)BUBBLES_SAMPLE_RATE;
+        float t = (float)i / (float)44100;
         switch (vector) {
             case VECTOR_SILENCE:
                 input[i] = 0.0f;
                 break;
             case VECTOR_IMPULSE:
-                input[i] = (i == BUBBLES_SAMPLE_RATE / 10) ? 1.0f : 0.0f;
+                input[i] = (i == 44100 / 10) ? 1.0f : 0.0f;
                 break;
             case VECTOR_SINE:
                 input[i] = 0.35f * sinf(2.0f * 3.14159265358979323846f * 440.0f * t);
@@ -108,7 +108,7 @@ static int run_case(const StabilityPreset* preset, TestVector vector) {
     static float input[TEST_FRAMES];
     static float left[TEST_FRAMES];
     static float right[TEST_FRAMES];
-    static int16_t delay[BUBBLES_BUFFER_SIZE_SAMPLES];
+    static int16_t delay[88200];
 
     fill_vector(vector, input, TEST_FRAMES);
     memset(left, 0, sizeof(left));

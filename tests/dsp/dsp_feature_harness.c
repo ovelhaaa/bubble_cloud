@@ -39,7 +39,7 @@ static void init_engine(BubbleEngine_t* engine, int16_t* delay, BubbleEngineConf
     config->density_burst = 0.0f;
     config->density_sustain = 0.0f;
     config->density_decay = 0.0f;
-    memset(delay, 0, (size_t)BUBBLES_BUFFER_SIZE_SAMPLES * sizeof(delay[0]));
+    memset(delay, 0, (size_t)88200 * sizeof(delay[0]));
     bubble_engine_init(engine, delay, config);
 }
 
@@ -64,7 +64,7 @@ static int active_voice_count(const BubbleEngine_t* engine) {
 }
 
 static int test_developer_parameter_gate_and_clamping(void) {
-    static int16_t delay[BUBBLES_BUFFER_SIZE_SAMPLES];
+    static int16_t delay[88200];
     BubbleEngineConfig_t config;
     BubbleEngine_t engine;
     float value = -1.0f;
@@ -91,7 +91,7 @@ static int test_developer_parameter_gate_and_clamping(void) {
 }
 
 static int test_freeze_stops_memory_writes_and_macro_reaches_freeze(void) {
-    static int16_t delay[BUBBLES_BUFFER_SIZE_SAMPLES];
+    static int16_t delay[88200];
     BubbleEngineConfig_t config;
     BubbleEngine_t engine;
     init_engine(&engine, delay, &config);
@@ -114,7 +114,7 @@ static int test_freeze_stops_memory_writes_and_macro_reaches_freeze(void) {
 }
 
 static int test_pitch_reverse_and_droplet_spawn_metadata(void) {
-    static int16_t delay[BUBBLES_BUFFER_SIZE_SAMPLES];
+    static int16_t delay[88200];
     BubbleEngineConfig_t config;
     BubbleEngine_t engine;
     init_engine(&engine, delay, &config);
@@ -156,7 +156,7 @@ static int test_pitch_reverse_and_droplet_spawn_metadata(void) {
 }
 
 static int test_tempo_patterns_burst_modes_motion_and_metrics(void) {
-    static int16_t delay[BUBBLES_BUFFER_SIZE_SAMPLES];
+    static int16_t delay[88200];
     BubbleEngineConfig_t config;
     BubbleEngine_t engine;
     MetricsCapture capture = {0};
@@ -195,7 +195,7 @@ static int test_tempo_patterns_burst_modes_motion_and_metrics(void) {
 }
 
 static int test_quality_profile_limits_allocation_and_drain(void) {
-    static int16_t delay[BUBBLES_BUFFER_SIZE_SAMPLES];
+    static int16_t delay[88200];
     BubbleEngineConfig_t config;
     BubbleEngine_t engine;
     init_engine(&engine, delay, &config);

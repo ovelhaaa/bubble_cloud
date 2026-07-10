@@ -149,7 +149,7 @@ if (missing.length > 0) {
   console.error(`WASM module is stale or missing test exports: ${missing.join(', ')}. Rebuild with make wasm.`);
   process.exit(1);
 }
-const wasmInit = module.cwrap('wasm_init', null, []);
+const wasmInit = module.cwrap('wasm_init', null, ['number']);
 const wasmReset = module.cwrap('wasm_reset', null, []);
 const wasmProcess = module.cwrap('wasm_process', null, ['number', 'number', 'number', 'number']);
 const wasmSetParam = module.cwrap('wasm_set_param', null, ['number', 'number']);
@@ -163,7 +163,7 @@ const getPeakR = module.cwrap('wasm_get_peak_r', 'number', []);
 const getClipCount = module.cwrap('wasm_get_clip_count', 'number', []);
 const getLimiterGain = module.cwrap('wasm_get_limiter_gain', 'number', []);
 
-wasmInit();
+wasmInit(44100.0);
 const preset = JSON.parse(fs.readFileSync(presetPath, 'utf8'));
 const updates = {};
 for (const [key, paramId] of Object.entries(PARAMS)) {

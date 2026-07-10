@@ -22,10 +22,12 @@
 
 static const char* TAG = "bubble_main";
 
+#define BUBBLE_ESP32_DELAY_BUFFER_SAMPLES (2 * BUBBLE_ESP32_AUDIO_SAMPLE_RATE_HZ)
+
 #ifdef CONFIG_SPIRAM
-static EXT_RAM_ATTR int16_t s_delay_buffer[BUBBLES_BUFFER_SIZE_SAMPLES];
+static EXT_RAM_ATTR int16_t s_delay_buffer[BUBBLE_ESP32_DELAY_BUFFER_SAMPLES];
 #else
-static int16_t s_delay_buffer[BUBBLES_BUFFER_SIZE_SAMPLES];
+static int16_t s_delay_buffer[BUBBLE_ESP32_DELAY_BUFFER_SAMPLES];
 #endif
 static BubbleEngine_t s_engine;
 static float s_input_block[BUBBLE_ESP32_AUDIO_BLOCK_FRAMES];

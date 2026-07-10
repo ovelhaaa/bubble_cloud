@@ -1,5 +1,10 @@
 #define SOUND_BUBBLES_DSP_INTERNAL 1
 #include "sound_bubbles_dsp.h"
+
+size_t SoundBubbles_RequiredBufferSamples(float sample_rate) {
+    return (size_t)(2.0f * sample_rate);
+}
+
 #include <float.h>
 #include <math.h>
 #include <stddef.h>
@@ -64,11 +69,11 @@ static uint32_t NextRandomU32(SoundBubblesEngine_t* engine);
 static float RandomFloat01(SoundBubblesEngine_t* engine);
 static inline int32_t WrapIntIndex(int32_t index, int32_t size);
 static inline float WrapFloatIndex(float index, float size);
-static inline float LinearInterpolate(const int16_t* buffer, float index_float);
-static inline bool CheckGuardZoneDirectional(int32_t write_ptr, float read_ptr_float, float rate);
+static inline float LinearInterpolate(const int16_t* buffer, float index_float, int32_t buffer_size);
+static inline bool CheckGuardZoneDirectional(int32_t write_ptr, float read_ptr_float, float rate, int32_t buffer_size);
 static float ResolvePitchModeRate(SoundBubblesEngine_t* engine);
 
-static void CalculateFilterCoeffsLPF(Filter1Pole_t* f, float cutoff_hz);
+static void CalculateFilterCoeffsLPF(Filter1Pole_t* f, float cutoff_hz, float sample_rate);
 static inline float Filter1Pole_ProcessLPF(Filter1Pole_t* f, float input);
 static inline float Filter1Pole_ProcessHPF(Filter1Pole_t* f, float input);
 
@@ -90,7 +95,7 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
 static float LookupWindow(float phase, WindowType_t type);
 static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state);
 static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadRegionConfig_t* region);
-static int32_t RefineReadOffsetSmartStart(const SoundBubblesEngine_t* engine, int32_t read_offset_samples, int32_t range);
+static int32_t RefineReadOffsetSmartStart(const SoundBubblesEngine_t* engine, int32_t read_offset_samples, int32_t range, int32_t buffer_size);
 static float EnvelopeVariantGain(float phase, uint8_t variant, int family);
 static float SoftClip(float x, float amount);
 static inline float DbToLinear(float db);
@@ -108,7 +113,7 @@ static inline void CacheFinalLimiterBlockParams(SoundBubblesEngine_t* engine) {
 
     float release_ms = engine->config.final_limiter_release_ms;
     if (!isfinite(release_ms) || release_ms <= 0.0f) release_ms = FINAL_LIMITER_DEFAULT_RELEASE_MS;
-    float release_samples = release_ms * 0.001f * (float)BUBBLES_SAMPLE_RATE;
+    float release_samples = release_ms * 0.001f * engine->config.sample_rate;
     engine->final_limiter_release_coef = 1.0f / fmaxf(1.0f, release_samples);
 }
 
@@ -210,7 +215,8 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     engine->pending_spawn_head = 0;
     engine->pending_spawn_count = 0;
 
-    for (int i = 0; i < BUBBLES_BUFFER_SIZE_SAMPLES; i++) {
+    int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(engine->config.sample_rate);
+    for (int i = 0; i < buffer_size; i++) {
         engine->delay_buffer[i] = 0;
     }
 
@@ -219,11 +225,11 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     }
 
     // Attack HPF (implemented internally as input - LPF), one state per stereo channel.
-    CalculateFilterCoeffsLPF(&engine->attack_hpf_l, 1500.0f);
-    CalculateFilterCoeffsLPF(&engine->attack_hpf_r, 1500.0f);
+    CalculateFilterCoeffsLPF(&engine->attack_hpf_l, 1500.0f, engine->config.sample_rate);
+    CalculateFilterCoeffsLPF(&engine->attack_hpf_r, 1500.0f, engine->config.sample_rate);
     // Sustain LPF, one state per stereo channel.
-    CalculateFilterCoeffsLPF(&engine->sustain_lpf_l, 2000.0f);
-    CalculateFilterCoeffsLPF(&engine->sustain_lpf_r, 2000.0f);
+    CalculateFilterCoeffsLPF(&engine->sustain_lpf_l, 2000.0f, engine->config.sample_rate);
+    CalculateFilterCoeffsLPF(&engine->sustain_lpf_r, 2000.0f, engine->config.sample_rate);
 
     engine->ducking_lpf.b0 = engine->config.duck_attack_coef;
     engine->ducking_lpf.a1 = 1.0f - engine->config.duck_attack_coef;
@@ -285,6 +291,8 @@ void SoundBubbles_SetMetricsCallback(SoundBubblesEngine_t* engine, SoundBubblesM
 // --- Audio-Rate Processing Loop ---
 
 void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mono, float* out_left, float* out_right, int num_samples) {
+    if (engine == NULL || in_mono == NULL || out_left == NULL || out_right == NULL || num_samples <= 0) return;
+    int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(engine->config.sample_rate);
     float block_peak = 0.0f;
     bool freeze_write = (engine->config.freeze_enabled != 0) || (engine->config.freeze_amount >= 0.5f);
 
@@ -342,18 +350,18 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
 
             // Advance read_ptr with optional spawn-time attack jittered rate.
             v->read_ptr_float += v->rate;
-            v->read_ptr_float = WrapFloatIndex(v->read_ptr_float, (float)BUBBLES_BUFFER_SIZE_SAMPLES);
+            v->read_ptr_float = WrapFloatIndex(v->read_ptr_float, (float)buffer_size);
 
             // Directional write-head guard. Reverse voices also reject the
             // opposite-side guard band so interpolation cannot wrap into the
             // frozen/live write head neighborhood.
-            if (v->state == VOICE_STATE_PLAYING && CheckGuardZoneDirectional(engine->write_ptr, v->read_ptr_float, v->rate)) {
+            if (v->state == VOICE_STATE_PLAYING && CheckGuardZoneDirectional(engine->write_ptr, v->read_ptr_float, v->rate, buffer_size)) {
                 v->state = VOICE_STATE_PREEMPT_FADING;
                 v->fade_counter = BUBBLES_FADE_SAMPLES;
             }
 
             // Interpolate and apply window
-            float sample_val = LinearInterpolate(engine->delay_buffer, v->read_ptr_float);
+            float sample_val = LinearInterpolate(engine->delay_buffer, v->read_ptr_float, buffer_size);
             float window_val = LookupWindow(v->phase, engine->config.class_configs[v->bubble_class].window_type);
             float env_var = EnvelopeVariantGain(v->phase, v->envelope_variant, engine->config.envelope_family);
             float voice_out = sample_val * window_val * env_var * v->amp * v->gain;
@@ -452,7 +460,7 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
 
         // Advance write pointer unless freeze has locked the granular memory.
         if (!freeze_write) {
-            engine->write_ptr = WrapIntIndex(engine->write_ptr + 1, BUBBLES_BUFFER_SIZE_SAMPLES);
+            engine->write_ptr = WrapIntIndex(engine->write_ptr + 1, buffer_size);
         }
 
         // Execute Control-Rate Tick
@@ -733,7 +741,7 @@ static float Scheduler_TicksPerRhythmStep(const SoundBubblesEngine_t* engine) {
         case BUBBLE_RHYTHM_DIVISION_SIXTEENTH:
         default: steps_per_quarter = 4.0f; break;
     }
-    float ticks_per_second = (float)BUBBLES_SAMPLE_RATE / (float)BUBBLES_BLOCK_SIZE;
+    float ticks_per_second = engine->config.sample_rate / (float)BUBBLES_BLOCK_SIZE;
     float steps_per_second = (bpm / 60.0f) * steps_per_quarter;
     return ticks_per_second / fmaxf(steps_per_second, 1.0e-6f);
 }
@@ -767,7 +775,7 @@ static void Scheduler_RunTick(SoundBubblesEngine_t* engine) {
         return;
     }
 
-    float spawns_per_tick = engine->target_density * ((float)BUBBLES_BLOCK_SIZE / (float)BUBBLES_SAMPLE_RATE);
+    float spawns_per_tick = engine->target_density * ((float)BUBBLES_BLOCK_SIZE / engine->config.sample_rate);
     engine->spawn_accumulator += spawns_per_tick;
 
     while (engine->spawn_accumulator >= 1.0f && spawns_this_tick < SCHED_MAX_SPAWNS_PER_TICK) {
@@ -974,7 +982,7 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
         duration_ms *= Clamp(engine->config.droplet_length_scale, 0.2f, 1.0f);
         v->gain *= Clamp(engine->config.droplet_gain, 0.0f, 1.0f);
     }
-    float duration_samples = duration_ms * ((float)BUBBLES_SAMPLE_RATE / 1000.0f);
+    float duration_samples = duration_ms * (engine->config.sample_rate / 1000.0f);
 
     // Defensively clamp duration_samples to avoid div-by-zero or extremely rapid phase_inc
     if (duration_samples < 10.0f) {
@@ -993,7 +1001,8 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     float span_rate = (v->rate < 0.0f) ? (1.0f + fabsf(v->rate)) : fabsf(v->rate);
     int32_t projected_span = (int32_t)ceilf(duration_samples * span_rate);
     if (projected_span < 0) projected_span = 0;
-    int32_t max_guarded_offset = BUBBLES_BUFFER_SIZE_SAMPLES - BUBBLES_GUARD_ZONE_SAMPLES - 1;
+    int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(engine->config.sample_rate);
+    int32_t max_guarded_offset = buffer_size - BUBBLES_GUARD_ZONE_SAMPLES - 1;
     if (v->rate < 0.0f) {
         int32_t reverse_max = max_guarded_offset - projected_span;
         if (reverse_max < BUBBLES_GUARD_ZONE_SAMPLES) reverse_max = BUBBLES_GUARD_ZONE_SAMPLES;
@@ -1005,9 +1014,10 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     }
 
     if (engine->config.smart_start_enable) {
-        read_offset_samples = RefineReadOffsetSmartStart(engine, read_offset_samples, engine->config.smart_start_range);
+        int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(engine->config.sample_rate);
+        read_offset_samples = RefineReadOffsetSmartStart(engine, read_offset_samples, engine->config.smart_start_range, buffer_size);
     }
-    v->read_ptr_float = (float)WrapIntIndex(engine->write_ptr - read_offset_samples, BUBBLES_BUFFER_SIZE_SAMPLES);
+    v->read_ptr_float = (float)WrapIntIndex(engine->write_ptr - read_offset_samples, buffer_size);
 
     float spread = (b_class == BUBBLE_CLASS_MICRO_ATTACK) ? engine->config.attack_pan_spread : engine->config.sustain_pan_spread;
     float pan = (RandomFloat01(engine) * 2.0f - 1.0f) * Clamp01(spread) * Clamp01(engine->config.stereo_width);
@@ -1088,7 +1098,8 @@ static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, 
 static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadRegionConfig_t* region) {
     // Clamp and normalize range so presets stay ring-buffer safe.
     const int32_t min_safe = BUBBLES_GUARD_ZONE_SAMPLES;
-    const int32_t max_safe = BUBBLES_BUFFER_SIZE_SAMPLES - BUBBLES_GUARD_ZONE_SAMPLES - 1;
+    int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(engine->config.sample_rate);
+    const int32_t max_safe = buffer_size - BUBBLES_GUARD_ZONE_SAMPLES - 1;
 
     int32_t min_offset = region->min_offset_samples;
     int32_t max_offset = region->max_offset_samples;
@@ -1110,7 +1121,7 @@ static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadR
     return min_offset + (int32_t)(rnd % bucket);
 }
 
-static int32_t RefineReadOffsetSmartStart(const SoundBubblesEngine_t* engine, int32_t read_offset_samples, int32_t range) {
+static int32_t RefineReadOffsetSmartStart(const SoundBubblesEngine_t* engine, int32_t read_offset_samples, int32_t range, int32_t buffer_size) {
     int32_t best = read_offset_samples;
     int32_t scan = range;
     if (scan < 1) return best;
@@ -1120,9 +1131,9 @@ static int32_t RefineReadOffsetSmartStart(const SoundBubblesEngine_t* engine, in
     for (int32_t delta = -scan; delta <= scan; delta++) {
         int32_t candidate = read_offset_samples + delta;
         if (candidate < BUBBLES_GUARD_ZONE_SAMPLES) continue;
-        if (candidate >= (BUBBLES_BUFFER_SIZE_SAMPLES - BUBBLES_GUARD_ZONE_SAMPLES)) continue;
-        int32_t idx = WrapIntIndex(engine->write_ptr - candidate, BUBBLES_BUFFER_SIZE_SAMPLES);
-        int32_t prev = WrapIntIndex(idx - 1, BUBBLES_BUFFER_SIZE_SAMPLES);
+        if (candidate >= (buffer_size - BUBBLES_GUARD_ZONE_SAMPLES)) continue;
+        int32_t idx = WrapIntIndex(engine->write_ptr - candidate, buffer_size);
+        int32_t prev = WrapIntIndex(idx - 1, buffer_size);
         float a = (float)engine->delay_buffer[prev];
         float b = (float)engine->delay_buffer[idx];
         if ((a <= 0.0f && b >= 0.0f) || (a >= 0.0f && b <= 0.0f)) {
@@ -1131,7 +1142,7 @@ static int32_t RefineReadOffsetSmartStart(const SoundBubblesEngine_t* engine, in
 
         float energy = 0.0f;
         for (int k = -SMART_START_ENERGY_RADIUS; k <= SMART_START_ENERGY_RADIUS; k++) {
-            int32_t eidx = WrapIntIndex(idx + k, BUBBLES_BUFFER_SIZE_SAMPLES);
+            int32_t eidx = WrapIntIndex(idx + k, buffer_size);
             float s = (float)engine->delay_buffer[eidx];
             energy += s * s;
         }
@@ -1229,25 +1240,25 @@ static inline float WrapFloatIndex(float index, float size) {
     return index;
 }
 
-static inline float LinearInterpolate(const int16_t* buffer, float index_float) {
+static inline float LinearInterpolate(const int16_t* buffer, float index_float, int32_t buffer_size) {
     int32_t idx_int = (int32_t)index_float;
     float frac = index_float - (float)idx_int;
-    int32_t idx_next = (idx_int + 1 == BUBBLES_BUFFER_SIZE_SAMPLES) ? 0 : idx_int + 1;
+    int32_t idx_next = (idx_int + 1 == buffer_size) ? 0 : idx_int + 1;
 
     float val1 = (float)buffer[idx_int] * (1.0f / 32768.0f);
     float val2 = (float)buffer[idx_next] * (1.0f / 32768.0f);
     return val1 + frac * (val2 - val1);
 }
 
-static inline bool CheckGuardZoneDirectional(int32_t write_ptr, float read_ptr_float, float rate) {
+static inline bool CheckGuardZoneDirectional(int32_t write_ptr, float read_ptr_float, float rate, int32_t buffer_size) {
     int32_t read_ptr = (int32_t)read_ptr_float;
     if (rate >= 0.0f) {
         int32_t dist_behind_write = write_ptr - read_ptr;
-        if (dist_behind_write < 0) dist_behind_write += BUBBLES_BUFFER_SIZE_SAMPLES;
+        if (dist_behind_write < 0) dist_behind_write += buffer_size;
         return (dist_behind_write >= 0 && dist_behind_write < BUBBLES_GUARD_ZONE_SAMPLES);
     } else {
         int32_t dist_ahead_of_write = read_ptr - write_ptr;
-        if (dist_ahead_of_write < 0) dist_ahead_of_write += BUBBLES_BUFFER_SIZE_SAMPLES;
+        if (dist_ahead_of_write < 0) dist_ahead_of_write += buffer_size;
         return (dist_ahead_of_write >= 0 && dist_ahead_of_write < BUBBLES_GUARD_ZONE_SAMPLES);
     }
 }
@@ -1280,8 +1291,8 @@ static float UpdateEnvelope(float prev_state, float input_peak, float attack_coe
 }
 
 // Basic 1-pole Lowpass coefficient calculation (explicit exponential approximation)
-static void CalculateFilterCoeffsLPF(Filter1Pole_t* f, float cutoff_hz) {
-    float a1 = expf(-2.0f * M_PI * cutoff_hz / (float)BUBBLES_SAMPLE_RATE);
+static void CalculateFilterCoeffsLPF(Filter1Pole_t* f, float cutoff_hz, float sample_rate) {
+    float a1 = expf(-2.0f * M_PI * cutoff_hz / sample_rate);
 
     f->a1 = a1;
     f->b0 = 1.0f - a1;

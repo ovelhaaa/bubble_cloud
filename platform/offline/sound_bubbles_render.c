@@ -271,10 +271,7 @@ static WavData ReadWav(const char* filename) {
         ErrorExit("Input WAV file must contain 'fmt ' and 'data' chunks.");
     }
 
-    if (sampleRate != BUBBLES_SAMPLE_RATE) {
-        fclose(file);
-        ErrorExit("Input WAV must be 44.1 kHz.");
-    }
+
 
     if (numChannels != 1 && numChannels != 2) {
         fclose(file);
@@ -344,13 +341,13 @@ static WavData ReadWav(const char* filename) {
     return wav;
 }
 
-static void WriteWav(const char* filename, const float* left, const float* right, uint32_t numFrames) {
+static void WriteWav(const char* filename, const float* left, const float* right, uint32_t numFrames, uint32_t sampleRate) {
     FILE* file = fopen(filename, "wb");
     if (!file) ErrorExit("Could not open output WAV file for writing.");
 
     uint32_t bytesPerSample = 4; // 32-bit float
     uint32_t numChannels = 2;    // Stereo
-    uint32_t byteRate = BUBBLES_SAMPLE_RATE * numChannels * bytesPerSample;
+    uint32_t byteRate = sampleRate * numChannels * bytesPerSample;
     uint32_t blockAlign = numChannels * bytesPerSample;
     uint32_t dataSize = numFrames * blockAlign;
 
@@ -362,7 +359,7 @@ static void WriteWav(const char* filename, const float* left, const float* right
         16, // PCM/Float format chunk size
         3,  // IEEE Float
         (uint16_t)numChannels,
-        BUBBLES_SAMPLE_RATE,
+        sampleRate,
         byteRate,
         (uint16_t)blockAlign,
         (uint16_t)(bytesPerSample * 8)
@@ -406,18 +403,22 @@ static void LoadPreset(const char* filename, EngineConfig_t* config, float* mast
     *master_wet = preset.master_wet_gain;
 }
 
-static MetricsDigest_t RenderWithMetrics(const EngineConfig_t* config, float master_dry, float master_wet, const float* mono_in, uint32_t num_frames, float* out_left, float* out_right, FILE* metrics_log) {
+static MetricsDigest_t RenderWithMetrics(const EngineConfig_t* config, float master_dry, float master_wet, const float* mono_in, uint32_t num_frames, float* out_left, float* out_right, FILE* metrics_log, uint32_t sampleRate) {
     MetricsDigest_t digest = {0};
     digest.hash = 1469598103934665603ull;
     digest.block_count = 0;
 
-    int16_t* delay_buffer = (int16_t*)calloc(BUBBLES_BUFFER_SIZE_SAMPLES, sizeof(int16_t));
+    int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples((float)sampleRate);
+    int16_t* delay_buffer = (int16_t*)calloc(buffer_size, sizeof(int16_t));
     if (!delay_buffer) {
         ErrorExit("Failed to allocate DSP delay buffer.");
     }
 
+    EngineConfig_t local_config = *config;
+    local_config.sample_rate = (float)sampleRate;
+
     BubbleEngine_t engine;
-    bubble_engine_init(&engine, delay_buffer, config);
+    bubble_engine_init(&engine, delay_buffer, &local_config);
     bubble_engine_set_parameter(&engine, BUBBLE_ENGINE_PARAM_MIX_DRY_GAIN, master_dry);
     bubble_engine_set_parameter(&engine, BUBBLE_ENGINE_PARAM_MIX_WET_GAIN, master_wet);
 
@@ -659,7 +660,7 @@ int main(int argc, char** argv) {
     }
 
     FILE* metrics_log = OpenMetricsLog(metrics_out_file);
-    MetricsDigest_t digest = RenderWithMetrics(&config, master_dry, master_wet, mono_in, num_frames, out_left, out_right, metrics_log);
+    MetricsDigest_t digest = RenderWithMetrics(&config, master_dry, master_wet, mono_in, num_frames, out_left, out_right, metrics_log, in_wav.sampleRate);
     if (metrics_log != NULL) {
         fclose(metrics_log);
     }
@@ -672,7 +673,7 @@ int main(int argc, char** argv) {
     }
 
     // Write Output Audio
-    WriteWav(output_wav_file, out_left, out_right, num_frames);
+    WriteWav(output_wav_file, out_left, out_right, num_frames, in_wav.sampleRate);
 
     if (repro_check) {
         float* out_left_2 = (float*)malloc(num_frames * sizeof(float));
@@ -685,7 +686,7 @@ int main(int argc, char** argv) {
             if (out_right_2) free(out_right_2);
             ErrorExit("Failed to allocate buffers for reproducibility check.");
         }
-        MetricsDigest_t second = RenderWithMetrics(&config, master_dry, master_wet, mono_in, num_frames, out_left_2, out_right_2, NULL);
+        MetricsDigest_t second = RenderWithMetrics(&config, master_dry, master_wet, mono_in, num_frames, out_left_2, out_right_2, NULL, in_wav.sampleRate);
         if (digest.hash != second.hash || digest.block_count != second.block_count) {
             free(out_left_2);
             free(out_right_2);

@@ -17,7 +17,7 @@ HARNESS_SOURCE = r'''
 #define MAX_AVG_BLOCK_US 1000.0
 
 int main(void) {
-    static int16_t delay[BUBBLES_BUFFER_SIZE_SAMPLES];
+    static int16_t delay[88200];
     float in[BUBBLES_BLOCK_SIZE];
     float left[BUBBLES_BLOCK_SIZE];
     float right[BUBBLES_BLOCK_SIZE];
@@ -34,7 +34,7 @@ int main(void) {
     for (int b = 0; b < BLOCKS; ++b) {
         for (int i = 0; i < BUBBLES_BLOCK_SIZE; ++i) {
             int n = b * BUBBLES_BLOCK_SIZE + i;
-            in[i] = 0.25f * sinf(2.0f * 3.14159265358979323846f * 440.0f * (float)n / (float)BUBBLES_SAMPLE_RATE);
+            in[i] = 0.25f * sinf(2.0f * 3.14159265358979323846f * 440.0f * (float)n / (float)44100);
             if ((n % 257) == 0) in[i] += 0.7f;
         }
         bubble_engine_process(&engine, in, left, right, BUBBLES_BLOCK_SIZE);

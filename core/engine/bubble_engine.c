@@ -61,9 +61,9 @@ static float Clampf(float value, float lo, float hi) {
 }
 
 
-static float MotionTickLfoLocal(BubbleMotionLfoState_t* lfo, float rate_hz, float rate_scale, BubbleMotionShape_t shape) {
+static float MotionTickLfoLocal(BubbleMotionLfoState_t* lfo, float rate_hz, float rate_scale, BubbleMotionShape_t shape, float sample_rate) {
     if (lfo == NULL) return 0.0f;
-    float inc = rate_hz * rate_scale * ((float)BUBBLES_BLOCK_SIZE / (float)BUBBLES_SAMPLE_RATE);
+    float inc = rate_hz * rate_scale * ((float)BUBBLES_BLOCK_SIZE / sample_rate);
     inc = Clampf(inc, 0.0f, 0.25f);
     float next_phase = lfo->phase + inc;
     bool wrapped = false;
@@ -116,12 +116,12 @@ static void ApplyRuntimeMotionConfig(BubbleEngine_t* engine) {
 
     float rate_hz = 0.015f + 0.285f * Clamp01f(config.motion_rate);
     BubbleMotionShape_t shape = config.motion_shape;
-    float density_lfo = MotionTickLfoLocal(&engine->motion_state.density, rate_hz, 0.73f, shape);
-    float panorama_lfo = MotionTickLfoLocal(&engine->motion_state.panorama, rate_hz, 0.49f, shape);
-    float memory_lfo = MotionTickLfoLocal(&engine->motion_state.memory_pull, rate_hz, 0.37f, shape);
-    float sparkle_lfo = MotionTickLfoLocal(&engine->motion_state.sparkle, rate_hz, 0.61f, shape);
-    float reverse_lfo = MotionTickLfoLocal(&engine->motion_state.reverse_probability, rate_hz, 0.29f, shape);
-    float diffusion_lfo = MotionTickLfoLocal(&engine->motion_state.diffusion_amount, rate_hz, 0.41f, shape);
+    float density_lfo = MotionTickLfoLocal(&engine->motion_state.density, rate_hz, 0.73f, shape, config.sample_rate);
+    float panorama_lfo = MotionTickLfoLocal(&engine->motion_state.panorama, rate_hz, 0.49f, shape, config.sample_rate);
+    float memory_lfo = MotionTickLfoLocal(&engine->motion_state.memory_pull, rate_hz, 0.37f, shape, config.sample_rate);
+    float sparkle_lfo = MotionTickLfoLocal(&engine->motion_state.sparkle, rate_hz, 0.61f, shape, config.sample_rate);
+    float reverse_lfo = MotionTickLfoLocal(&engine->motion_state.reverse_probability, rate_hz, 0.29f, shape, config.sample_rate);
+    float diffusion_lfo = MotionTickLfoLocal(&engine->motion_state.diffusion_amount, rate_hz, 0.41f, shape, config.sample_rate);
 
     float density_scale = 1.0f + density_lfo * (0.35f * depth);
     config.density_burst *= density_scale;
@@ -195,6 +195,7 @@ void bubble_engine_default_config(BubbleEngineConfig_t* config) {
     }
 
     memset(config, 0, sizeof(*config));
+    config->sample_rate = 44100.0f;
     config->noise_floor = 0.001f;
     config->tracking_thresh = 0.01f;
     config->sustain_thresh = 0.05f;

@@ -7,15 +7,19 @@ static BubbleEngine_t engine;
 static int16_t* delay_buffer = NULL;
 
 EMSCRIPTEN_KEEPALIVE
-void wasm_init() {
+void wasm_init(float sample_rate) {
     if (delay_buffer == NULL) {
-        delay_buffer = (int16_t*)calloc(BUBBLES_BUFFER_SIZE_SAMPLES, sizeof(int16_t));
+        int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(sample_rate);
+        delay_buffer = (int16_t*)calloc(buffer_size, sizeof(int16_t));
         if (delay_buffer == NULL) {
             return;
         }
     }
 
-    bubble_engine_init(&engine, delay_buffer, NULL);
+    BubbleEngineConfig_t config;
+bubble_engine_default_config(&config);
+config.sample_rate = sample_rate;
+bubble_engine_init(&engine, delay_buffer, &config);
 }
 
 EMSCRIPTEN_KEEPALIVE

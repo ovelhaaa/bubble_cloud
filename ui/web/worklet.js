@@ -221,7 +221,7 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
     this.port.postMessage({ type: 'loading' });
     try {
       this.wasm = await createBubbleCloudModule();
-      this.wasmInit = this.wasm.cwrap('wasm_init', null, []);
+      this.wasmInit = this.wasm.cwrap('wasm_init', null, ['number']);
       this.wasmReset = this.wasm.cwrap('wasm_reset', null, []);
       this.wasmProcess = this.wasm.cwrap('wasm_process', null, ['number', 'number', 'number', 'number']);
       this.wasmSetParam = this.wasm.cwrap('wasm_set_param', null, ['number', 'number']);
@@ -237,7 +237,7 @@ class SoundBubblesWorklet extends AudioWorkletProcessor {
       this.wasmGetClipCount = this.optionalCwrap('wasm_get_clip_count', 'number', [], () => 0);
       this.wasmGetLimiterGain = this.optionalCwrap('wasm_get_limiter_gain', 'number', [], () => 1);
 
-      this.wasmInit();
+      this.wasmInit(sampleRate);
       this.metrics.voiceLimit = this.wasmGetActiveVoiceLimit();
       this.ensureBuffers(this.defaultBlockSize);
       this.ready = true;
