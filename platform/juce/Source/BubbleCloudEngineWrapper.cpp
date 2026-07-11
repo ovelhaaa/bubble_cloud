@@ -79,7 +79,8 @@ void BubbleCloudEngineWrapper::setParameter(BubbleParameterId paramId, float val
 
 float BubbleCloudEngineWrapper::getParameter(BubbleParameterId paramId) const
 {
-    return macroValues[paramId];
+    auto it = macroValues.find(paramId);
+    return it != macroValues.end() ? it->second : 0.0f;
 }
 
 EngineConfig_t BubbleCloudEngineWrapper::getConfig() const
