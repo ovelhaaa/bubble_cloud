@@ -32,11 +32,11 @@ jobs:
       - name: Upload VST3 Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BubbleCloud-Windows-VST3
-          path: build_juce/BubbleCloud_artefacts/Release/VST3/Bubble Cloud.vst3/
+          name: Bubbles-Windows-VST3
+          path: build_juce/BubbleCloud_artefacts/Release/VST3/Bubbles.vst3/
 
       - name: Upload Standalone Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BubbleCloud-Windows-Standalone
-          path: build_juce/BubbleCloud_artefacts/Release/Standalone/Bubble Cloud.exe
+          name: Bubbles-Windows-Standalone
+          path: build_juce/BubbleCloud_artefacts/Release/Standalone/Bubbles.exe
