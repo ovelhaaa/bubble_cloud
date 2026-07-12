@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "PluginEditor.h"
 extern "C" {
 #include "bubble_preset.h"
 }
@@ -102,12 +103,12 @@ void BubbleCloudAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
 
 bool BubbleCloudAudioProcessor::hasEditor() const
 {
-    return false; // For now, use generic UI
+    return true;
 }
 
 juce::AudioProcessorEditor* BubbleCloudAudioProcessor::createEditor()
 {
-    return new juce::GenericAudioProcessorEditor(*this);
+    return new BubbleCloudAudioProcessorEditor(*this);
 }
 
 void BubbleCloudAudioProcessor::getStateInformation(juce::MemoryBlock& destData)

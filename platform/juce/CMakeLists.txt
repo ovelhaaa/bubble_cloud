@@ -19,11 +19,12 @@ juce_add_plugin(BubbleCloud
     PLUGIN_MANUFACTURER_CODE Jmab
     PLUGIN_CODE Bbcl
     FORMATS VST3 AU Standalone
-    PRODUCT_NAME "Bubble Cloud"
+    PRODUCT_NAME "Bubbles"
 )
 
 target_sources(BubbleCloud PRIVATE
     Source/PluginProcessor.cpp
+    Source/PluginEditor.cpp
     Source/BubbleCloudEngineWrapper.cpp
     
     # Core C sources

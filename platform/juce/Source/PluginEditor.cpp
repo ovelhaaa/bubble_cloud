@@ -1,0 +1,382 @@
+#include "PluginEditor.h"
+
+#include <cmath>
+
+namespace
+{
+    constexpr int editorWidth = 980;
+    constexpr int editorHeight = 580;
+
+    const juce::Colour ink = juce::Colour(0xffeef7ff);
+    const juce::Colour textMuted = juce::Colour(0xff8fa7b7);
+    const juce::Colour panel = juce::Colour(0xff101922);
+    const juce::Colour panelRaised = juce::Colour(0xff14212c);
+    const juce::Colour stroke = juce::Colour(0xff243746);
+    const juce::Colour cyan = juce::Colour(0xff55d7ff);
+    const juce::Colour aqua = juce::Colour(0xff58ffd0);
+    const juce::Colour amber = juce::Colour(0xffffb45e);
+
+    juce::Rectangle<float> asFloat(juce::Rectangle<int> bounds)
+    {
+        return bounds.toFloat();
+    }
+
+    void drawPanel(juce::Graphics& g, juce::Rectangle<int> bounds, const juce::String& title)
+    {
+        auto r = asFloat(bounds);
+        g.setColour(panel);
+        g.fillRoundedRectangle(r, 8.0f);
+
+        g.setColour(stroke.withAlpha(0.85f));
+        g.drawRoundedRectangle(r.reduced(0.5f), 8.0f, 1.0f);
+
+        g.setColour(textMuted);
+        g.setFont(juce::Font(12.0f, juce::Font::bold));
+        g.drawText(title.toUpperCase(), bounds.reduced(18, 12).removeFromTop(18), juce::Justification::centredLeft);
+    }
+}
+
+class BubbleCloudAudioProcessorEditor::BubblesLookAndFeel : public juce::LookAndFeel_V4
+{
+public:
+    BubblesLookAndFeel()
+    {
+        setColour(juce::ComboBox::backgroundColourId, panelRaised);
+        setColour(juce::ComboBox::outlineColourId, stroke);
+        setColour(juce::ComboBox::textColourId, ink);
+        setColour(juce::PopupMenu::backgroundColourId, panelRaised);
+        setColour(juce::PopupMenu::textColourId, ink);
+        setColour(juce::TextButton::buttonColourId, juce::Colour(0xff172631));
+        setColour(juce::TextButton::buttonOnColourId, cyan.withAlpha(0.28f));
+        setColour(juce::TextButton::textColourOffId, ink);
+        setColour(juce::TextButton::textColourOnId, ink);
+    }
+
+    void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
+                          float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
+                          juce::Slider&) override
+    {
+        auto bounds = juce::Rectangle<float>((float)x, (float)y, (float)width, (float)height).reduced(8.0f);
+        auto radius = juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.5f;
+        auto centre = bounds.getCentre();
+        auto lineW = juce::jmax(3.0f, radius * 0.08f);
+        auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
+
+        g.setColour(juce::Colour(0xff0a1016));
+        g.fillEllipse(bounds.reduced(radius * 0.14f));
+
+        g.setColour(juce::Colour(0xff21313d));
+        g.drawEllipse(bounds.reduced(radius * 0.11f), 1.0f);
+
+        juce::Path backgroundArc;
+        backgroundArc.addCentredArc(centre.x, centre.y, radius, radius, 0.0f,
+                                    rotaryStartAngle, rotaryEndAngle, true);
+        g.setColour(juce::Colour(0xff283b48));
+        g.strokePath(backgroundArc, juce::PathStrokeType(lineW, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+        juce::Path valueArc;
+        valueArc.addCentredArc(centre.x, centre.y, radius, radius, 0.0f,
+                               rotaryStartAngle, angle, true);
+        juce::ColourGradient glow(cyan, bounds.getX(), bounds.getY(), aqua, bounds.getRight(), bounds.getBottom(), false);
+        g.setGradientFill(glow);
+        g.strokePath(valueArc, juce::PathStrokeType(lineW + 1.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+        auto pointerLength = radius * 0.58f;
+        auto pointerThickness = juce::jmax(2.0f, radius * 0.035f);
+        juce::Path pointer;
+        pointer.addRoundedRectangle(-pointerThickness * 0.5f, -pointerLength, pointerThickness, pointerLength, pointerThickness);
+        pointer.applyTransform(juce::AffineTransform::rotation(angle).translated(centre.x, centre.y));
+        g.setColour(ink.withAlpha(0.92f));
+        g.fillPath(pointer);
+
+        g.setColour(cyan.withAlpha(0.12f));
+        g.fillEllipse(bounds.reduced(radius * 0.42f));
+    }
+
+    void drawButtonBackground(juce::Graphics& g, juce::Button& button, const juce::Colour&,
+                              bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override
+    {
+        auto bounds = button.getLocalBounds().toFloat().reduced(0.5f);
+        auto active = button.getToggleState() || shouldDrawButtonAsDown;
+        auto fill = active ? cyan.withAlpha(0.22f) : juce::Colour(0xff172631);
+        if (shouldDrawButtonAsHighlighted)
+            fill = fill.brighter(0.12f);
+
+        g.setColour(fill);
+        g.fillRoundedRectangle(bounds, 6.0f);
+        g.setColour(active ? cyan.withAlpha(0.78f) : stroke);
+        g.drawRoundedRectangle(bounds, 6.0f, 1.0f);
+    }
+};
+
+class BubbleCloudAudioProcessorEditor::CloudVisualizer : public juce::Component
+{
+public:
+    explicit CloudVisualizer(BubbleCloudAudioProcessor& owner) : processor(owner) {}
+
+    void paint(juce::Graphics& g) override
+    {
+        auto bounds = getLocalBounds().toFloat();
+        g.setColour(juce::Colour(0xff081018));
+        g.fillRoundedRectangle(bounds, 8.0f);
+
+        auto density = readParam("DENSITY");
+        auto motion = readParam("ATTACK_RATE");
+        auto space = readParam("PANORAMA");
+        auto freeze = readParam("FREEZE");
+        auto energy = juce::jlimit(0.12f, 1.0f, density * 0.72f + freeze * 0.28f);
+        auto now = (float)juce::Time::getMillisecondCounterHiRes() * 0.001f;
+        auto centre = bounds.getCentre();
+        auto count = 38 + (int)std::round(density * 42.0f);
+
+        juce::ColourGradient wash(cyan.withAlpha(0.05f), bounds.getX(), bounds.getY(),
+                                  aqua.withAlpha(0.16f + freeze * 0.12f), bounds.getRight(), bounds.getBottom(), false);
+        g.setGradientFill(wash);
+        g.fillRoundedRectangle(bounds.reduced(1.0f), 8.0f);
+
+        for (int i = 0; i < count; ++i)
+        {
+            auto phase = (float)i * 0.618f;
+            auto orbit = 0.18f + 0.78f * std::fmod((float)i * 0.173f, 1.0f);
+            auto drift = now * (0.12f + motion * 0.58f) + phase;
+            auto x = centre.x + std::sin(drift * 1.7f + phase) * bounds.getWidth() * (0.12f + space * 0.32f) * orbit;
+            auto y = centre.y + std::cos(drift * 1.13f + phase * 0.7f) * bounds.getHeight() * (0.10f + density * 0.28f) * orbit;
+            auto size = 1.8f + 5.2f * std::fmod((float)i * 0.391f + energy, 1.0f);
+            auto alpha = 0.20f + 0.55f * std::fmod((float)i * 0.277f + energy, 1.0f);
+
+            g.setColour((i % 5 == 0 ? amber : cyan).withAlpha(alpha));
+            g.fillEllipse(x - size * 0.5f, y - size * 0.5f, size, size);
+        }
+
+        auto meterBounds = getLocalBounds().reduced(18).removeFromBottom(50);
+        drawMeter(g, meterBounds.removeFromTop(16), "CLOUD", energy, cyan);
+        meterBounds.removeFromTop(8);
+        drawMeter(g, meterBounds.removeFromTop(16), "WIDTH", space, aqua);
+
+        g.setColour(textMuted);
+        g.setFont(juce::Font(12.0f, juce::Font::bold));
+        g.drawText(freeze > 0.5f ? "FROZEN CLOUD" : "LIVE CLOUD", getLocalBounds().reduced(18).removeFromTop(26),
+                   juce::Justification::centredLeft);
+    }
+
+private:
+    float readParam(const char* parameterId) const
+    {
+        if (auto* value = processor.treeState.getRawParameterValue(parameterId))
+            return juce::jlimit(0.0f, 1.0f, value->load());
+        return 0.0f;
+    }
+
+    void drawMeter(juce::Graphics& g, juce::Rectangle<int> bounds, const juce::String& label,
+                   float value, juce::Colour colour)
+    {
+        auto labelArea = bounds.removeFromLeft(52);
+        g.setColour(textMuted);
+        g.setFont(10.5f);
+        g.drawText(label, labelArea, juce::Justification::centredLeft);
+
+        auto track = bounds.toFloat().reduced(0.0f, 4.0f);
+        g.setColour(juce::Colour(0xff1a2833));
+        g.fillRoundedRectangle(track, 4.0f);
+        g.setColour(colour.withAlpha(0.86f));
+        g.fillRoundedRectangle(track.withWidth(track.getWidth() * juce::jlimit(0.0f, 1.0f, value)), 4.0f);
+    }
+
+    BubbleCloudAudioProcessor& processor;
+};
+
+BubbleCloudAudioProcessorEditor::BubbleCloudAudioProcessorEditor(BubbleCloudAudioProcessor& p)
+    : AudioProcessorEditor(&p), audioProcessor(p)
+{
+    bubblesLookAndFeel = std::make_unique<BubblesLookAndFeel>();
+    setLookAndFeel(bubblesLookAndFeel.get());
+
+    setSize(editorWidth, editorHeight);
+    setResizable(false, false);
+
+    presetBox.addItem("Neutral", 1);
+    presetBox.addItem("Ambient Bloom", 2);
+    presetBox.addItem("Glass Rain", 3);
+    presetBox.addItem("Frozen Cathedral", 4);
+    presetBox.setSelectedId(1, juce::dontSendNotification);
+    addAndMakeVisible(presetBox);
+
+    for (auto* button : { &compareAButton, &compareBButton, &undoButton, &redoButton, &advancedButton })
+    {
+        button->setClickingTogglesState(button == &compareAButton || button == &compareBButton);
+        button->setColour(juce::TextButton::textColourOffId, ink);
+        addAndMakeVisible(*button);
+    }
+    compareAButton.setToggleState(true, juce::dontSendNotification);
+
+    addControl(macroControls, "DENSITY", "Density", "emission");
+    addControl(macroControls, "DIFFUSION", "Bloom", "body");
+    addControl(macroControls, "SPARKLE", "Texture", "grain");
+    addControl(macroControls, "ATTACK_RATE", "Motion", "drift");
+    addControl(macroControls, "PANORAMA", "Space", "stereo");
+    addControl(macroControls, "WET_PRESENCE", "Mix", "wet");
+
+    addControl(secondaryControls, "FREEZE", "Freeze", "hold");
+    addControl(secondaryControls, "MEMORY_PULL", "Memory", "past");
+    addControl(secondaryControls, "DECAY", "Tail", "release");
+    addControl(secondaryControls, "DUCKING", "Ducking", "attack");
+    addControl(secondaryControls, "REVERSE", "Reverse", "flow");
+    addControl(secondaryControls, "PITCH_MODE", "Pitch", "color");
+
+    cloudVisualizer = std::make_unique<CloudVisualizer>(audioProcessor);
+    addAndMakeVisible(*cloudVisualizer);
+
+    startTimerHz(30);
+}
+
+BubbleCloudAudioProcessorEditor::~BubbleCloudAudioProcessorEditor()
+{
+    setLookAndFeel(nullptr);
+}
+
+BubbleCloudAudioProcessorEditor::ControlBinding& BubbleCloudAudioProcessorEditor::addControl(
+    std::vector<std::unique_ptr<ControlBinding>>& target,
+    const juce::String& parameterId,
+    const juce::String& title,
+    const juce::String& role)
+{
+    auto control = std::make_unique<ControlBinding>();
+    control->parameterId = parameterId;
+    control->title = title;
+    control->role = role;
+
+    control->slider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    control->slider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    control->slider.setRotaryParameters(juce::MathConstants<float>::pi * 1.18f,
+                                        juce::MathConstants<float>::pi * 2.82f,
+                                        true);
+    control->slider.setColour(juce::Slider::rotarySliderFillColourId, cyan);
+    control->slider.setColour(juce::Slider::rotarySliderOutlineColourId, stroke);
+
+    control->titleLabel.setText(title, juce::dontSendNotification);
+    control->titleLabel.setJustificationType(juce::Justification::centred);
+    control->titleLabel.setColour(juce::Label::textColourId, ink);
+    control->titleLabel.setFont(juce::Font(15.0f, juce::Font::bold));
+
+    control->roleLabel.setText(role.toUpperCase(), juce::dontSendNotification);
+    control->roleLabel.setJustificationType(juce::Justification::centred);
+    control->roleLabel.setColour(juce::Label::textColourId, textMuted);
+    control->roleLabel.setFont(juce::Font(10.5f, juce::Font::bold));
+
+    control->valueLabel.setJustificationType(juce::Justification::centred);
+    control->valueLabel.setColour(juce::Label::textColourId, cyan);
+    control->valueLabel.setFont(juce::Font(13.0f, juce::Font::bold));
+
+    addAndMakeVisible(control->slider);
+    addAndMakeVisible(control->titleLabel);
+    addAndMakeVisible(control->roleLabel);
+    addAndMakeVisible(control->valueLabel);
+
+    auto* result = control.get();
+    result->slider.onValueChange = [this, result] { updateControlValue(*result); };
+    sliderAttachments.push_back(std::make_unique<SliderAttachment>(audioProcessor.treeState, parameterId, result->slider));
+    updateControlValue(*result);
+
+    target.push_back(std::move(control));
+    return *result;
+}
+
+void BubbleCloudAudioProcessorEditor::paint(juce::Graphics& g)
+{
+    juce::ColourGradient background(juce::Colour(0xff05090d), 0.0f, 0.0f,
+                                    juce::Colour(0xff0d1a23), (float)getWidth(), (float)getHeight(), false);
+    g.setGradientFill(background);
+    g.fillAll();
+
+    auto bounds = getLocalBounds().reduced(22);
+    auto header = bounds.removeFromTop(56);
+    g.setColour(ink);
+    g.setFont(juce::Font(30.0f, juce::Font::bold));
+    g.drawText("Bubbles", header.removeFromLeft(180), juce::Justification::centredLeft);
+
+    g.setColour(textMuted);
+    g.setFont(12.0f);
+    g.drawText("Granular performance instrument", 36, 54, 230, 20, juce::Justification::centredLeft);
+
+    auto status = getLocalBounds().reduced(22).removeFromTop(56).removeFromRight(170);
+    g.setColour(aqua.withAlpha(0.14f));
+    g.fillRoundedRectangle(status.toFloat().reduced(0, 10), 6.0f);
+    g.setColour(aqua);
+    g.setFont(juce::Font(11.0f, juce::Font::bold));
+    g.drawText("ENGINE READY", status.reduced(12, 0), juce::Justification::centred);
+
+    auto content = getLocalBounds().reduced(22);
+    content.removeFromTop(72);
+    auto right = content.removeFromRight(250);
+    content.removeFromRight(16);
+    auto secondary = content.removeFromBottom(126);
+    content.removeFromBottom(16);
+
+    drawPanel(g, content, "Performance Macros");
+    drawPanel(g, secondary, "Color / Motion");
+    drawPanel(g, right, "Cloud State");
+}
+
+void BubbleCloudAudioProcessorEditor::resized()
+{
+    auto bounds = getLocalBounds().reduced(22);
+    auto header = bounds.removeFromTop(56);
+
+    header.removeFromLeft(300);
+    presetBox.setBounds(header.removeFromLeft(220).reduced(0, 10));
+    header.removeFromLeft(10);
+    compareAButton.setBounds(header.removeFromLeft(38).reduced(0, 10));
+    compareBButton.setBounds(header.removeFromLeft(38).reduced(0, 10));
+    header.removeFromLeft(10);
+    undoButton.setBounds(header.removeFromLeft(62).reduced(0, 10));
+    redoButton.setBounds(header.removeFromLeft(62).reduced(0, 10));
+    header.removeFromLeft(10);
+    advancedButton.setBounds(header.removeFromLeft(98).reduced(0, 10));
+
+    bounds.removeFromTop(16);
+    auto right = bounds.removeFromRight(250);
+    bounds.removeFromRight(16);
+    auto secondary = bounds.removeFromBottom(126);
+    bounds.removeFromBottom(16);
+
+    cloudVisualizer->setBounds(right.reduced(18, 44).withTrimmedTop(4).withTrimmedBottom(14));
+    layoutControls(macroControls, bounds.reduced(18, 44).withTrimmedTop(4), 3);
+    layoutControls(secondaryControls, secondary.reduced(18, 34), 6);
+}
+
+void BubbleCloudAudioProcessorEditor::layoutControls(std::vector<std::unique_ptr<ControlBinding>>& controls,
+                                                     juce::Rectangle<int> bounds,
+                                                     int columns)
+{
+    if (controls.empty())
+        return;
+
+    auto rows = (int)std::ceil((double)controls.size() / (double)columns);
+    auto cellW = bounds.getWidth() / columns;
+    auto cellH = bounds.getHeight() / rows;
+
+    for (size_t i = 0; i < controls.size(); ++i)
+    {
+        auto col = (int)i % columns;
+        auto row = (int)i / columns;
+        auto cell = juce::Rectangle<int>(bounds.getX() + col * cellW, bounds.getY() + row * cellH, cellW, cellH).reduced(8);
+        auto& control = *controls[i];
+
+        control.titleLabel.setBounds(cell.removeFromTop(22));
+        control.roleLabel.setBounds(cell.removeFromBottom(16));
+        control.valueLabel.setBounds(cell.removeFromBottom(22));
+        control.slider.setBounds(cell.reduced(2));
+    }
+}
+
+void BubbleCloudAudioProcessorEditor::updateControlValue(ControlBinding& control)
+{
+    auto percent = juce::roundToInt((float)control.slider.getValue() * 100.0f);
+    control.valueLabel.setText(juce::String(percent) + "%", juce::dontSendNotification);
+}
+
+void BubbleCloudAudioProcessorEditor::timerCallback()
+{
+    if (cloudVisualizer)
+        cloudVisualizer->repaint();
+}
