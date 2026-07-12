@@ -1,7 +1,41 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+
+#include <memory>
+#include <vector>
+
 extern "C" {
 #include "bubble_preset.h"
+}
+
+namespace
+{
+    constexpr const char* productParameterIds[] = {
+        "DENSITY",
+        "BLOOM",
+        "MOTION",
+        "TEXTURE",
+        "SPACE",
+        "GRAVITY",
+        "MEMORY",
+        "CLARITY",
+        "FREEZE",
+        "SPARKLE",
+        "WARMTH",
+        "MIX",
+        "QUALITY_PROFILE",
+    };
+
+    std::unique_ptr<juce::AudioParameterFloat> makeMacroParameter(const char* id,
+                                                                  const char* name,
+                                                                  float defaultValue)
+    {
+        return std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID { id, 1 },
+            name,
+            juce::NormalisableRange<float> { 0.0f, 1.0f, 0.001f },
+            defaultValue);
+    }
 }
 
 BubbleCloudAudioProcessor::BubbleCloudAudioProcessor()
@@ -11,14 +45,7 @@ BubbleCloudAudioProcessor::BubbleCloudAudioProcessor()
                        ),
        treeState(*this, nullptr, "PARAMETERS", createParameterLayout())
 {
-    // Register parameter listeners
-    auto paramNames = {
-        "DENSITY", "PANORAMA", "MEMORY_PULL", "SPARKLE", "REVERSE", "DIFFUSION",
-        "WET_PRESENCE", "DUCKING", "DECAY", "ATTACK_RATE", "PITCH_MODE",
-        "QUALITY_PROFILE", "FREEZE"
-    };
-
-    for (const auto& name : paramNames) {
+    for (const auto* name : productParameterIds) {
         treeState.addParameterListener(name, this);
     }
 }
@@ -31,19 +58,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout BubbleCloudAudioProcessor::c
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"DENSITY", 1}, "Density", 0.0f, 1.0f, 0.5f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"PANORAMA", 1}, "Panorama", 0.0f, 1.0f, 0.5f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"MEMORY_PULL", 1}, "Memory Pull", 0.0f, 1.0f, 0.0f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"SPARKLE", 1}, "Sparkle", 0.0f, 1.0f, 0.0f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"REVERSE", 1}, "Reverse", 0.0f, 1.0f, 0.0f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"DIFFUSION", 1}, "Diffusion", 0.0f, 1.0f, 0.0f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"WET_PRESENCE", 1}, "Wet Presence", 0.0f, 1.0f, 0.5f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"DUCKING", 1}, "Ducking", 0.0f, 1.0f, 0.0f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"DECAY", 1}, "Decay", 0.0f, 1.0f, 0.5f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"ATTACK_RATE", 1}, "Attack Rate", 0.0f, 1.0f, 0.5f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"PITCH_MODE", 1}, "Pitch Mode", 0.0f, 1.0f, 0.0f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"QUALITY_PROFILE", 1}, "Quality Profile", 0.0f, 1.0f, 0.0f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"FREEZE", 1}, "Freeze", 0.0f, 1.0f, 0.0f));
+    params.push_back(makeMacroParameter("DENSITY", "Density", 0.5f));
+    params.push_back(makeMacroParameter("BLOOM", "Bloom", 0.5f));
+    params.push_back(makeMacroParameter("MOTION", "Motion", 0.5f));
+    params.push_back(makeMacroParameter("TEXTURE", "Texture", 0.5f));
+    params.push_back(makeMacroParameter("SPACE", "Space", 0.5f));
+    params.push_back(makeMacroParameter("GRAVITY", "Gravity", 0.5f));
+    params.push_back(makeMacroParameter("MEMORY", "Memory", 0.5f));
+    params.push_back(makeMacroParameter("CLARITY", "Clarity", 0.5f));
+    params.push_back(makeMacroParameter("FREEZE", "Freeze", 0.0f));
+    params.push_back(makeMacroParameter("SPARKLE", "Sparkle", 0.0f));
+    params.push_back(makeMacroParameter("WARMTH", "Warmth", 0.5f));
+    params.push_back(makeMacroParameter("MIX", "Mix", 0.5f));
+    params.push_back(makeMacroParameter("QUALITY_PROFILE", "Quality Profile", 0.5f));
 
     return { params.begin(), params.end() };
 }
@@ -52,13 +79,7 @@ void BubbleCloudAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
 {
     engineWrapper.prepare(sampleRate, samplesPerBlock);
 
-    // Initial sync
-    auto paramNames = {
-        "DENSITY", "PANORAMA", "MEMORY_PULL", "SPARKLE", "REVERSE", "DIFFUSION",
-        "WET_PRESENCE", "DUCKING", "DECAY", "ATTACK_RATE", "PITCH_MODE",
-        "QUALITY_PROFILE", "FREEZE"
-    };
-    for (const auto& name : paramNames) {
+    for (const auto* name : productParameterIds) {
         if (auto* p = treeState.getParameter(name)) {
             parameterChanged(name, p->getValue());
         }
@@ -132,18 +153,21 @@ void BubbleCloudAudioProcessor::parameterChanged(const juce::String& parameterID
     BubbleParameterId paramId = BUBBLE_PARAM_DENSITY;
     
     if (parameterID == "DENSITY") paramId = BUBBLE_PARAM_DENSITY;
-    else if (parameterID == "PANORAMA") paramId = BUBBLE_ENGINE_PARAM_STEREO_WIDTH;
-    else if (parameterID == "MEMORY_PULL") paramId = BUBBLE_ENGINE_PARAM_MEMORY_PULL;
-    else if (parameterID == "SPARKLE") paramId = BUBBLE_PARAM_SPARKLE;
-    else if (parameterID == "REVERSE") paramId = BUBBLE_ENGINE_PARAM_SMART_START_ENABLE;
-    else if (parameterID == "DIFFUSION") paramId = BUBBLE_ENGINE_PARAM_SUSTAIN_DIFFUSION_AMOUNT;
-    else if (parameterID == "WET_PRESENCE") paramId = BUBBLE_ENGINE_PARAM_MIX_WET_GAIN;
-    else if (parameterID == "DUCKING") paramId = BUBBLE_ENGINE_PARAM_DUCK_BURST_LEVEL;
-    else if (parameterID == "DECAY") paramId = BUBBLE_ENGINE_PARAM_DENSITY_DECAY;
-    else if (parameterID == "ATTACK_RATE") paramId = BUBBLE_ENGINE_PARAM_ATTACK_REGION_MAX_OFFSET_SAMPLES;
-    else if (parameterID == "PITCH_MODE") paramId = BUBBLE_ENGINE_PARAM_TONE_VARIATION;
-    else if (parameterID == "QUALITY_PROFILE") paramId = BUBBLE_ENGINE_PARAM_NOISE_FLOOR;
+    else if (parameterID == "BLOOM") paramId = BUBBLE_PARAM_BLOOM;
+    else if (parameterID == "MOTION") paramId = BUBBLE_PARAM_MOTION;
+    else if (parameterID == "TEXTURE") paramId = BUBBLE_PARAM_TEXTURE;
+    else if (parameterID == "SPACE") paramId = BUBBLE_PARAM_SPACE;
+    else if (parameterID == "GRAVITY") paramId = BUBBLE_PARAM_GRAVITY;
+    else if (parameterID == "MEMORY") paramId = BUBBLE_PARAM_MEMORY;
+    else if (parameterID == "CLARITY") paramId = BUBBLE_PARAM_CLARITY;
     else if (parameterID == "FREEZE") paramId = BUBBLE_PARAM_FREEZE;
+    else if (parameterID == "SPARKLE") paramId = BUBBLE_PARAM_SPARKLE;
+    else if (parameterID == "WARMTH") paramId = BUBBLE_PARAM_WARMTH;
+    else if (parameterID == "MIX") paramId = BUBBLE_PARAM_MIX;
+    else if (parameterID == "QUALITY_PROFILE") {
+        paramId = BUBBLE_ENGINE_PARAM_QUALITY_PROFILE;
+        newValue = (float)juce::roundToInt(juce::jlimit(0.0f, 1.0f, newValue) * 3.0f);
+    }
     else return;
     
     engineWrapper.setParameter(paramId, newValue);

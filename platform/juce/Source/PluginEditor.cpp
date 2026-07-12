@@ -34,6 +34,35 @@ namespace
         g.setFont(juce::Font(12.0f, juce::Font::bold));
         g.drawText(title.toUpperCase(), bounds.reduced(18, 12).removeFromTop(18), juce::Justification::centredLeft);
     }
+
+    void drawBubblesMark(juce::Graphics& g, juce::Rectangle<float> bounds, float intensity)
+    {
+        g.setColour(juce::Colour(0xff020f12));
+        g.fillRoundedRectangle(bounds, 9.0f);
+
+        auto centre = bounds.getCentre();
+        auto scale = juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.42f;
+        const float goldenAngle = 2.39996323f;
+        const int count = 78;
+
+        for (int i = 0; i < count; ++i)
+        {
+            auto t = (float)i / (float)(count - 1);
+            auto radius = scale * std::sqrt(t);
+            auto angle = (float)i * goldenAngle + 0.28f * std::sin(t * 8.0f);
+            auto wobble = 1.0f + 0.08f * std::sin((float)i * 0.73f);
+            auto x = centre.x + std::cos(angle) * radius * wobble;
+            auto y = centre.y + std::sin(angle) * radius * (0.78f + 0.18f * intensity);
+            auto dot = 2.2f + 4.4f * (1.0f - t) + 1.2f * std::sin((float)i * 1.11f);
+            auto alpha = 0.26f + 0.72f * (1.0f - t * 0.58f);
+
+            g.setColour(juce::Colour::fromHSV(0.47f + t * 0.08f, 0.95f, 0.95f, alpha));
+            g.fillEllipse(x - dot * 0.5f, y - dot * 0.5f, dot, dot);
+        }
+
+        g.setColour(cyan.withAlpha(0.16f));
+        g.drawRoundedRectangle(bounds.reduced(0.5f), 9.0f, 1.0f);
+    }
 }
 
 class BubbleCloudAudioProcessorEditor::BubblesLookAndFeel : public juce::LookAndFeel_V4
@@ -121,8 +150,8 @@ public:
         g.fillRoundedRectangle(bounds, 8.0f);
 
         auto density = readParam("DENSITY");
-        auto motion = readParam("ATTACK_RATE");
-        auto space = readParam("PANORAMA");
+        auto motion = readParam("MOTION");
+        auto space = readParam("SPACE");
         auto freeze = readParam("FREEZE");
         auto energy = juce::jlimit(0.12f, 1.0f, density * 0.72f + freeze * 0.28f);
         auto now = (float)juce::Time::getMillisecondCounterHiRes() * 0.001f;
@@ -210,18 +239,18 @@ BubbleCloudAudioProcessorEditor::BubbleCloudAudioProcessorEditor(BubbleCloudAudi
     compareAButton.setToggleState(true, juce::dontSendNotification);
 
     addControl(macroControls, "DENSITY", "Density", "emission");
-    addControl(macroControls, "DIFFUSION", "Bloom", "body");
-    addControl(macroControls, "SPARKLE", "Texture", "grain");
-    addControl(macroControls, "ATTACK_RATE", "Motion", "drift");
-    addControl(macroControls, "PANORAMA", "Space", "stereo");
-    addControl(macroControls, "WET_PRESENCE", "Mix", "wet");
+    addControl(macroControls, "BLOOM", "Bloom", "body");
+    addControl(macroControls, "TEXTURE", "Texture", "grain");
+    addControl(macroControls, "MOTION", "Motion", "drift");
+    addControl(macroControls, "SPACE", "Space", "stereo");
+    addControl(macroControls, "MIX", "Mix", "wet");
 
     addControl(secondaryControls, "FREEZE", "Freeze", "hold");
-    addControl(secondaryControls, "MEMORY_PULL", "Memory", "past");
-    addControl(secondaryControls, "DECAY", "Tail", "release");
-    addControl(secondaryControls, "DUCKING", "Ducking", "attack");
-    addControl(secondaryControls, "REVERSE", "Reverse", "flow");
-    addControl(secondaryControls, "PITCH_MODE", "Pitch", "color");
+    addControl(secondaryControls, "MEMORY", "Memory", "past");
+    addControl(secondaryControls, "GRAVITY", "Gravity", "trigger");
+    addControl(secondaryControls, "CLARITY", "Clarity", "edge");
+    addControl(secondaryControls, "SPARKLE", "Sparkle", "shimmer");
+    addControl(secondaryControls, "WARMTH", "Warmth", "tone");
 
     cloudVisualizer = std::make_unique<CloudVisualizer>(audioProcessor);
     addAndMakeVisible(*cloudVisualizer);
@@ -290,13 +319,15 @@ void BubbleCloudAudioProcessorEditor::paint(juce::Graphics& g)
 
     auto bounds = getLocalBounds().reduced(22);
     auto header = bounds.removeFromTop(56);
+    drawBubblesMark(g, header.removeFromLeft(58).toFloat().reduced(4.0f), 0.82f);
+    header.removeFromLeft(10);
     g.setColour(ink);
     g.setFont(juce::Font(30.0f, juce::Font::bold));
     g.drawText("Bubbles", header.removeFromLeft(180), juce::Justification::centredLeft);
 
     g.setColour(textMuted);
     g.setFont(12.0f);
-    g.drawText("Granular performance instrument", 36, 54, 230, 20, juce::Justification::centredLeft);
+    g.drawText("Granular performance instrument", 94, 54, 230, 20, juce::Justification::centredLeft);
 
     auto status = getLocalBounds().reduced(22).removeFromTop(56).removeFromRight(170);
     g.setColour(aqua.withAlpha(0.14f));
