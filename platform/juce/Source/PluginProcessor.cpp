@@ -61,6 +61,9 @@ BubbleCloudAudioProcessor::BubbleCloudAudioProcessor()
 
 BubbleCloudAudioProcessor::~BubbleCloudAudioProcessor()
 {
+    for (const auto* name : productParameterIds) {
+        treeState.removeParameterListener(name, this);
+    }
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout BubbleCloudAudioProcessor::createParameterLayout()
@@ -117,13 +120,23 @@ void BubbleCloudAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
 
     const int totalNumInputChannels  = getTotalNumInputChannels();
     const int totalNumOutputChannels = getTotalNumOutputChannels();
+    const int bufferChannels = buffer.getNumChannels();
+
+    if (buffer.getNumSamples() <= 0 || bufferChannels <= 0) {
+        return;
+    }
+
+    if (bufferChannels < 2 || totalNumOutputChannels < 2 || totalNumInputChannels <= 0) {
+        buffer.clear();
+        return;
+    }
 
     // Clear output channels that don't contain input data
-    for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
+    for (auto i = totalNumInputChannels; i < juce::jmin(totalNumOutputChannels, bufferChannels); ++i)
         buffer.clear (i, 0, buffer.getNumSamples());
 
     const float* inLeft = buffer.getReadPointer(0);
-    const float* inRight = totalNumInputChannels > 1 ? buffer.getReadPointer(1) : inLeft;
+    const float* inRight = totalNumInputChannels > 1 && bufferChannels > 1 ? buffer.getReadPointer(1) : inLeft;
 
     float* outLeft = buffer.getWritePointer(0);
     float* outRight = buffer.getWritePointer(1);
