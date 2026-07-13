@@ -228,15 +228,19 @@ BubbleCloudAudioProcessorEditor::BubbleCloudAudioProcessorEditor(BubbleCloudAudi
     presetBox.addItem("Glass Rain", 3);
     presetBox.addItem("Frozen Cathedral", 4);
     presetBox.setSelectedId(1, juce::dontSendNotification);
+    presetBox.setEnabled(false);
     addAndMakeVisible(presetBox);
 
-    for (auto* button : { &compareAButton, &compareBButton, &undoButton, &redoButton, &advancedButton })
-    {
-        button->setClickingTogglesState(button == &compareAButton || button == &compareBButton);
-        button->setColour(juce::TextButton::textColourOffId, ink);
-        addAndMakeVisible(*button);
-    }
-    compareAButton.setToggleState(true, juce::dontSendNotification);
+    qualityBox.addItem("MCU Safe", 1);
+    qualityBox.addItem("MCU Plus", 2);
+    qualityBox.addItem("Studio", 3);
+    qualityBox.addItem("Ultra", 4);
+    qualityAttachment = std::make_unique<ComboBoxAttachment>(audioProcessor.treeState, "QUALITY_PROFILE", qualityBox);
+    addAndMakeVisible(qualityBox);
+
+    freezeButton.setClickingTogglesState(true);
+    freezeButton.onClick = [this] { setParameterAsToggle("FREEZE", freezeButton.getToggleState()); };
+    addAndMakeVisible(freezeButton);
 
     addControl(macroControls, "DENSITY", "Density", "emission");
     addControl(macroControls, "BLOOM", "Bloom", "body");
@@ -245,7 +249,6 @@ BubbleCloudAudioProcessorEditor::BubbleCloudAudioProcessorEditor(BubbleCloudAudi
     addControl(macroControls, "SPACE", "Space", "stereo");
     addControl(macroControls, "MIX", "Mix", "wet");
 
-    addControl(secondaryControls, "FREEZE", "Freeze", "hold");
     addControl(secondaryControls, "MEMORY", "Memory", "past");
     addControl(secondaryControls, "GRAVITY", "Gravity", "trigger");
     addControl(secondaryControls, "CLARITY", "Clarity", "edge");
@@ -344,7 +347,7 @@ void BubbleCloudAudioProcessorEditor::paint(juce::Graphics& g)
     content.removeFromBottom(16);
 
     drawPanel(g, content, "Performance Macros");
-    drawPanel(g, secondary, "Color / Motion");
+    drawPanel(g, secondary, "Performance Modes / Color");
     drawPanel(g, right, "Cloud State");
 }
 
@@ -356,13 +359,7 @@ void BubbleCloudAudioProcessorEditor::resized()
     header.removeFromLeft(300);
     presetBox.setBounds(header.removeFromLeft(220).reduced(0, 10));
     header.removeFromLeft(10);
-    compareAButton.setBounds(header.removeFromLeft(38).reduced(0, 10));
-    compareBButton.setBounds(header.removeFromLeft(38).reduced(0, 10));
-    header.removeFromLeft(10);
-    undoButton.setBounds(header.removeFromLeft(62).reduced(0, 10));
-    redoButton.setBounds(header.removeFromLeft(62).reduced(0, 10));
-    header.removeFromLeft(10);
-    advancedButton.setBounds(header.removeFromLeft(98).reduced(0, 10));
+    qualityBox.setBounds(header.removeFromLeft(150).reduced(0, 10));
 
     bounds.removeFromTop(16);
     auto right = bounds.removeFromRight(250);
@@ -372,7 +369,12 @@ void BubbleCloudAudioProcessorEditor::resized()
 
     cloudVisualizer->setBounds(right.reduced(18, 44).withTrimmedTop(4).withTrimmedBottom(14));
     layoutControls(macroControls, bounds.reduced(18, 44).withTrimmedTop(4), 3);
-    layoutControls(secondaryControls, secondary.reduced(18, 34), 6);
+
+    auto secondaryContent = secondary.reduced(18, 34);
+    auto freezeArea = secondaryContent.removeFromLeft(104).reduced(6, 4);
+    freezeButton.setBounds(freezeArea);
+    secondaryContent.removeFromLeft(8);
+    layoutControls(secondaryControls, secondaryContent, 5);
 }
 
 void BubbleCloudAudioProcessorEditor::layoutControls(std::vector<std::unique_ptr<ControlBinding>>& controls,
@@ -406,8 +408,25 @@ void BubbleCloudAudioProcessorEditor::updateControlValue(ControlBinding& control
     control.valueLabel.setText(juce::String(percent) + "%", juce::dontSendNotification);
 }
 
+void BubbleCloudAudioProcessorEditor::setParameterAsToggle(const juce::String& parameterId, bool enabled)
+{
+    if (auto* parameter = audioProcessor.treeState.getParameter(parameterId))
+    {
+        parameter->beginChangeGesture();
+        parameter->setValueNotifyingHost(enabled ? 1.0f : 0.0f);
+        parameter->endChangeGesture();
+    }
+}
+
+void BubbleCloudAudioProcessorEditor::updateToggleControls()
+{
+    if (auto* value = audioProcessor.treeState.getRawParameterValue("FREEZE"))
+        freezeButton.setToggleState(value->load() >= 0.5f, juce::dontSendNotification);
+}
+
 void BubbleCloudAudioProcessorEditor::timerCallback()
 {
+    updateToggleControls();
     if (cloudVisualizer)
         cloudVisualizer->repaint();
 }

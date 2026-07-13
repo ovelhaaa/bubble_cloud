@@ -18,6 +18,7 @@ public:
 
 private:
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
+    using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
 
     struct ControlBinding
     {
@@ -42,7 +43,9 @@ private:
                         juce::Rectangle<int> bounds,
                         int columns);
 
+    void setParameterAsToggle(const juce::String& parameterId, bool enabled);
     void updateControlValue(ControlBinding& control);
+    void updateToggleControls();
     void timerCallback() override;
 
     BubbleCloudAudioProcessor& audioProcessor;
@@ -51,15 +54,13 @@ private:
     std::unique_ptr<CloudVisualizer> cloudVisualizer;
 
     juce::ComboBox presetBox;
-    juce::TextButton compareAButton { "A" };
-    juce::TextButton compareBButton { "B" };
-    juce::TextButton undoButton { "Undo" };
-    juce::TextButton redoButton { "Redo" };
-    juce::TextButton advancedButton { "Advanced" };
+    juce::ComboBox qualityBox;
+    juce::TextButton freezeButton { "Freeze" };
 
     std::vector<std::unique_ptr<ControlBinding>> macroControls;
     std::vector<std::unique_ptr<ControlBinding>> secondaryControls;
     std::vector<std::unique_ptr<SliderAttachment>> sliderAttachments;
+    std::unique_ptr<ComboBoxAttachment> qualityAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BubbleCloudAudioProcessorEditor)
 };

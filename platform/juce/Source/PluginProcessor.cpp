@@ -36,6 +36,15 @@ namespace
             juce::NormalisableRange<float> { 0.0f, 1.0f, 0.001f },
             defaultValue);
     }
+
+    std::unique_ptr<juce::AudioParameterChoice> makeQualityParameter()
+    {
+        return std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID { "QUALITY_PROFILE", 1 },
+            "Quality Profile",
+            juce::StringArray { "MCU Safe", "MCU Plus", "Studio", "Ultra" },
+            2);
+    }
 }
 
 BubbleCloudAudioProcessor::BubbleCloudAudioProcessor()
@@ -70,7 +79,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout BubbleCloudAudioProcessor::c
     params.push_back(makeMacroParameter("SPARKLE", "Sparkle", 0.0f));
     params.push_back(makeMacroParameter("WARMTH", "Warmth", 0.5f));
     params.push_back(makeMacroParameter("MIX", "Mix", 0.5f));
-    params.push_back(makeMacroParameter("QUALITY_PROFILE", "Quality Profile", 0.5f));
+    params.push_back(makeQualityParameter());
 
     return { params.begin(), params.end() };
 }
@@ -81,7 +90,7 @@ void BubbleCloudAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
 
     for (const auto* name : productParameterIds) {
         if (auto* p = treeState.getParameter(name)) {
-            parameterChanged(name, p->getValue());
+            parameterChanged(name, p->convertFrom0to1(p->getValue()));
         }
     }
 }
@@ -166,7 +175,9 @@ void BubbleCloudAudioProcessor::parameterChanged(const juce::String& parameterID
     else if (parameterID == "MIX") paramId = BUBBLE_PARAM_MIX;
     else if (parameterID == "QUALITY_PROFILE") {
         paramId = BUBBLE_ENGINE_PARAM_QUALITY_PROFILE;
-        newValue = (float)juce::roundToInt(juce::jlimit(0.0f, 1.0f, newValue) * 3.0f);
+        newValue = newValue <= 1.0f
+            ? (float)juce::roundToInt(juce::jlimit(0.0f, 1.0f, newValue) * 3.0f)
+            : (float)juce::roundToInt(juce::jlimit(0.0f, 3.0f, newValue));
     }
     else return;
     
