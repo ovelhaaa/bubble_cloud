@@ -110,7 +110,7 @@ namespace
         return bounds.toFloat();
     }
 
-    void drawPanel(juce::Graphics& g, juce::Rectangle<int> bounds, const juce::String& title)
+    void drawPanel(juce::Graphics& g, juce::Rectangle<int> bounds)
     {
         auto r = asFloat(bounds);
         g.setColour(panel);
@@ -118,10 +118,6 @@ namespace
 
         g.setColour(stroke.withAlpha(0.85f));
         g.drawRoundedRectangle(r.reduced(0.5f), 8.0f, 1.0f);
-
-        g.setColour(textMuted);
-        g.setFont(juce::Font(12.0f, juce::Font::bold));
-        g.drawText(title.toUpperCase(), bounds.reduced(18, 12).removeFromTop(18), juce::Justification::centredLeft);
     }
 
     void drawBubblesMark(juce::Graphics& g, juce::Rectangle<float> bounds, float intensity)
@@ -174,7 +170,9 @@ public:
                           float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
                           juce::Slider&) override
     {
-        auto bounds = juce::Rectangle<float>((float)x, (float)y, (float)width, (float)height).reduced(8.0f);
+        auto rawBounds = juce::Rectangle<float>((float)x, (float)y, (float)width, (float)height).reduced(4.0f);
+        auto side = juce::jmin(rawBounds.getWidth(), rawBounds.getHeight());
+        auto bounds = rawBounds.withSizeKeepingCentre(side, side);
         auto radius = juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.5f;
         auto centre = bounds.getCentre();
         auto lineW = juce::jmax(3.0f, radius * 0.08f);
@@ -315,8 +313,8 @@ BubbleCloudAudioProcessorEditor::BubbleCloudAudioProcessorEditor(BubbleCloudAudi
     presetBox.onChange = [this] { applyPreset(presetBox.getSelectedItemIndex()); };
     addAndMakeVisible(presetBox);
 
-    qualityBox.addItem("MCU Safe", 1);
-    qualityBox.addItem("MCU Plus", 2);
+    qualityBox.addItem("Eco", 1);
+    qualityBox.addItem("Balanced", 2);
     qualityBox.addItem("Studio", 3);
     qualityBox.addItem("Ultra", 4);
     qualityAttachment = std::make_unique<ComboBoxAttachment>(audioProcessor.treeState, "QUALITY_PROFILE", qualityBox);
@@ -420,18 +418,19 @@ void BubbleCloudAudioProcessorEditor::paint(juce::Graphics& g)
     g.fillAll();
 
     auto bounds = getLocalBounds().reduced(22);
-    auto header = bounds.removeFromTop(56);
+    auto header = bounds.removeFromTop(64);
     drawBubblesMark(g, header.removeFromLeft(58).toFloat().reduced(4.0f), 0.82f);
     header.removeFromLeft(10);
     g.setColour(ink);
     g.setFont(juce::Font(30.0f, juce::Font::bold));
-    g.drawText("Bubbles", header.removeFromLeft(180), juce::Justification::centredLeft);
+    auto titleBlock = header.removeFromLeft(210);
+    g.drawText("Bubbles", titleBlock.withTrimmedBottom(22), juce::Justification::centredLeft);
 
     g.setColour(textMuted);
     g.setFont(12.0f);
-    g.drawText("Granular performance instrument", 94, 54, 230, 20, juce::Justification::centredLeft);
+    g.drawText("Granular performance instrument", 92, 84, 250, 18, juce::Justification::centredLeft);
 
-    auto status = getLocalBounds().reduced(22).removeFromTop(56).removeFromRight(170);
+    auto status = getLocalBounds().reduced(22).removeFromTop(64).removeFromRight(170);
     g.setColour(aqua.withAlpha(0.14f));
     g.fillRoundedRectangle(status.toFloat().reduced(0, 10), 6.0f);
     g.setColour(aqua);
@@ -439,42 +438,42 @@ void BubbleCloudAudioProcessorEditor::paint(juce::Graphics& g)
     g.drawText("ENGINE READY", status.reduced(12, 0), juce::Justification::centred);
 
     auto content = getLocalBounds().reduced(22);
-    content.removeFromTop(72);
+    content.removeFromTop(82);
     auto right = content.removeFromRight(250);
     content.removeFromRight(16);
-    auto secondary = content.removeFromBottom(126);
+    auto secondary = content.removeFromBottom(142);
     content.removeFromBottom(16);
 
-    drawPanel(g, content, "Performance Macros");
-    drawPanel(g, secondary, "Performance Modes / Color");
-    drawPanel(g, right, "Cloud State");
+    drawPanel(g, content);
+    drawPanel(g, secondary);
+    drawPanel(g, right);
 }
 
 void BubbleCloudAudioProcessorEditor::resized()
 {
     auto bounds = getLocalBounds().reduced(22);
-    auto header = bounds.removeFromTop(56);
+    auto header = bounds.removeFromTop(64);
 
-    header.removeFromLeft(300);
+    header.removeFromLeft(310);
     presetBox.setBounds(header.removeFromLeft(220).reduced(0, 10));
     header.removeFromLeft(10);
     qualityBox.setBounds(header.removeFromLeft(150).reduced(0, 10));
 
-    bounds.removeFromTop(16);
+    bounds.removeFromTop(18);
     auto right = bounds.removeFromRight(250);
     bounds.removeFromRight(16);
-    auto secondary = bounds.removeFromBottom(126);
+    auto secondary = bounds.removeFromBottom(142);
     bounds.removeFromBottom(16);
 
     if (cloudVisualizer)
-        cloudVisualizer->setBounds(right.reduced(18, 44).withTrimmedTop(4).withTrimmedBottom(14));
+        cloudVisualizer->setBounds(right.reduced(18, 18));
 
-    layoutControls(macroControls, bounds.reduced(18, 44).withTrimmedTop(4), 3);
+    layoutControls(macroControls, bounds.reduced(24, 22), 3);
 
-    auto secondaryContent = secondary.reduced(18, 34);
-    auto freezeArea = secondaryContent.removeFromLeft(104).reduced(6, 4);
+    auto secondaryContent = secondary.reduced(20, 20);
+    auto freezeArea = secondaryContent.removeFromLeft(118).reduced(6, 20);
     freezeButton.setBounds(freezeArea);
-    secondaryContent.removeFromLeft(8);
+    secondaryContent.removeFromLeft(14);
     layoutControls(secondaryControls, secondaryContent, 5);
 }
 
@@ -493,13 +492,14 @@ void BubbleCloudAudioProcessorEditor::layoutControls(std::vector<std::unique_ptr
     {
         auto col = (int)i % columns;
         auto row = (int)i / columns;
-        auto cell = juce::Rectangle<int>(bounds.getX() + col * cellW, bounds.getY() + row * cellH, cellW, cellH).reduced(8);
+        auto cell = juce::Rectangle<int>(bounds.getX() + col * cellW, bounds.getY() + row * cellH, cellW, cellH).reduced(6);
         auto& control = *controls[i];
 
         control.titleLabel.setBounds(cell.removeFromTop(22));
         control.roleLabel.setBounds(cell.removeFromBottom(16));
         control.valueLabel.setBounds(cell.removeFromBottom(22));
-        control.slider.setBounds(cell.reduced(2));
+        auto knobSide = juce::jmin(cell.getWidth(), cell.getHeight());
+        control.slider.setBounds(cell.withSizeKeepingCentre(knobSide, knobSide).reduced(1));
     }
 }
 

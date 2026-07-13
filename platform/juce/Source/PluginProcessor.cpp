@@ -42,7 +42,7 @@ namespace
         return std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID { "QUALITY_PROFILE", 1 },
             "Quality Profile",
-            juce::StringArray { "MCU Safe", "MCU Plus", "Studio", "Ultra" },
+            juce::StringArray { "Eco", "Balanced", "Studio", "Ultra" },
             2);
     }
 
