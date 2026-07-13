@@ -45,13 +45,11 @@ namespace
             juce::StringArray { "MCU Safe", "MCU Plus", "Studio", "Ultra" },
             2);
     }
+
 }
 
 BubbleCloudAudioProcessor::BubbleCloudAudioProcessor()
-     : AudioProcessor (BusesProperties()
-                       .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
-                       .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
-                       ),
+     : AudioProcessor (createBusesProperties()),
        treeState(*this, nullptr, "PARAMETERS", createParameterLayout())
 {
     for (const auto* name : productParameterIds) {
@@ -64,6 +62,16 @@ BubbleCloudAudioProcessor::~BubbleCloudAudioProcessor()
     for (const auto* name : productParameterIds) {
         treeState.removeParameterListener(name, this);
     }
+}
+
+juce::AudioProcessor::BusesProperties BubbleCloudAudioProcessor::createBusesProperties()
+{
+    const bool inputActiveByDefault =
+        juce::PluginHostType::getPluginLoadedAs() != juce::AudioProcessor::wrapperType_Standalone;
+
+    return BusesProperties()
+        .withInput  ("Input",  juce::AudioChannelSet::stereo(), inputActiveByDefault)
+        .withOutput ("Output", juce::AudioChannelSet::stereo(), true);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout BubbleCloudAudioProcessor::createParameterLayout()
@@ -107,7 +115,8 @@ bool BubbleCloudAudioProcessor::isBusesLayoutSupported(const BusesLayout& layout
     if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
         return false;
 
-    if (layouts.getMainInputChannelSet() != juce::AudioChannelSet::stereo() &&
+    if (layouts.getMainInputChannelSet() != juce::AudioChannelSet::disabled() &&
+        layouts.getMainInputChannelSet() != juce::AudioChannelSet::stereo() &&
         layouts.getMainInputChannelSet() != juce::AudioChannelSet::mono())
         return false;
 

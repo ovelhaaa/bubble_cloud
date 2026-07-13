@@ -36,6 +36,7 @@ public:
     juce::AudioProcessorValueTreeState treeState;
 
 private:
+    static BusesProperties createBusesProperties();
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     
     BubbleCloudEngineWrapper engineWrapper;
