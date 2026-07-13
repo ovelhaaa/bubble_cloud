@@ -39,10 +39,12 @@ private:
                                const juce::String& title,
                                const juce::String& role);
 
+    void applyPreset(int presetIndex);
     void layoutControls(std::vector<std::unique_ptr<ControlBinding>>& controls,
                         juce::Rectangle<int> bounds,
                         int columns);
 
+    void setParameterValue(const juce::String& parameterId, float value);
     void setParameterAsToggle(const juce::String& parameterId, bool enabled);
     void updateControlValue(ControlBinding& control);
     void updateToggleControls();

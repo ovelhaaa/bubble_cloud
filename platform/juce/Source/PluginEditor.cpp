@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 
+#include <array>
 #include <cmath>
 
 namespace
@@ -15,6 +16,94 @@ namespace
     const juce::Colour cyan = juce::Colour(0xff55d7ff);
     const juce::Colour aqua = juce::Colour(0xff58ffd0);
     const juce::Colour amber = juce::Colour(0xffffb45e);
+
+    struct MacroSetting
+    {
+        const char* parameterId;
+        float value;
+    };
+
+    struct FactoryPreset
+    {
+        const char* name;
+        int qualityProfile;
+        std::array<MacroSetting, 12> macros;
+    };
+
+    const std::array<FactoryPreset, 4> factoryPresets {{
+        {
+            "Neutral",
+            2,
+            {{
+                { "DENSITY", 0.50f },
+                { "BLOOM", 0.50f },
+                { "MOTION", 0.50f },
+                { "TEXTURE", 0.50f },
+                { "SPACE", 0.50f },
+                { "GRAVITY", 0.50f },
+                { "MEMORY", 0.50f },
+                { "CLARITY", 0.50f },
+                { "FREEZE", 0.00f },
+                { "SPARKLE", 0.00f },
+                { "WARMTH", 0.50f },
+                { "MIX", 0.50f },
+            }}
+        },
+        {
+            "Ambient Bloom",
+            1,
+            {{
+                { "DENSITY", 0.44f },
+                { "BLOOM", 0.86f },
+                { "MOTION", 0.34f },
+                { "TEXTURE", 0.48f },
+                { "SPACE", 0.78f },
+                { "GRAVITY", 0.58f },
+                { "MEMORY", 0.70f },
+                { "CLARITY", 0.36f },
+                { "FREEZE", 0.52f },
+                { "SPARKLE", 0.28f },
+                { "WARMTH", 0.74f },
+                { "MIX", 0.58f },
+            }}
+        },
+        {
+            "Glass Rain",
+            1,
+            {{
+                { "DENSITY", 0.62f },
+                { "BLOOM", 0.54f },
+                { "MOTION", 0.68f },
+                { "TEXTURE", 0.72f },
+                { "SPACE", 0.74f },
+                { "GRAVITY", 0.36f },
+                { "MEMORY", 0.42f },
+                { "CLARITY", 0.74f },
+                { "FREEZE", 0.18f },
+                { "SPARKLE", 0.82f },
+                { "WARMTH", 0.28f },
+                { "MIX", 0.60f },
+            }}
+        },
+        {
+            "Frozen Cathedral",
+            2,
+            {{
+                { "DENSITY", 0.50f },
+                { "BLOOM", 0.92f },
+                { "MOTION", 0.22f },
+                { "TEXTURE", 0.42f },
+                { "SPACE", 0.92f },
+                { "GRAVITY", 0.72f },
+                { "MEMORY", 0.86f },
+                { "CLARITY", 0.24f },
+                { "FREEZE", 0.88f },
+                { "SPARKLE", 0.22f },
+                { "WARMTH", 0.62f },
+                { "MIX", 0.64f },
+            }}
+        },
+    }};
 
     juce::Rectangle<float> asFloat(juce::Rectangle<int> bounds)
     {
@@ -223,12 +312,10 @@ BubbleCloudAudioProcessorEditor::BubbleCloudAudioProcessorEditor(BubbleCloudAudi
     setSize(editorWidth, editorHeight);
     setResizable(false, false);
 
-    presetBox.addItem("Neutral", 1);
-    presetBox.addItem("Ambient Bloom", 2);
-    presetBox.addItem("Glass Rain", 3);
-    presetBox.addItem("Frozen Cathedral", 4);
+    for (int i = 0; i < (int)factoryPresets.size(); ++i)
+        presetBox.addItem(factoryPresets[(size_t)i].name, i + 1);
     presetBox.setSelectedId(1, juce::dontSendNotification);
-    presetBox.setEnabled(false);
+    presetBox.onChange = [this] { applyPreset(presetBox.getSelectedItemIndex()); };
     addAndMakeVisible(presetBox);
 
     qualityBox.addItem("MCU Safe", 1);
@@ -311,6 +398,19 @@ BubbleCloudAudioProcessorEditor::ControlBinding& BubbleCloudAudioProcessorEditor
 
     target.push_back(std::move(control));
     return *result;
+}
+
+void BubbleCloudAudioProcessorEditor::applyPreset(int presetIndex)
+{
+    if (presetIndex < 0 || presetIndex >= (int)factoryPresets.size())
+        return;
+
+    const auto& preset = factoryPresets[(size_t)presetIndex];
+    for (const auto& macro : preset.macros)
+        setParameterValue(macro.parameterId, macro.value);
+
+    setParameterValue("QUALITY_PROFILE", (float)preset.qualityProfile);
+    updateToggleControls();
 }
 
 void BubbleCloudAudioProcessorEditor::paint(juce::Graphics& g)
@@ -408,14 +508,19 @@ void BubbleCloudAudioProcessorEditor::updateControlValue(ControlBinding& control
     control.valueLabel.setText(juce::String(percent) + "%", juce::dontSendNotification);
 }
 
-void BubbleCloudAudioProcessorEditor::setParameterAsToggle(const juce::String& parameterId, bool enabled)
+void BubbleCloudAudioProcessorEditor::setParameterValue(const juce::String& parameterId, float value)
 {
     if (auto* parameter = audioProcessor.treeState.getParameter(parameterId))
     {
         parameter->beginChangeGesture();
-        parameter->setValueNotifyingHost(enabled ? 1.0f : 0.0f);
+        parameter->setValueNotifyingHost(parameter->convertTo0to1(value));
         parameter->endChangeGesture();
     }
+}
+
+void BubbleCloudAudioProcessorEditor::setParameterAsToggle(const juce::String& parameterId, bool enabled)
+{
+    setParameterValue(parameterId, enabled ? 1.0f : 0.0f);
 }
 
 void BubbleCloudAudioProcessorEditor::updateToggleControls()
