@@ -115,9 +115,13 @@ bool BubbleCloudAudioProcessor::isBusesLayoutSupported(const BusesLayout& layout
     if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
         return false;
 
-    if (layouts.getMainInputChannelSet() != juce::AudioChannelSet::disabled() &&
-        layouts.getMainInputChannelSet() != juce::AudioChannelSet::stereo() &&
-        layouts.getMainInputChannelSet() != juce::AudioChannelSet::mono())
+    const auto inputLayout = layouts.getMainInputChannelSet();
+
+    if (inputLayout == juce::AudioChannelSet::disabled())
+        return juce::PluginHostType::getPluginLoadedAs() == juce::AudioProcessor::wrapperType_Standalone;
+
+    if (inputLayout != juce::AudioChannelSet::stereo() &&
+        inputLayout != juce::AudioChannelSet::mono())
         return false;
 
     return true;
