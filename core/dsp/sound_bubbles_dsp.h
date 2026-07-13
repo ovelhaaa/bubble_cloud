@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include "../engine/bubble_quality.h"
 
 // --- System & Algorithmic Constants ---
