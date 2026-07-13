@@ -309,9 +309,6 @@ BubbleCloudAudioProcessorEditor::BubbleCloudAudioProcessorEditor(BubbleCloudAudi
     bubblesLookAndFeel = std::make_unique<BubblesLookAndFeel>();
     setLookAndFeel(bubblesLookAndFeel.get());
 
-    setSize(editorWidth, editorHeight);
-    setResizable(false, false);
-
     for (int i = 0; i < (int)factoryPresets.size(); ++i)
         presetBox.addItem(factoryPresets[(size_t)i].name, i + 1);
     presetBox.setSelectedId(1, juce::dontSendNotification);
@@ -345,6 +342,8 @@ BubbleCloudAudioProcessorEditor::BubbleCloudAudioProcessorEditor(BubbleCloudAudi
     cloudVisualizer = std::make_unique<CloudVisualizer>(audioProcessor);
     addAndMakeVisible(*cloudVisualizer);
 
+    setSize(editorWidth, editorHeight);
+    setResizable(false, false);
     startTimerHz(30);
 }
 
@@ -467,7 +466,9 @@ void BubbleCloudAudioProcessorEditor::resized()
     auto secondary = bounds.removeFromBottom(126);
     bounds.removeFromBottom(16);
 
-    cloudVisualizer->setBounds(right.reduced(18, 44).withTrimmedTop(4).withTrimmedBottom(14));
+    if (cloudVisualizer)
+        cloudVisualizer->setBounds(right.reduced(18, 44).withTrimmedTop(4).withTrimmedBottom(14));
+
     layoutControls(macroControls, bounds.reduced(18, 44).withTrimmedTop(4), 3);
 
     auto secondaryContent = secondary.reduced(18, 34);

@@ -209,6 +209,10 @@ for (let offset = 0; offset < mono.length; offset += blockSize) {
   const chunk = Math.min(blockSize, mono.length - offset);
   module.HEAPF32.set(mono.subarray(offset, offset + chunk), inPtr >> 2);
   wasmProcess(inPtr, outLPtr, outRPtr, chunk);
+  if (chunk < blockSize) {
+    continue;
+  }
+
   const left = module.HEAPF32.slice(outLPtr >> 2, (outLPtr >> 2) + chunk);
   const right = module.HEAPF32.slice(outRPtr >> 2, (outRPtr >> 2) + chunk);
   const [outRmsL, outRmsR, outPeakL, outPeakR] = rmsAndPeak(left, right, chunk);
