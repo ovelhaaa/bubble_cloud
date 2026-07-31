@@ -201,9 +201,9 @@ void BubbleCloudAudioProcessor::parameterChanged(const juce::String& parameterID
     else if (parameterID == "MIX") paramId = BUBBLE_PARAM_MIX;
     else if (parameterID == "QUALITY_PROFILE") {
         paramId = BUBBLE_ENGINE_PARAM_QUALITY_PROFILE;
-        newValue = newValue <= 1.0f
-            ? (float)juce::roundToInt(juce::jlimit(0.0f, 1.0f, newValue) * 3.0f)
-            : (float)juce::roundToInt(juce::jlimit(0.0f, 3.0f, newValue));
+        // AudioProcessorValueTreeState listeners receive the denormalised
+        // AudioParameterChoice index, so 0..3 can be forwarded directly.
+        newValue = (float)juce::roundToInt(juce::jlimit(0.0f, 3.0f, newValue));
     }
     else return;
     

@@ -30,7 +30,7 @@ namespace
         std::array<MacroSetting, 12> macros;
     };
 
-    const std::array<FactoryPreset, 4> factoryPresets {{
+    const std::array<FactoryPreset, 12> factoryPresets {{
         {
             "Neutral",
             2,
@@ -101,6 +101,150 @@ namespace
                 { "SPARKLE", 0.22f },
                 { "WARMTH", 0.62f },
                 { "MIX", 0.64f },
+            }}
+        },
+        {
+            "Pick Halo",
+            1,
+            {{
+                { "DENSITY", 0.26f },
+                { "BLOOM", 0.22f },
+                { "MOTION", 0.18f },
+                { "TEXTURE", 0.28f },
+                { "SPACE", 0.58f },
+                { "GRAVITY", 0.82f },
+                { "MEMORY", 0.16f },
+                { "CLARITY", 0.90f },
+                { "FREEZE", 0.00f },
+                { "SPARKLE", 0.08f },
+                { "WARMTH", 0.34f },
+                { "MIX", 0.24f },
+            }}
+        },
+        {
+            "Bass Shadow",
+            0,
+            {{
+                { "DENSITY", 0.32f },
+                { "BLOOM", 0.36f },
+                { "MOTION", 0.20f },
+                { "TEXTURE", 0.24f },
+                { "SPACE", 0.32f },
+                { "GRAVITY", 0.78f },
+                { "MEMORY", 0.30f },
+                { "CLARITY", 0.58f },
+                { "FREEZE", 0.00f },
+                { "SPARKLE", 0.00f },
+                { "WARMTH", 0.88f },
+                { "MIX", 0.28f },
+            }}
+        },
+        {
+            "Vocal Veil",
+            1,
+            {{
+                { "DENSITY", 0.34f },
+                { "BLOOM", 0.52f },
+                { "MOTION", 0.26f },
+                { "TEXTURE", 0.34f },
+                { "SPACE", 0.78f },
+                { "GRAVITY", 0.64f },
+                { "MEMORY", 0.42f },
+                { "CLARITY", 0.70f },
+                { "FREEZE", 0.00f },
+                { "SPARKLE", 0.12f },
+                { "WARMTH", 0.48f },
+                { "MIX", 0.34f },
+            }}
+        },
+        {
+            "Small Cloud",
+            0,
+            {{
+                { "DENSITY", 0.42f },
+                { "BLOOM", 0.30f },
+                { "MOTION", 0.24f },
+                { "TEXTURE", 0.30f },
+                { "SPACE", 0.08f },
+                { "GRAVITY", 0.68f },
+                { "MEMORY", 0.20f },
+                { "CLARITY", 0.72f },
+                { "FREEZE", 0.00f },
+                { "SPARKLE", 0.00f },
+                { "WARMTH", 0.58f },
+                { "MIX", 0.30f },
+            }}
+        },
+        {
+            "Firefly Arp",
+            1,
+            {{
+                { "DENSITY", 0.48f },
+                { "BLOOM", 0.38f },
+                { "MOTION", 0.54f },
+                { "TEXTURE", 0.82f },
+                { "SPACE", 0.86f },
+                { "GRAVITY", 0.46f },
+                { "MEMORY", 0.22f },
+                { "CLARITY", 0.84f },
+                { "FREEZE", 0.00f },
+                { "SPARKLE", 0.36f },
+                { "WARMTH", 0.24f },
+                { "MIX", 0.46f },
+            }}
+        },
+        {
+            "Reverse Undercurrent",
+            2,
+            {{
+                { "DENSITY", 0.44f },
+                { "BLOOM", 0.56f },
+                { "MOTION", 0.86f },
+                { "TEXTURE", 0.58f },
+                { "SPACE", 0.82f },
+                { "GRAVITY", 0.44f },
+                { "MEMORY", 0.58f },
+                { "CLARITY", 0.48f },
+                { "FREEZE", 0.00f },
+                { "SPARKLE", 0.10f },
+                { "WARMTH", 0.52f },
+                { "MIX", 0.56f },
+            }}
+        },
+        {
+            "Wide Clean Doubler",
+            1,
+            {{
+                { "DENSITY", 0.38f },
+                { "BLOOM", 0.18f },
+                { "MOTION", 0.34f },
+                { "TEXTURE", 0.22f },
+                { "SPACE", 1.00f },
+                { "GRAVITY", 0.72f },
+                { "MEMORY", 0.12f },
+                { "CLARITY", 0.78f },
+                { "FREEZE", 0.00f },
+                { "SPARKLE", 0.00f },
+                { "WARMTH", 0.42f },
+                { "MIX", 0.30f },
+            }}
+        },
+        {
+            "Capture Ready",
+            2,
+            {{
+                { "DENSITY", 0.46f },
+                { "BLOOM", 0.86f },
+                { "MOTION", 0.20f },
+                { "TEXTURE", 0.36f },
+                { "SPACE", 0.90f },
+                { "GRAVITY", 0.70f },
+                { "MEMORY", 0.88f },
+                { "CLARITY", 0.32f },
+                { "FREEZE", 0.00f },
+                { "SPARKLE", 0.14f },
+                { "WARMTH", 0.72f },
+                { "MIX", 0.62f },
             }}
         },
     }};
