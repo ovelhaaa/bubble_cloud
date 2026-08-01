@@ -17,6 +17,23 @@ EXPECTED_NEW_PRESETS = [
     "Reverse Undercurrent",
     "Wide Clean Doubler",
     "Capture Ready",
+    "Quarter Strum",
+    "Tresillo Spray",
+    "Last-16th Swarm",
+    "Reverse Pulse",
+    "Fifth Choir",
+    "Undertow Octave",
+    "Morse Dust",
+    "Broken Constellation",
+]
+
+EXPECTED_ADVANCED_PARAMETER_IDS = [
+    "TEMPO_SYNC",
+    "RHYTHM_DIVISION",
+    "BURST_MODE",
+    "RHYTHM_PATTERN",
+    "PITCH_MODE_OVERRIDE",
+    "MOTION_SHAPE",
 ]
 
 EXPECTED_MACRO_IDS = [
@@ -38,7 +55,8 @@ EXPECTED_MACRO_IDS = [
 def _parse_factory_presets() -> list[tuple[str, int, list[tuple[str, float]]]]:
     source = PLUGIN_EDITOR.read_text(encoding="utf-8")
     preset_pattern = re.compile(
-        r'\{\s*"(?P<name>[^"]+)",\s*(?P<quality>[0-3]),\s*\{\{(?P<macros>.*?)\}\}\s*\}',
+        r'\{\s*"(?P<name>[^"]+)",\s*(?P<quality>[0-3]),\s*\{\{(?P<macros>.*?)\}\}'
+        r'(?:\s*,\s*\{[^}]*\})?\s*\}',
         re.DOTALL,
     )
     macro_pattern = re.compile(r'\{\s*"([A-Z_]+)",\s*([0-9]+(?:\.[0-9]+)?)f\s*\}')
@@ -56,7 +74,7 @@ def test_vst_factory_catalog_contains_new_macro_presets() -> None:
 
     declared_count_match = re.search(r"std::array<FactoryPreset,\s*(\d+)>", source)
     assert declared_count_match is not None
-    assert int(declared_count_match.group(1)) == len(presets) == 12
+    assert int(declared_count_match.group(1)) == len(presets) == 20
 
     names = [name for name, _, _ in presets]
     for expected_name in EXPECTED_NEW_PRESETS:
@@ -81,3 +99,19 @@ def test_quality_choice_is_forwarded_as_denormalised_index() -> None:
 
     assert "jlimit(0.0f, 3.0f, newValue)" in quality_block
     assert "* 3.0f" not in quality_block
+
+
+def test_advanced_parameters_are_persistent_and_host_tempo_is_forwarded() -> None:
+    processor = PLUGIN_PROCESSOR.read_text(encoding="utf-8")
+    editor = PLUGIN_EDITOR.read_text(encoding="utf-8")
+
+    for parameter_id in EXPECTED_ADVANCED_PARAMETER_IDS:
+        assert f'"{parameter_id}"' in processor
+        assert f'setParameterValue("{parameter_id}"' in editor
+
+    assert "getPlayHead()" in processor
+    assert "getPosition()" in processor
+    assert "getBpm()" in processor
+    assert "getPpqPosition()" in processor
+    assert "engineWrapper.setHostTempo" in processor
+    assert "engineWrapper.syncRhythmPhase" in processor

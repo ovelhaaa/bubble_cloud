@@ -1,6 +1,7 @@
 #include "BubbleCloudEngineWrapper.h"
 
 #include <algorithm>
+#include <cmath>
 
 BubbleCloudEngineWrapper::BubbleCloudEngineWrapper()
 {
@@ -42,6 +43,9 @@ void BubbleCloudEngineWrapper::prepare(double sampleRate, int samplesPerBlock)
     // Initialize engines
     bubble_engine_init(&engineL, delayBufferL.data(), &configL);
     bubble_engine_init(&engineR, delayBufferR.data(), &configR);
+    bubble_engine_set_parameter(&engineL, BUBBLE_PARAM_DEVELOPER_MODE, 1.0f);
+    bubble_engine_set_parameter(&engineR, BUBBLE_PARAM_DEVELOPER_MODE, 1.0f);
+    lastHostTempo = -1.0f;
     prepared = true;
     
     // Decorrelate the right channel's RNG seed so it doesn't sound completely mono
@@ -114,6 +118,28 @@ float BubbleCloudEngineWrapper::getParameter(BubbleParameterId paramId) const
 {
     auto it = macroValues.find(paramId);
     return it != macroValues.end() ? it->second : 0.0f;
+}
+
+void BubbleCloudEngineWrapper::setHostTempo(float bpm)
+{
+    const float safeBpm = std::clamp(bpm, 20.0f, 300.0f);
+    if (!prepared || std::fabs(safeBpm - lastHostTempo) < 0.001f) {
+        return;
+    }
+
+    bubble_engine_set_parameter(&engineL, BUBBLE_ENGINE_PARAM_TEMPO_BPM, safeBpm);
+    bubble_engine_set_parameter(&engineR, BUBBLE_ENGINE_PARAM_TEMPO_BPM, safeBpm);
+    lastHostTempo = safeBpm;
+}
+
+void BubbleCloudEngineWrapper::syncRhythmPhase(double ppqPosition)
+{
+    if (!prepared) {
+        return;
+    }
+
+    bubble_engine_sync_rhythm_phase(&engineL, ppqPosition);
+    bubble_engine_sync_rhythm_phase(&engineR, ppqPosition);
 }
 
 EngineConfig_t BubbleCloudEngineWrapper::getConfig() const

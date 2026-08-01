@@ -194,6 +194,46 @@ static int test_tempo_patterns_burst_modes_motion_and_metrics(void) {
     return 0;
 }
 
+static int test_host_rhythm_phase_sync_and_fixed_pitch_override(void) {
+    static int16_t delay[88200];
+    BubbleEngineConfig_t config;
+    BubbleEngine_t engine;
+    init_engine(&engine, delay, &config);
+    CHECK(bubble_engine_set_parameter(&engine, BUBBLE_PARAM_DEVELOPER_MODE, 1.0f), "enable developer mode for host sync");
+    CHECK(bubble_engine_set_parameter(&engine, BUBBLE_ENGINE_PARAM_RHYTHM_DIVISION,
+                                      (float)BUBBLE_RHYTHM_DIVISION_SIXTEENTH),
+          "set sixteenth-note host sync division");
+
+    bubble_engine_sync_rhythm_phase(&engine, 0.0);
+    CHECK(engine.rhythm_step_index == 0, "PPQ zero schedules rhythm step zero");
+    CHECK_CLOSE(engine.rhythm_step_accumulator, 1.0f, 0.0001f, "exact PPQ boundary triggers immediately");
+
+    bubble_engine_sync_rhythm_phase(&engine, 0.625);
+    CHECK(engine.rhythm_step_index == 3, "mid-step PPQ schedules the following sixteenth step");
+    CHECK_CLOSE(engine.rhythm_step_accumulator, 0.5f, 0.0001f, "mid-step PPQ preserves fractional progress");
+
+    bubble_engine_sync_rhythm_phase(&engine, 1.0);
+    CHECK(engine.rhythm_step_index == 4, "quarter-note PPQ boundary maps to sixteenth step four");
+    CHECK_CLOSE(engine.rhythm_step_accumulator, 1.0f, 0.0001f, "quarter boundary triggers immediately");
+
+    CHECK(bubble_engine_set_parameter(&engine, BUBBLE_ENGINE_PARAM_PITCH_MODE,
+                                      (float)BUBBLE_PITCH_MODE_FIFTH),
+          "set fixed fifth pitch mode");
+    CHECK(bubble_engine_set_parameter(&engine, BUBBLE_PARAM_DENSITY, 0.8f), "move an unrelated macro");
+    process_constant(&engine, 0.0f, BUBBLES_BLOCK_SIZE * 8);
+    CHECK(engine.config.pitch_mode == BUBBLE_PITCH_MODE_FIFTH,
+          "fixed fifth survives unrelated macro resolution");
+
+    CHECK(bubble_engine_set_parameter(&engine, BUBBLE_ENGINE_PARAM_PITCH_MODE,
+                                      (float)BUBBLE_PITCH_MODE_UNISON),
+          "return pitch mode to macro control");
+    CHECK(bubble_engine_set_parameter(&engine, BUBBLE_PARAM_SPARKLE, 1.0f), "raise sparkle macro");
+    process_constant(&engine, 0.0f, BUBBLES_BLOCK_SIZE * 8);
+    CHECK(engine.config.pitch_mode == BUBBLE_PITCH_MODE_SHIMMER,
+          "macro-controlled pitch follows sparkle after override is cleared");
+    return 0;
+}
+
 static int test_quality_profile_limits_allocation_and_drain(void) {
     static int16_t delay[88200];
     BubbleEngineConfig_t config;
@@ -225,6 +265,7 @@ int main(void) {
     if (test_freeze_stops_memory_writes_and_macro_reaches_freeze() != 0) return 1;
     if (test_pitch_reverse_and_droplet_spawn_metadata() != 0) return 1;
     if (test_tempo_patterns_burst_modes_motion_and_metrics() != 0) return 1;
+    if (test_host_rhythm_phase_sync_and_fixed_pitch_override() != 0) return 1;
     if (test_quality_profile_limits_allocation_and_drain() != 0) return 1;
     return 0;
 }

@@ -38,8 +38,12 @@ public:
 private:
     static BusesProperties createBusesProperties();
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+    void updateHostTransport(int numSamples);
     
     BubbleCloudEngineWrapper engineWrapper;
+    double expectedNextPpq = 0.0;
+    bool hasExpectedNextPpq = false;
+    bool wasTransportPlaying = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BubbleCloudAudioProcessor)
 };

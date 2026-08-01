@@ -1,6 +1,7 @@
 #define SOUND_BUBBLES_DSP_INTERNAL 1
 #include "bubble_engine.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -133,7 +134,10 @@ static void ApplyRuntimeMotionConfig(BubbleEngine_t* engine) {
     config.sustain_pan_spread = Clamp01f(config.sustain_pan_spread - panorama_lfo * (0.14f * depth));
     config.memory_pull = Clamp01f(config.memory_pull + memory_lfo * (0.24f * depth));
     config.shimmer_amount = Clamp01f(config.shimmer_amount + sparkle_lfo * (0.18f * depth));
-    if (config.shimmer_amount > 0.03f) {
+    if (config.shimmer_amount > 0.03f &&
+        config.pitch_mode != BUBBLE_PITCH_MODE_OCTAVE_UP &&
+        config.pitch_mode != BUBBLE_PITCH_MODE_OCTAVE_DOWN &&
+        config.pitch_mode != BUBBLE_PITCH_MODE_FIFTH) {
         config.pitch_mode = BUBBLE_PITCH_MODE_SHIMMER;
     }
     config.reverse_probability = Clamp01f(config.reverse_probability + reverse_lfo * (0.18f * depth));
@@ -298,6 +302,39 @@ void bubble_engine_init(BubbleEngine_t* engine, int16_t* delay_buffer_memory, co
 void bubble_engine_reset_motion_phase(BubbleEngine_t* engine) {
     if (engine == NULL) return;
     SoundBubbles_ResetMotionPhase(engine);
+}
+
+void bubble_engine_sync_rhythm_phase(BubbleEngine_t* engine, double ppq_position) {
+    if (engine == NULL || !isfinite(ppq_position)) return;
+
+    double steps_per_quarter = 4.0;
+    switch (engine->motion_base_config.rhythm_division) {
+        case BUBBLE_RHYTHM_DIVISION_QUARTER: steps_per_quarter = 1.0; break;
+        case BUBBLE_RHYTHM_DIVISION_EIGHTH: steps_per_quarter = 2.0; break;
+        case BUBBLE_RHYTHM_DIVISION_THIRTY_SECOND: steps_per_quarter = 8.0; break;
+        case BUBBLE_RHYTHM_DIVISION_SIXTEENTH:
+        default: steps_per_quarter = 4.0; break;
+    }
+
+    const double step_position = ppq_position * steps_per_quarter;
+    const double completed_step = floor(step_position);
+    double fractional_step = step_position - completed_step;
+    if (fractional_step < 0.0) fractional_step += 1.0;
+
+    double scheduled_step = completed_step;
+    if (fractional_step <= 1.0e-6 || fractional_step >= (1.0 - 1.0e-6)) {
+        engine->rhythm_step_accumulator = 1.0f;
+    } else {
+        scheduled_step += 1.0;
+        engine->rhythm_step_accumulator = (float)fractional_step;
+    }
+
+    int32_t wrapped_step = (int32_t)fmod(scheduled_step, 16.0);
+    if (wrapped_step < 0) wrapped_step += 16;
+    engine->rhythm_step_index = wrapped_step;
+    engine->strum_pending_count = 0;
+    engine->strum_step_index = 0;
+    engine->force_reverse_spawns = 0;
 }
 
 void bubble_engine_reset(BubbleEngine_t* engine) {

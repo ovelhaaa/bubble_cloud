@@ -23,14 +23,25 @@ namespace
         float value;
     };
 
+    struct AdvancedPresetSettings
+    {
+        int tempoSyncEnabled = 0;
+        int rhythmDivision = 2;
+        int burstMode = 0;
+        int rhythmPattern = 4369;
+        int pitchModeOverride = 0;
+        int motionShape = 0;
+    };
+
     struct FactoryPreset
     {
         const char* name;
         int qualityProfile;
         std::array<MacroSetting, 12> macros;
+        AdvancedPresetSettings advanced;
     };
 
-    const std::array<FactoryPreset, 12> factoryPresets {{
+    const std::array<FactoryPreset, 20> factoryPresets {{
         {
             "Neutral",
             2,
@@ -246,6 +257,158 @@ namespace
                 { "WARMTH", 0.72f },
                 { "MIX", 0.62f },
             }}
+        },
+        {
+            "Quarter Strum",
+            1,
+            {{
+                { "DENSITY", 0.44f },
+                { "BLOOM", 0.36f },
+                { "MOTION", 0.28f },
+                { "TEXTURE", 0.30f },
+                { "SPACE", 0.76f },
+                { "GRAVITY", 0.80f },
+                { "MEMORY", 0.22f },
+                { "CLARITY", 0.74f },
+                { "FREEZE", 0.00f },
+                { "SPARKLE", 0.00f },
+                { "WARMTH", 0.52f },
+                { "MIX", 0.46f },
+            }},
+            { 1, 2, 2, 4369, 0, 0 }
+        },
+        {
+            "Tresillo Spray",
+            1,
+            {{
+                { "DENSITY", 0.52f },
+                { "BLOOM", 0.28f },
+                { "MOTION", 0.36f },
+                { "TEXTURE", 0.62f },
+                { "SPACE", 0.84f },
+                { "GRAVITY", 0.66f },
+                { "MEMORY", 0.24f },
+                { "CLARITY", 0.78f },
+                { "FREEZE", 0.00f },
+                { "SPARKLE", 0.10f },
+                { "WARMTH", 0.30f },
+                { "MIX", 0.48f },
+            }},
+            { 1, 2, 1, 18761, 0, 0 }
+        },
+        {
+            "Last-16th Swarm",
+            2,
+            {{
+                { "DENSITY", 0.34f },
+                { "BLOOM", 0.22f },
+                { "MOTION", 0.58f },
+                { "TEXTURE", 0.78f },
+                { "SPACE", 0.92f },
+                { "GRAVITY", 0.62f },
+                { "MEMORY", 0.16f },
+                { "CLARITY", 0.84f },
+                { "FREEZE", 0.00f },
+                { "SPARKLE", 0.06f },
+                { "WARMTH", 0.24f },
+                { "MIX", 0.42f },
+            }},
+            { 1, 2, 3, 34952, 0, 1 }
+        },
+        {
+            "Reverse Pulse",
+            2,
+            {{
+                { "DENSITY", 0.40f },
+                { "BLOOM", 0.56f },
+                { "MOTION", 0.34f },
+                { "TEXTURE", 0.40f },
+                { "SPACE", 0.88f },
+                { "GRAVITY", 0.68f },
+                { "MEMORY", 0.52f },
+                { "CLARITY", 0.52f },
+                { "FREEZE", 0.00f },
+                { "SPARKLE", 0.00f },
+                { "WARMTH", 0.56f },
+                { "MIX", 0.56f },
+            }},
+            { 1, 1, 4, 21845, 0, 1 }
+        },
+        {
+            "Fifth Choir",
+            2,
+            {{
+                { "DENSITY", 0.46f },
+                { "BLOOM", 0.82f },
+                { "MOTION", 0.20f },
+                { "TEXTURE", 0.30f },
+                { "SPACE", 0.90f },
+                { "GRAVITY", 0.70f },
+                { "MEMORY", 0.76f },
+                { "CLARITY", 0.40f },
+                { "FREEZE", 0.00f },
+                { "SPARKLE", 0.00f },
+                { "WARMTH", 0.62f },
+                { "MIX", 0.60f },
+            }},
+            { 0, 2, 0, 4369, 3, 1 }
+        },
+        {
+            "Undertow Octave",
+            1,
+            {{
+                { "DENSITY", 0.38f },
+                { "BLOOM", 0.58f },
+                { "MOTION", 0.18f },
+                { "TEXTURE", 0.24f },
+                { "SPACE", 0.68f },
+                { "GRAVITY", 0.78f },
+                { "MEMORY", 0.70f },
+                { "CLARITY", 0.28f },
+                { "FREEZE", 0.00f },
+                { "SPARKLE", 0.00f },
+                { "WARMTH", 0.90f },
+                { "MIX", 0.50f },
+            }},
+            { 0, 2, 0, 4369, 2, 1 }
+        },
+        {
+            "Morse Dust",
+            1,
+            {{
+                { "DENSITY", 0.28f },
+                { "BLOOM", 0.12f },
+                { "MOTION", 0.72f },
+                { "TEXTURE", 0.96f },
+                { "SPACE", 0.76f },
+                { "GRAVITY", 0.52f },
+                { "MEMORY", 0.10f },
+                { "CLARITY", 0.92f },
+                { "FREEZE", 0.00f },
+                { "SPARKLE", 0.06f },
+                { "WARMTH", 0.18f },
+                { "MIX", 0.38f },
+            }},
+            { 1, 3, 0, 33825, 0, 2 }
+        },
+        {
+            "Broken Constellation",
+            1,
+            {{
+                { "DENSITY", 0.36f },
+                { "BLOOM", 0.24f },
+                { "MOTION", 0.94f },
+                { "TEXTURE", 0.94f },
+                { "SPACE", 0.72f },
+                { "GRAVITY", 0.34f },
+                { "MEMORY", 0.18f },
+                { "CLARITY", 0.76f },
+                { "FREEZE", 0.00f },
+                { "SPARKLE", 0.08f },
+                { "WARMTH", 0.28f },
+                { "MIX", 0.46f },
+            }},
+            { 0, 2, 0, 4369, 0, 2 }
         },
     }};
 
@@ -547,6 +710,13 @@ void BubbleCloudAudioProcessorEditor::applyPreset(int presetIndex)
         return;
 
     const auto& preset = factoryPresets[(size_t)presetIndex];
+    setParameterValue("TEMPO_SYNC", (float)preset.advanced.tempoSyncEnabled);
+    setParameterValue("RHYTHM_DIVISION", (float)preset.advanced.rhythmDivision);
+    setParameterValue("BURST_MODE", (float)preset.advanced.burstMode);
+    setParameterValue("RHYTHM_PATTERN", (float)preset.advanced.rhythmPattern);
+    setParameterValue("PITCH_MODE_OVERRIDE", (float)preset.advanced.pitchModeOverride);
+    setParameterValue("MOTION_SHAPE", (float)preset.advanced.motionShape);
+
     for (const auto& macro : preset.macros)
         setParameterValue(macro.parameterId, macro.value);
 

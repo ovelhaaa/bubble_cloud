@@ -7,16 +7,30 @@ on:
     paths:
       - 'platform/juce/**'
       - 'core/**'
+      - 'tests/unit/test_juce_plugin_static_guards.py'
       - '.github/workflows/build-vst.yml'
   pull_request:
     branches:
       - main
+    paths:
+      - 'platform/juce/**'
+      - 'core/**'
+      - 'tests/unit/test_juce_plugin_static_guards.py'
+      - '.github/workflows/build-vst.yml'
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-vst-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-windows:
     name: Windows VST3 & Standalone
     runs-on: windows-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code
@@ -24,19 +38,33 @@ jobs:
 
 
       - name: Configure CMake
-        run: cmake -B build_juce -S platform/juce -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build_juce -S platform/juce -DCMAKE_BUILD_TYPE=Release -DBUBBLES_COPY_PLUGIN_AFTER_BUILD=OFF
 
       - name: Build Plugins
         run: cmake --build build_juce --config Release --parallel 4
+
+      - name: Verify build outputs
+        shell: pwsh
+        run: |
+          $vst = 'build_juce/BubbleCloud_artefacts/Release/VST3/Bubbles.vst3'
+          $standalone = 'build_juce/BubbleCloud_artefacts/Release/Standalone/Bubbles.exe'
+          if (-not (Test-Path -LiteralPath $vst -PathType Container)) {
+            throw "Missing VST3 bundle: $vst"
+          }
+          if (-not (Test-Path -LiteralPath $standalone -PathType Leaf)) {
+            throw "Missing standalone executable: $standalone"
+          }
 
       - name: Upload VST3 Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Bubbles-Windows-VST3
           path: build_juce/BubbleCloud_artefacts/Release/VST3/Bubbles.vst3/
+          if-no-files-found: error
 
       - name: Upload Standalone Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Bubbles-Windows-Standalone
           path: build_juce/BubbleCloud_artefacts/Release/Standalone/Bubbles.exe
+          if-no-files-found: error

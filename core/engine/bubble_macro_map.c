@@ -208,7 +208,14 @@ void bubble_macro_map_resolve(const float macro_values[BUBBLES_MACRO_COUNT],
     out_config->attack_rate_jitter = motion > 0.05f ? 1 : 0;
     out_config->droplet_enable = texture > 0.10f ? 1 : 0;
     out_config->freeze_enabled = freeze >= 0.5f ? 1 : 0;
-    out_config->pitch_mode = sparkle > 0.05f ? BUBBLE_PITCH_MODE_SHIMMER : BUBBLE_PITCH_MODE_UNISON;
+    // Fixed harmonic modes are authored overrides. Preserve them while other
+    // macros move; unison remains the macro-controlled mode that can bloom
+    // into probabilistic shimmer through Sparkle.
+    if (out_config->pitch_mode != BUBBLE_PITCH_MODE_OCTAVE_UP &&
+        out_config->pitch_mode != BUBBLE_PITCH_MODE_OCTAVE_DOWN &&
+        out_config->pitch_mode != BUBBLE_PITCH_MODE_FIFTH) {
+        out_config->pitch_mode = sparkle > 0.05f ? BUBBLE_PITCH_MODE_SHIMMER : BUBBLE_PITCH_MODE_UNISON;
+    }
 
     out_config->attack_brightness *= Lerp(1.12f, 0.82f, ApplyCurve(warmth, BUBBLE_PARAMETER_CURVE_LINEAR));
     out_config->sustain_darkness += Lerp(0.0f, 0.18f, ApplyCurve(warmth, BUBBLE_PARAMETER_CURVE_LINEAR));

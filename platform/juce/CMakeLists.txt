@@ -1,11 +1,15 @@
 cmake_minimum_required(VERSION 3.15)
 project(BubbleCloud VERSION 1.0.0)
 
+option(BUBBLES_COPY_PLUGIN_AFTER_BUILD "Copy the built VST3 into the configured plug-in directory" ON)
+set(BUBBLES_VST3_COPY_DIR "C:/VST" CACHE PATH "Destination directory for the compiled VST3 bundle")
+
 # Add JUCE using FetchContent
 include(FetchContent)
 FetchContent_Declare(
     juce
     URL https://github.com/juce-framework/JUCE/archive/refs/tags/7.0.12.zip
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 FetchContent_MakeAvailable(juce)
 
@@ -15,7 +19,8 @@ juce_add_plugin(BubbleCloud
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
-    COPY_PLUGIN_AFTER_BUILD TRUE
+    COPY_PLUGIN_AFTER_BUILD ${BUBBLES_COPY_PLUGIN_AFTER_BUILD}
+    VST3_COPY_DIR "${BUBBLES_VST3_COPY_DIR}"
     PLUGIN_MANUFACTURER_CODE Jmab
     PLUGIN_CODE Bbcl
     FORMATS VST3 AU Standalone
