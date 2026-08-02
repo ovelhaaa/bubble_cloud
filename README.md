@@ -27,9 +27,9 @@ The repository is organized around one audio contract: hosts configure `bubble_e
 
 ## Engine state at a glance
 
-- **Audio model:** mono input, shared 44.1 kHz DSP constants, stereo output, fixed two-second delay buffer, and a bounded 32-voice compiled pool with runtime quality profiles controlling the active voice limit.
+- **Audio model:** mono input in the shared core and true dual-engine stereo in the JUCE host, sample-rate-aware two-second delay buffers, stereo output, and a bounded 32-voice compiled pool with runtime quality profiles controlling the active voice limit.
 - **Public controls:** 12 normalized musical macros (`density`, `bloom`, `motion`, `texture`, `space`, `gravity`, `memory`, `clarity`, `freeze`, `sparkle`, `warmth`, `mix`) plus developer/raw parameters when developer mode is enabled.
-- **JUCE plug-in:** 20 factory presets, persistent advanced rhythm/pitch settings, and DAW tempo/PPQ synchronization for rhythmic presets.
+- **JUCE plug-in:** 20 factory presets, persistent advanced rhythm/pitch settings, DAW tempo/PPQ synchronization, a 16-step rhythm panel, MIDI Freeze/Capture, automatable A/B scene morphing, and a lock-free live grain visualizer.
 - **Musical features:** semantic read regions (`attack_region`, `body_region`, `memory_region`), stereo spread, smart starts, envelope families, droplets, sustain diffusion, tone/memory shaping, freeze, reverse probability, shimmer/pitch modes, tempo/rhythm controls, and final limiter metrics.
 - **Determinism:** `rng_seed`, quality profile, preset values, input audio, and block order are part of the reproducibility contract.
 - **Real-time rules:** no heap allocation, I/O, locks, or UI work in the audio callback path; hosts provide the large delay buffer and apply parameter snapshots between blocks.
@@ -65,7 +65,15 @@ cmake -S platform/juce -B build_juce -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build_juce --target BubbleCloud_VST3 --parallel 1
 ```
 
-The plug-in stores macro and advanced factory-preset settings in the JUCE parameter state. Presets with tempo sync enabled read BPM and PPQ position from the DAW playhead; standalone hosts fall back to the engine's 120 BPM default. Successful VST3 builds copy `Bubbles.vst3` to `C:\VST` by default. Override the destination with `-DBUBBLES_VST3_COPY_DIR=<path>`, or disable installation with `-DBUBBLES_COPY_PLUGIN_AFTER_BUILD=OFF`.
+The plug-in stores macro and advanced factory-preset settings in the JUCE parameter state. Presets with tempo sync enabled read BPM and PPQ position from the DAW playhead; standalone hosts fall back to the engine's 120 BPM default. Stereo inputs keep independent left/right granular memories instead of being downmixed before processing.
+
+The performance panel provides latched Freeze, momentary Capture, and two persistent scenes. Select or edit the first sound and press **Store A**; this seeds both endpoints and moves the editing focus to B without changing the sound. Select or edit the second sound, press **Store B**, then automate **Morph** to move continuously between their macro values. Controls edited with Morph on the left half update A, while controls edited on the right half update B; discrete rhythm, pitch, and quality settings switch at the midpoint. MIDI note 60 (C4) controls Freeze by default, with selectable Latch or Momentary behavior and an assignable note in the Rhythm Lab.
+
+Morph is perceptually calibrated rather than globally linear: Density follows an event-rate/log curve, Mix moves in power space, Space eases with a cosine curve, and the remaining macros use smoothstep. Freeze and discrete rhythm/quality/pitch settings use a 45–55% hysteresis band, preventing chatter when DAW automation hovers around the centre. Macro slew time is sample-rate invariant from 44.1 through 96 kHz.
+
+The Cloud Alive display is driven by real engine telemetry rather than a decorative macro animation. Particles correspond to active voices, horizontal position follows the stereo field, colour identifies normal/pitched/reverse grains, rings identify a frozen memory, and the meters show the actual selected left/right engine outputs. With Host Sync enabled, the active Rhythm Lab step receives an amber playhead highlight. Telemetry crosses from the audio thread to the 30 Hz UI through atomics only.
+
+Successful VST3 builds copy `Bubbles.vst3` to `C:\VST` by default. Override the destination with `-DBUBBLES_VST3_COPY_DIR=<path>`, or disable installation with `-DBUBBLES_COPY_PLUGIN_AFTER_BUILD=OFF`.
 
 ## Building
 
@@ -133,7 +141,7 @@ See `docs/PRESET_FORMAT.md`, `docs/macro_ranges.md`, and `docs/macro_matrix.yaml
 ## CI and GitHub Actions
 
 - `.github/workflows/tests.yml` runs the core DSP, preset, performance, and static-guard tests first, then runs offline C/WASM parity in a separate job.
-- `.github/workflows/build-vst.yml` builds and verifies the Windows VST3/Standalone artifacts without installing them into the runner's local VST directory.
+- `.github/workflows/build-vst.yml` builds and verifies the Windows VST3/Standalone artifacts, runs the JUCE sonic-calibration matrix, and validates the VST3 with a pinned, checksum-verified pluginval 1.0.4 at strictness level 5 without installing into the runner's local VST directory.
 - `.github/workflows/build-verify.yml` builds both WASM and offline targets.
 - `.github/workflows/deploy-pages.yml` builds the single-file WASM module, copies `ui/web/` into `dist/`, and deploys GitHub Pages.
 - `.github/workflows/main.yaml` builds/runs the C DSP harness and uploads raw/WAV artifacts.

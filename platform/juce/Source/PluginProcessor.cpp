@@ -1,7 +1,9 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -31,7 +33,83 @@ namespace
         "RHYTHM_PATTERN",
         "PITCH_MODE_OVERRIDE",
         "MOTION_SHAPE",
+        "MORPH",
+        "FREEZE_MIDI_MODE",
+        "FREEZE_MIDI_NOTE",
     };
+
+    constexpr std::array<const char*, 19> sceneParameterIds {{
+        "DENSITY",
+        "BLOOM",
+        "MOTION",
+        "TEXTURE",
+        "SPACE",
+        "GRAVITY",
+        "MEMORY",
+        "CLARITY",
+        "FREEZE",
+        "SPARKLE",
+        "WARMTH",
+        "MIX",
+        "QUALITY_PROFILE",
+        "TEMPO_SYNC",
+        "RHYTHM_DIVISION",
+        "BURST_MODE",
+        "RHYTHM_PATTERN",
+        "PITCH_MODE_OVERRIDE",
+        "MOTION_SHAPE",
+    }};
+
+    int findSceneParameterIndex(const juce::String& parameterID)
+    {
+        for (std::size_t i = 0; i < sceneParameterIds.size(); ++i) {
+            if (parameterID == sceneParameterIds[i])
+                return (int)i;
+        }
+        return -1;
+    }
+
+    bool sceneParameterIsContinuous(std::size_t index)
+    {
+        return index < 12;
+    }
+
+    float smoothStep(float value)
+    {
+        const float x = juce::jlimit(0.0f, 1.0f, value);
+        return x * x * (3.0f - 2.0f * x);
+    }
+
+    float morphedContinuousValue(std::size_t index, float a, float b, float morph)
+    {
+        const float t = juce::jlimit(0.0f, 1.0f, morph);
+        if (t <= 0.0f)
+            return a;
+        if (t >= 1.0f)
+            return b;
+
+        if (index == 0) { // Density is perceived approximately as an event-rate ratio.
+            constexpr float floor = 0.02f;
+            const float shaped = smoothStep(t);
+            return std::exp(std::log(a + floor) * (1.0f - shaped)
+                            + std::log(b + floor) * shaped) - floor;
+        }
+
+        if (index == 4) { // Space eases gently at both ends for stable stereo images.
+            const float shaped = 0.5f - 0.5f * std::cos(juce::MathConstants<float>::pi * t);
+            return a + (b - a) * shaped;
+        }
+
+        if (index == 11) { // Mix moves in power space to avoid an audible midpoint dip.
+            const float angle = juce::MathConstants<float>::halfPi * t;
+            const float aWeight = std::cos(angle);
+            const float bWeight = std::sin(angle);
+            return std::sqrt(std::max(0.0f,
+                a * a * aWeight * aWeight + b * b * bWeight * bWeight));
+        }
+
+        return a + (b - a) * smoothStep(t);
+    }
 
     std::unique_ptr<juce::AudioParameterFloat> makeMacroParameter(const char* id,
                                                                   const char* name,
@@ -76,9 +154,19 @@ BubbleCloudAudioProcessor::BubbleCloudAudioProcessor()
      : AudioProcessor (createBusesProperties()),
        treeState(*this, nullptr, "PARAMETERS", createParameterLayout())
 {
+    jassert(sceneParameterIds.size() == sceneParameterCount);
+    const float notApplied = std::numeric_limits<float>::quiet_NaN();
+    lastAppliedSceneValues.fill(notApplied);
+    for (std::size_t i = 0; i < sceneParameterCount; ++i) {
+        sceneA[i].store(0.0f);
+        sceneB[i].store(0.0f);
+    }
+
     for (const auto* name : productParameterIds) {
         treeState.addParameterListener(name, this);
     }
+
+    initialiseScenesFromParameters();
 }
 
 BubbleCloudAudioProcessor::~BubbleCloudAudioProcessor()
@@ -130,6 +218,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout BubbleCloudAudioProcessor::c
     params.push_back(makeAdvancedChoice(
         "MOTION_SHAPE", "Motion Shape",
         juce::StringArray { "Triangle", "Smooth", "Hold" }, 0));
+    params.push_back(makeMacroParameter("MORPH", "Scene Morph", 0.0f));
+    params.push_back(makeAdvancedChoice(
+        "FREEZE_MIDI_MODE", "Freeze MIDI Mode",
+        juce::StringArray { "Latch", "Momentary" }, 0));
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        juce::ParameterID { "FREEZE_MIDI_NOTE", 1 }, "Freeze MIDI Note", 0, 127, 60));
 
     return { params.begin(), params.end() };
 }
@@ -140,11 +234,18 @@ void BubbleCloudAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     expectedNextPpq = 0.0;
     hasExpectedNextPpq = false;
     wasTransportPlaying = false;
+    midiFreezeActive.store(false);
+    captureHeld.store(false);
+    effectiveFreezeActive.store(false);
+    lastAppliedFreeze = -1.0f;
+    sceneApplicationDirty.store(true);
 
-    for (const auto* name : productParameterIds) {
-        if (auto* p = treeState.getParameter(name)) {
-            parameterChanged(name, p->convertFrom0to1(p->getValue()));
-        }
+    if (const auto* morph = treeState.getRawParameterValue("MORPH"))
+    {
+        const float value = juce::jlimit(0.0f, 1.0f, morph->load());
+        morphTarget.store(value);
+        endpointEditScene.store(value >= 0.5f ? 1 : 0);
+        discreteMorphScene.store(value >= 0.5f ? 1 : 0);
     }
 }
 
@@ -169,7 +270,7 @@ bool BubbleCloudAudioProcessor::isBusesLayoutSupported(const BusesLayout& layout
     return true;
 }
 
-void BubbleCloudAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+void BubbleCloudAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
 
@@ -196,8 +297,34 @@ void BubbleCloudAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     float* outLeft = buffer.getWritePointer(0);
     float* outRight = buffer.getWritePointer(1);
 
+    handlePerformanceMidi(midiMessages);
+    applySceneMorph();
+    applyEffectiveFreeze();
     updateHostTransport(buffer.getNumSamples());
     engineWrapper.process(inLeft, inRight, outLeft, outRight, buffer.getNumSamples());
+}
+
+void BubbleCloudAudioProcessor::handlePerformanceMidi(const juce::MidiBuffer& midiMessages)
+{
+    const auto* noteValue = treeState.getRawParameterValue("FREEZE_MIDI_NOTE");
+    const auto* modeValue = treeState.getRawParameterValue("FREEZE_MIDI_MODE");
+    if (noteValue == nullptr || modeValue == nullptr)
+        return;
+
+    const int triggerNote = juce::roundToInt(juce::jlimit(0.0f, 127.0f, noteValue->load()));
+    const bool momentary = modeValue->load() >= 0.5f;
+
+    for (const auto metadata : midiMessages) {
+        const auto message = metadata.getMessage();
+        if (!message.isNoteOnOrOff() || message.getNoteNumber() != triggerNote)
+            continue;
+
+        if (message.isNoteOn()) {
+            midiFreezeActive.store(momentary ? true : !midiFreezeActive.load());
+        } else if (message.isNoteOff() && momentary) {
+            midiFreezeActive.store(false);
+        }
+    }
 }
 
 void BubbleCloudAudioProcessor::updateHostTransport(int numSamples)
@@ -262,9 +389,138 @@ juce::AudioProcessorEditor* BubbleCloudAudioProcessor::createEditor()
     return new BubbleCloudAudioProcessorEditor(*this);
 }
 
+void BubbleCloudAudioProcessor::initialiseScenesFromParameters()
+{
+    for (std::size_t i = 0; i < sceneParameterCount; ++i) {
+        float value = 0.0f;
+        if (const auto* parameter = treeState.getRawParameterValue(sceneParameterIds[i]))
+            value = parameter->load();
+        sceneA[i].store(value);
+        sceneB[i].store(value);
+    }
+    sceneApplicationDirty.store(true);
+}
+
+void BubbleCloudAudioProcessor::captureScene(int sceneIndex)
+{
+    if (sceneIndex != 0 && sceneIndex != 1)
+        return;
+
+    auto& destination = sceneIndex == 0 ? sceneA : sceneB;
+    for (std::size_t i = 0; i < sceneParameterCount; ++i) {
+        if (const auto* parameter = treeState.getRawParameterValue(sceneParameterIds[i]))
+            destination[i].store(parameter->load());
+    }
+    sceneApplicationDirty.store(true);
+}
+
+void BubbleCloudAudioProcessor::setCaptureHeld(bool shouldHold) noexcept
+{
+    captureHeld.store(shouldHold);
+}
+
+bool BubbleCloudAudioProcessor::isFreezeActive() const noexcept
+{
+    return effectiveFreezeActive.load();
+}
+
+BubbleCloudTelemetry BubbleCloudAudioProcessor::getTelemetrySnapshot() noexcept
+{
+    auto snapshot = engineWrapper.getTelemetrySnapshot();
+    snapshot.frozen = isFreezeActive();
+    return snapshot;
+}
+
+float BubbleCloudAudioProcessor::getMorphedParameterValue(const juce::String& parameterID) const
+{
+    const int index = findSceneParameterIndex(parameterID);
+    if (index < 0)
+        return std::numeric_limits<float>::quiet_NaN();
+
+    const auto sceneIndex = (std::size_t)index;
+    const float a = sceneA[sceneIndex].load();
+    const float b = sceneB[sceneIndex].load();
+    if (sceneParameterIsContinuous(sceneIndex))
+        return morphedContinuousValue(sceneIndex, a, b, morphTarget.load());
+    return discreteMorphScene.load() == 0 ? a : b;
+}
+
+void BubbleCloudAudioProcessor::updateSceneEndpoint(const juce::String& parameterID, float value)
+{
+    const int index = findSceneParameterIndex(parameterID);
+    if (index < 0)
+        return;
+
+    auto& destination = endpointEditScene.load() == 0 ? sceneA : sceneB;
+    destination[(std::size_t)index].store(value);
+    sceneApplicationDirty.store(true);
+}
+
+void BubbleCloudAudioProcessor::applySceneMorph()
+{
+    if (sceneApplicationDirty.exchange(false))
+        lastAppliedSceneValues.fill(std::numeric_limits<float>::quiet_NaN());
+
+    const float morph = juce::jlimit(0.0f, 1.0f, morphTarget.load());
+    int discreteScene = discreteMorphScene.load();
+    if (morph >= 0.55f)
+        discreteScene = 1;
+    else if (morph <= 0.45f)
+        discreteScene = 0;
+    discreteMorphScene.store(discreteScene);
+
+    for (std::size_t i = 0; i < sceneParameterCount; ++i) {
+        const float a = sceneA[i].load();
+        const float b = sceneB[i].load();
+        const float value = sceneParameterIsContinuous(i)
+            ? morphedContinuousValue(i, a, b, morph)
+            : (discreteScene == 0 ? a : b);
+
+        if (std::isfinite(lastAppliedSceneValues[i])
+            && std::abs(value - lastAppliedSceneValues[i]) < 0.0001f)
+            continue;
+
+        lastAppliedSceneValues[i] = value;
+        if (juce::String(sceneParameterIds[i]) == "FREEZE")
+            sceneFreezeValue.store(value);
+        else
+            forwardParameterToEngine(sceneParameterIds[i], value);
+    }
+}
+
+void BubbleCloudAudioProcessor::applyEffectiveFreeze()
+{
+    const float sceneValue = juce::jlimit(0.0f, 1.0f, sceneFreezeValue.load());
+    const bool performanceOverride = captureHeld.load() || midiFreezeActive.load();
+    bool freezeActive = effectiveFreezeActive.load();
+    if (performanceOverride)
+        freezeActive = true;
+    else if (freezeActive && sceneValue <= 0.45f)
+        freezeActive = false;
+    else if (!freezeActive && sceneValue >= 0.55f)
+        freezeActive = true;
+    effectiveFreezeActive.store(freezeActive);
+
+    const float effectiveValue = freezeActive ? 1.0f : 0.0f;
+
+    if (std::abs(effectiveValue - lastAppliedFreeze) >= 0.0001f) {
+        engineWrapper.setParameter(BUBBLE_PARAM_FREEZE, effectiveValue);
+        lastAppliedFreeze = effectiveValue;
+    }
+}
+
 void BubbleCloudAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
     auto state = treeState.copyState();
+    if (const auto previousScenes = state.getChildWithName("PERFORMANCE_SCENES"); previousScenes.isValid())
+        state.removeChild(previousScenes, nullptr);
+    juce::ValueTree scenes("PERFORMANCE_SCENES");
+    scenes.setProperty("version", 1, nullptr);
+    for (std::size_t i = 0; i < sceneParameterCount; ++i) {
+        scenes.setProperty("a" + juce::String((int)i), sceneA[i].load(), nullptr);
+        scenes.setProperty("b" + juce::String((int)i), sceneB[i].load(), nullptr);
+    }
+    state.addChild(scenes, -1, nullptr);
     std::unique_ptr<juce::XmlElement> xml (state.createXml());
     copyXmlToBinary (*xml, destData);
 }
@@ -273,12 +529,58 @@ void BubbleCloudAudioProcessor::setStateInformation(const void* data, int sizeIn
 {
     std::unique_ptr<juce::XmlElement> xmlState (getXmlFromBinary (data, sizeInBytes));
 
-    if (xmlState != nullptr)
-        if (xmlState->hasTagName (treeState.state.getType()))
-            treeState.replaceState (juce::ValueTree::fromXml (*xmlState));
+    if (xmlState == nullptr || !xmlState->hasTagName(treeState.state.getType()))
+        return;
+
+    auto restoredState = juce::ValueTree::fromXml(*xmlState);
+    treeState.replaceState(restoredState);
+    if (const auto* morph = treeState.getRawParameterValue("MORPH")) {
+        const float value = juce::jlimit(0.0f, 1.0f, morph->load());
+        morphTarget.store(value);
+        endpointEditScene.store(value >= 0.5f ? 1 : 0);
+        discreteMorphScene.store(value >= 0.5f ? 1 : 0);
+    }
+
+    const auto scenes = restoredState.getChildWithName("PERFORMANCE_SCENES");
+    if (scenes.isValid()) {
+        for (std::size_t i = 0; i < sceneParameterCount; ++i) {
+            const auto aName = "a" + juce::String((int)i);
+            const auto bName = "b" + juce::String((int)i);
+            if (scenes.hasProperty(aName))
+                sceneA[i].store((float)scenes[aName]);
+            if (scenes.hasProperty(bName))
+                sceneB[i].store((float)scenes[bName]);
+        }
+    } else {
+        initialiseScenesFromParameters();
+    }
+
+    midiFreezeActive.store(false);
+    captureHeld.store(false);
+    sceneApplicationDirty.store(true);
 }
 
 void BubbleCloudAudioProcessor::parameterChanged(const juce::String& parameterID, float newValue)
+{
+    if (parameterID == "MORPH") {
+        const float value = juce::jlimit(0.0f, 1.0f, newValue);
+        morphTarget.store(value);
+        int editingScene = endpointEditScene.load();
+        if (value >= 0.55f)
+            editingScene = 1;
+        else if (value <= 0.45f)
+            editingScene = 0;
+        endpointEditScene.store(editingScene);
+        return;
+    }
+
+    if (parameterID == "FREEZE_MIDI_MODE" || parameterID == "FREEZE_MIDI_NOTE")
+        return;
+
+    updateSceneEndpoint(parameterID, newValue);
+}
+
+void BubbleCloudAudioProcessor::forwardParameterToEngine(const juce::String& parameterID, float newValue)
 {
     BubbleParameterId paramId = BUBBLE_PARAM_DENSITY;
     

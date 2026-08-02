@@ -5,8 +5,8 @@
 
 namespace
 {
-    constexpr int editorWidth = 980;
-    constexpr int editorHeight = 580;
+    constexpr int editorWidth = 1080;
+    constexpr int editorHeight = 760;
 
     const juce::Colour ink = juce::Colour(0xffeef7ff);
     const juce::Colour textMuted = juce::Colour(0xff8fa7b7);
@@ -521,13 +521,16 @@ public:
     {
         auto bounds = button.getLocalBounds().toFloat().reduced(0.5f);
         auto active = button.getToggleState() || shouldDrawButtonAsDown;
-        auto fill = active ? cyan.withAlpha(0.22f) : juce::Colour(0xff172631);
+        const bool rhythmPlayhead = (bool)button.getProperties().getWithDefault("rhythmPlayhead", false);
+        auto fill = rhythmPlayhead ? amber.withAlpha(0.28f)
+                                   : (active ? cyan.withAlpha(0.22f) : juce::Colour(0xff172631));
         if (shouldDrawButtonAsHighlighted)
             fill = fill.brighter(0.12f);
 
         g.setColour(fill);
         g.fillRoundedRectangle(bounds, 6.0f);
-        g.setColour(active ? cyan.withAlpha(0.78f) : stroke);
+        g.setColour(rhythmPlayhead ? amber.withAlpha(0.92f)
+                                   : (active ? cyan.withAlpha(0.78f) : stroke));
         g.drawRoundedRectangle(bounds, 6.0f, 1.0f);
     }
 };
@@ -535,7 +538,16 @@ public:
 class BubbleCloudAudioProcessorEditor::CloudVisualizer : public juce::Component
 {
 public:
-    explicit CloudVisualizer(BubbleCloudAudioProcessor& owner) : processor(owner) {}
+    CloudVisualizer() = default;
+
+    void setTelemetry(const BubbleCloudTelemetry& next)
+    {
+        telemetry = next;
+        smoothedPeakLeft = juce::jmax(next.peakLeft, smoothedPeakLeft * 0.82f);
+        smoothedPeakRight = juce::jmax(next.peakRight, smoothedPeakRight * 0.82f);
+        smoothedEnvelope += 0.24f * (next.envelope - smoothedEnvelope);
+        spawnPulse = juce::jlimit(0.0f, 1.0f, spawnPulse * 0.72f + (float)next.spawnCount * 0.08f);
+    }
 
     void paint(juce::Graphics& g) override
     {
@@ -543,51 +555,91 @@ public:
         g.setColour(juce::Colour(0xff081018));
         g.fillRoundedRectangle(bounds, 8.0f);
 
-        auto density = readParam("DENSITY");
-        auto motion = readParam("MOTION");
-        auto space = readParam("SPACE");
-        auto freeze = readParam("FREEZE");
-        auto energy = juce::jlimit(0.12f, 1.0f, density * 0.72f + freeze * 0.28f);
-        auto now = (float)juce::Time::getMillisecondCounterHiRes() * 0.001f;
-        auto centre = bounds.getCentre();
-        auto count = 38 + (int)std::round(density * 42.0f);
-
-        juce::ColourGradient wash(cyan.withAlpha(0.05f), bounds.getX(), bounds.getY(),
-                                  aqua.withAlpha(0.16f + freeze * 0.12f), bounds.getRight(), bounds.getBottom(), false);
+        const float energy = juce::jlimit(0.0f, 1.0f,
+                                         smoothedEnvelope * 1.8f
+                                         + 0.5f * juce::jmax(smoothedPeakLeft, smoothedPeakRight));
+        juce::ColourGradient wash(cyan.withAlpha(0.025f + energy * 0.08f), bounds.getX(), bounds.getY(),
+                                  (telemetry.frozen ? aqua : cyan).withAlpha(0.10f + energy * 0.15f),
+                                  bounds.getRight(), bounds.getBottom(), false);
         g.setGradientFill(wash);
         g.fillRoundedRectangle(bounds.reduced(1.0f), 8.0f);
 
-        for (int i = 0; i < count; ++i)
-        {
-            auto phase = (float)i * 0.618f;
-            auto orbit = 0.18f + 0.78f * std::fmod((float)i * 0.173f, 1.0f);
-            auto drift = now * (0.12f + motion * 0.58f) + phase;
-            auto x = centre.x + std::sin(drift * 1.7f + phase) * bounds.getWidth() * (0.12f + space * 0.32f) * orbit;
-            auto y = centre.y + std::cos(drift * 1.13f + phase * 0.7f) * bounds.getHeight() * (0.10f + density * 0.28f) * orbit;
-            auto size = 1.8f + 5.2f * std::fmod((float)i * 0.391f + energy, 1.0f);
-            auto alpha = 0.20f + 0.55f * std::fmod((float)i * 0.277f + energy, 1.0f);
+        auto content = getLocalBounds().reduced(18);
+        auto titleArea = content.removeFromTop(26);
+        auto meterBounds = content.removeFromBottom(50);
+        content.removeFromBottom(8);
+        auto particleBounds = content.toFloat().reduced(4.0f, 2.0f);
 
-            g.setColour((i % 5 == 0 ? amber : cyan).withAlpha(alpha));
-            g.fillEllipse(x - size * 0.5f, y - size * 0.5f, size, size);
+        g.setColour(stroke.withAlpha(0.35f));
+        g.drawVerticalLine((int)particleBounds.getCentreX(), particleBounds.getY(), particleBounds.getBottom());
+
+        if (spawnPulse > 0.02f) {
+            const float pulseSize = 24.0f + spawnPulse * juce::jmin(particleBounds.getWidth(), particleBounds.getHeight()) * 0.55f;
+            g.setColour(aqua.withAlpha(0.12f * spawnPulse));
+            g.drawEllipse(particleBounds.getCentreX() - pulseSize * 0.5f,
+                          particleBounds.getCentreY() - pulseSize * 0.5f,
+                          pulseSize, pulseSize, 1.5f);
         }
 
-        auto meterBounds = getLocalBounds().reduced(18).removeFromBottom(50);
-        drawMeter(g, meterBounds.removeFromTop(16), "CLOUD", energy, cyan);
+        int renderedVoices = 0;
+        for (std::size_t i = 0; i < telemetry.voices.size(); ++i) {
+            const auto& voice = telemetry.voices[i];
+            if (!voice.active)
+                continue;
+
+            const float phase = juce::jlimit(0.0f, 1.0f, voice.phase);
+            const float jitter = std::sin((float)i * 2.173f + phase * 9.0f) * particleBounds.getWidth() * 0.025f;
+            const float x = particleBounds.getCentreX()
+                + voice.pan * particleBounds.getWidth() * 0.43f + jitter;
+            const float classOffset = ((float)voice.bubbleClass - 1.0f) * particleBounds.getHeight() * 0.045f;
+            const float y = particleBounds.getY()
+                + (0.08f + phase * 0.84f) * particleBounds.getHeight() + classOffset;
+            const float shapedGain = std::sqrt(juce::jlimit(0.0f, 1.0f, voice.gain));
+            const float size = 3.0f + shapedGain * 7.5f + (voice.bubbleClass == 0 ? 1.5f : 0.0f);
+            const float alpha = juce::jlimit(0.24f, 0.92f, 0.34f + shapedGain * 0.58f);
+            const auto pitchColour = voice.pitchRate > 1.1f ? aqua
+                : (voice.pitchRate < 0.9f ? juce::Colour(0xffa995ff) : cyan);
+            const auto colour = voice.reverse ? amber : pitchColour;
+
+            if (telemetry.frozen) {
+                g.setColour(colour.withAlpha(alpha * 0.42f));
+                g.drawEllipse(x - size * 0.72f, y - size * 0.72f, size * 1.44f, size * 1.44f, 1.0f);
+            }
+            g.setColour(colour.withAlpha(alpha));
+            g.fillEllipse(x - size * 0.5f, y - size * 0.5f, size, size);
+            ++renderedVoices;
+        }
+
+        if (renderedVoices == 0) {
+            g.setColour(textMuted.withAlpha(0.34f));
+            g.setFont(juce::Font(10.5f, juce::Font::bold));
+            g.drawText("WAITING FOR AUDIO", particleBounds.toNearestInt(), juce::Justification::centred);
+        }
+
+        drawMeter(g, meterBounds.removeFromTop(16), "L OUT", std::sqrt(juce::jlimit(0.0f, 1.0f, smoothedPeakLeft)), cyan);
         meterBounds.removeFromTop(8);
-        drawMeter(g, meterBounds.removeFromTop(16), "WIDTH", space, aqua);
+        drawMeter(g, meterBounds.removeFromTop(16), "R OUT", std::sqrt(juce::jlimit(0.0f, 1.0f, smoothedPeakRight)), aqua);
 
         g.setColour(textMuted);
         g.setFont(juce::Font(12.0f, juce::Font::bold));
-        g.drawText(freeze > 0.5f ? "FROZEN CLOUD" : "LIVE CLOUD", getLocalBounds().reduced(18).removeFromTop(26),
-                   juce::Justification::centredLeft);
+        const auto stateText = telemetry.frozen ? "FROZEN CLOUD"
+            : (telemetry.activeVoices > 0 ? engineStateName(telemetry.engineState) : "IDLE CLOUD");
+        g.drawText(stateText, titleArea.removeFromLeft(titleArea.getWidth() / 2), juce::Justification::centredLeft);
+        g.drawText("VOICES " + juce::String(telemetry.activeVoices) + "/"
+                       + juce::String(telemetry.activeVoiceLimit),
+                   titleArea, juce::Justification::centredRight);
     }
 
 private:
-    float readParam(const char* parameterId) const
+    static juce::String engineStateName(int state)
     {
-        if (auto* value = processor.treeState.getRawParameterValue(parameterId))
-            return juce::jlimit(0.0f, 1.0f, value->load());
-        return 0.0f;
+        switch (state) {
+            case ENGINE_STATE_TRANSIENT_BURST: return "BURST CLOUD";
+            case ENGINE_STATE_ATTACK_ONGOING: return "ATTACK CLOUD";
+            case ENGINE_STATE_SUSTAIN_BODY: return "SUSTAIN CLOUD";
+            case ENGINE_STATE_SPARSE_DECAY: return "DECAY CLOUD";
+            default: return "LIVE CLOUD";
+        }
     }
 
     void drawMeter(juce::Graphics& g, juce::Rectangle<int> bounds, const juce::String& label,
@@ -605,7 +657,11 @@ private:
         g.fillRoundedRectangle(track.withWidth(track.getWidth() * juce::jlimit(0.0f, 1.0f, value)), 4.0f);
     }
 
-    BubbleCloudAudioProcessor& processor;
+    BubbleCloudTelemetry telemetry;
+    float smoothedPeakLeft = 0.0f;
+    float smoothedPeakRight = 0.0f;
+    float smoothedEnvelope = 0.0f;
+    float spawnPulse = 0.0f;
 };
 
 BubbleCloudAudioProcessorEditor::BubbleCloudAudioProcessorEditor(BubbleCloudAudioProcessor& p)
@@ -629,7 +685,105 @@ BubbleCloudAudioProcessorEditor::BubbleCloudAudioProcessorEditor(BubbleCloudAudi
 
     freezeButton.setClickingTogglesState(true);
     freezeButton.onClick = [this] { setParameterAsToggle("FREEZE", freezeButton.getToggleState()); };
+    freezeButton.setTooltip("Latch the current granular memory until Freeze is disabled.");
     addAndMakeVisible(freezeButton);
+
+    captureButton.setTooltip("Momentarily capture the current granular memory while the button is held.");
+    captureButton.onStateChange = [this] { audioProcessor.setCaptureHeld(captureButton.isDown()); };
+    addAndMakeVisible(captureButton);
+
+    storeSceneAButton.setTooltip("Start a new morph pair: store the current sound in A and seed B with the same sound.");
+    storeSceneAButton.onClick = [this] {
+        audioProcessor.captureScene(0);
+        audioProcessor.captureScene(1);
+        setParameterValue("MORPH", 1.0f);
+    };
+    addAndMakeVisible(storeSceneAButton);
+
+    storeSceneBButton.setTooltip("Store the current controls as morph scene B and move to B.");
+    storeSceneBButton.onClick = [this] {
+        audioProcessor.captureScene(1);
+        setParameterValue("MORPH", 1.0f);
+    };
+    addAndMakeVisible(storeSceneBButton);
+
+    morphSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    morphSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 52, 22);
+    morphSlider.setNumDecimalPlacesToDisplay(2);
+    morphSlider.setColour(juce::Slider::trackColourId, cyan);
+    morphSlider.setColour(juce::Slider::backgroundColourId, juce::Colour(0xff1a2833));
+    morphAttachment = std::make_unique<SliderAttachment>(audioProcessor.treeState, "MORPH", morphSlider);
+    addAndMakeVisible(morphSlider);
+
+    morphLabel.setText("SCENE A  <  MORPH  >  SCENE B", juce::dontSendNotification);
+    morphLabel.setJustificationType(juce::Justification::centred);
+    morphLabel.setColour(juce::Label::textColourId, textMuted);
+    morphLabel.setFont(juce::Font(10.5f, juce::Font::bold));
+    addAndMakeVisible(morphLabel);
+
+    tempoSyncButton.setClickingTogglesState(true);
+    tempoSyncButton.onClick = [this] { setParameterAsToggle("TEMPO_SYNC", tempoSyncButton.getToggleState()); };
+    tempoSyncButton.setTooltip("Lock rhythmic emissions to the DAW tempo and PPQ position.");
+    addAndMakeVisible(tempoSyncButton);
+
+    rhythmDivisionBox.addItem("1/4 Grid", 1);
+    rhythmDivisionBox.addItem("1/8 Grid", 2);
+    rhythmDivisionBox.addItem("1/16 Grid", 3);
+    rhythmDivisionBox.addItem("1/32 Grid", 4);
+    rhythmDivisionBox.setTooltip("Rhythmic step division.");
+    advancedComboAttachments.push_back(std::make_unique<ComboBoxAttachment>(audioProcessor.treeState, "RHYTHM_DIVISION", rhythmDivisionBox));
+    addAndMakeVisible(rhythmDivisionBox);
+
+    burstModeBox.addItem("Single", 1);
+    burstModeBox.addItem("Spray", 2);
+    burstModeBox.addItem("Strum", 3);
+    burstModeBox.addItem("Swarm", 4);
+    burstModeBox.addItem("Reverse Swell", 5);
+    burstModeBox.setTooltip("Emission gesture used on active rhythm steps.");
+    advancedComboAttachments.push_back(std::make_unique<ComboBoxAttachment>(audioProcessor.treeState, "BURST_MODE", burstModeBox));
+    addAndMakeVisible(burstModeBox);
+
+    pitchModeBox.addItem("Pitch: Macro", 1);
+    pitchModeBox.addItem("Pitch: +1 Oct", 2);
+    pitchModeBox.addItem("Pitch: -1 Oct", 3);
+    pitchModeBox.addItem("Pitch: Fifth", 4);
+    pitchModeBox.setTooltip("Fixed pitch override for the granular voices.");
+    advancedComboAttachments.push_back(std::make_unique<ComboBoxAttachment>(audioProcessor.treeState, "PITCH_MODE_OVERRIDE", pitchModeBox));
+    addAndMakeVisible(pitchModeBox);
+
+    motionShapeBox.addItem("Motion: Triangle", 1);
+    motionShapeBox.addItem("Motion: Smooth", 2);
+    motionShapeBox.addItem("Motion: Hold", 3);
+    motionShapeBox.setTooltip("Shape used by the internal motion modulation.");
+    advancedComboAttachments.push_back(std::make_unique<ComboBoxAttachment>(audioProcessor.treeState, "MOTION_SHAPE", motionShapeBox));
+    addAndMakeVisible(motionShapeBox);
+
+    freezeMidiModeBox.addItem("MIDI: Latch", 1);
+    freezeMidiModeBox.addItem("MIDI: Momentary", 2);
+    freezeMidiModeBox.setTooltip("Latch toggles on note-on; Momentary follows note-on/note-off.");
+    advancedComboAttachments.push_back(std::make_unique<ComboBoxAttachment>(audioProcessor.treeState, "FREEZE_MIDI_MODE", freezeMidiModeBox));
+    addAndMakeVisible(freezeMidiModeBox);
+
+    static constexpr const char* pitchClasses[] = {
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
+    };
+    for (int note = 0; note < 128; ++note) {
+        const auto noteName = juce::String(pitchClasses[note % 12]) + juce::String(note / 12 - 1)
+            + "  (" + juce::String(note) + ")";
+        freezeMidiNoteBox.addItem(noteName, note + 1);
+    }
+    freezeMidiNoteBox.setTooltip("MIDI note assigned to Freeze/Capture; default is C4 (note 60).");
+    advancedComboAttachments.push_back(std::make_unique<ComboBoxAttachment>(audioProcessor.treeState, "FREEZE_MIDI_NOTE", freezeMidiNoteBox));
+    addAndMakeVisible(freezeMidiNoteBox);
+
+    for (int i = 0; i < (int)rhythmStepButtons.size(); ++i) {
+        auto& step = rhythmStepButtons[(std::size_t)i];
+        step.setButtonText(juce::String(i + 1));
+        step.setClickingTogglesState(true);
+        step.setTooltip("Toggle rhythm step " + juce::String(i + 1));
+        step.onClick = [this] { commitRhythmPattern(); };
+        addAndMakeVisible(step);
+    }
 
     addControl(macroControls, "DENSITY", "Density", "emission");
     addControl(macroControls, "BLOOM", "Bloom", "body");
@@ -644,9 +798,13 @@ BubbleCloudAudioProcessorEditor::BubbleCloudAudioProcessorEditor(BubbleCloudAudi
     addControl(secondaryControls, "SPARKLE", "Sparkle", "shimmer");
     addControl(secondaryControls, "WARMTH", "Warmth", "tone");
 
-    cloudVisualizer = std::make_unique<CloudVisualizer>(audioProcessor);
+    cloudVisualizer = std::make_unique<CloudVisualizer>();
     addAndMakeVisible(*cloudVisualizer);
 
+    const auto initialTelemetry = audioProcessor.getTelemetrySnapshot();
+    rhythmPlayheadStep = initialTelemetry.tempoSync ? initialTelemetry.rhythmStep : -1;
+    cloudVisualizer->setTelemetry(initialTelemetry);
+    updateToggleControls();
     setSize(editorWidth, editorHeight);
     setResizable(false, false);
     startTimerHz(30);
@@ -654,6 +812,7 @@ BubbleCloudAudioProcessorEditor::BubbleCloudAudioProcessorEditor(BubbleCloudAudi
 
 BubbleCloudAudioProcessorEditor::~BubbleCloudAudioProcessorEditor()
 {
+    audioProcessor.setCaptureHeld(false);
     setLookAndFeel(nullptr);
 }
 
@@ -744,23 +903,31 @@ void BubbleCloudAudioProcessorEditor::paint(juce::Graphics& g)
     g.setFont(12.0f);
     g.drawText("Granular performance instrument", 92, 84, 250, 18, juce::Justification::centredLeft);
 
-    auto status = getLocalBounds().reduced(22).removeFromTop(64).removeFromRight(170);
-    g.setColour(aqua.withAlpha(0.14f));
-    g.fillRoundedRectangle(status.toFloat().reduced(0, 10), 6.0f);
-    g.setColour(aqua);
-    g.setFont(juce::Font(11.0f, juce::Font::bold));
-    g.drawText("ENGINE READY", status.reduced(12, 0), juce::Justification::centred);
-
     auto content = getLocalBounds().reduced(22);
-    content.removeFromTop(82);
-    auto right = content.removeFromRight(250);
+    auto rhythm = content.removeFromBottom(156);
+    content.removeFromBottom(16);
+    auto right = content.removeFromRight(280);
     content.removeFromRight(16);
+    content.removeFromTop(82);
     auto secondary = content.removeFromBottom(142);
     content.removeFromBottom(16);
 
     drawPanel(g, content);
     drawPanel(g, secondary);
     drawPanel(g, right);
+    drawPanel(g, rhythm);
+
+    auto performanceLabel = right.reduced(18);
+    auto performanceArea = performanceLabel.removeFromBottom(150);
+    performanceArea.removeFromTop(2);
+    g.setColour(textMuted);
+    g.setFont(juce::Font(10.5f, juce::Font::bold));
+    g.drawText("PERFORMANCE", performanceArea.removeFromTop(18), juce::Justification::centredLeft);
+
+    auto rhythmLabel = rhythm.reduced(18);
+    g.setColour(textMuted);
+    g.setFont(juce::Font(10.5f, juce::Font::bold));
+    g.drawText("RHYTHM LAB  /  16 STEP PATTERN", rhythmLabel.removeFromTop(18), juce::Justification::centredLeft);
 }
 
 void BubbleCloudAudioProcessorEditor::resized()
@@ -773,22 +940,62 @@ void BubbleCloudAudioProcessorEditor::resized()
     header.removeFromLeft(10);
     qualityBox.setBounds(header.removeFromLeft(150).reduced(0, 10));
 
-    bounds.removeFromTop(18);
-    auto right = bounds.removeFromRight(250);
-    bounds.removeFromRight(16);
-    auto secondary = bounds.removeFromBottom(142);
-    bounds.removeFromBottom(16);
+    auto content = getLocalBounds().reduced(22);
+    auto rhythm = content.removeFromBottom(156);
+    content.removeFromBottom(16);
+    auto right = content.removeFromRight(280);
+    content.removeFromRight(16);
+    content.removeFromTop(82);
+    auto secondary = content.removeFromBottom(142);
+    content.removeFromBottom(16);
 
+    auto rightContent = right.reduced(18);
+    auto performanceArea = rightContent.removeFromBottom(150);
+    rightContent.removeFromBottom(12);
     if (cloudVisualizer)
-        cloudVisualizer->setBounds(right.reduced(18, 18));
+        cloudVisualizer->setBounds(rightContent);
 
-    layoutControls(macroControls, bounds.reduced(24, 22), 3);
+    performanceArea.removeFromTop(20);
+    auto freezeRow = performanceArea.removeFromTop(34);
+    freezeButton.setBounds(freezeRow.removeFromLeft(freezeRow.getWidth() / 2).reduced(0, 2));
+    freezeRow.removeFromLeft(8);
+    captureButton.setBounds(freezeRow.reduced(0, 2));
+
+    auto storeRow = performanceArea.removeFromTop(32);
+    storeSceneAButton.setBounds(storeRow.removeFromLeft(storeRow.getWidth() / 2).reduced(0, 3));
+    storeRow.removeFromLeft(8);
+    storeSceneBButton.setBounds(storeRow.reduced(0, 3));
+    morphLabel.setBounds(performanceArea.removeFromTop(20));
+    morphSlider.setBounds(performanceArea.reduced(0, 1));
+
+    layoutControls(macroControls, content.reduced(24, 22), 3);
 
     auto secondaryContent = secondary.reduced(20, 20);
-    auto freezeArea = secondaryContent.removeFromLeft(118).reduced(6, 20);
-    freezeButton.setBounds(freezeArea);
-    secondaryContent.removeFromLeft(14);
     layoutControls(secondaryControls, secondaryContent, 5);
+
+    auto rhythmContent = rhythm.reduced(18);
+    rhythmContent.removeFromTop(22);
+    auto selectorRow = rhythmContent.removeFromTop(42);
+    const int selectorGap = 8;
+    tempoSyncButton.setBounds(selectorRow.removeFromLeft(104).reduced(0, 3));
+    selectorRow.removeFromLeft(selectorGap);
+    rhythmDivisionBox.setBounds(selectorRow.removeFromLeft(112).reduced(0, 3));
+    selectorRow.removeFromLeft(selectorGap);
+    burstModeBox.setBounds(selectorRow.removeFromLeft(138).reduced(0, 3));
+    selectorRow.removeFromLeft(selectorGap);
+    pitchModeBox.setBounds(selectorRow.removeFromLeft(136).reduced(0, 3));
+    selectorRow.removeFromLeft(selectorGap);
+    motionShapeBox.setBounds(selectorRow.removeFromLeft(142).reduced(0, 3));
+    selectorRow.removeFromLeft(selectorGap);
+    freezeMidiModeBox.setBounds(selectorRow.removeFromLeft(136).reduced(0, 3));
+    selectorRow.removeFromLeft(selectorGap);
+    freezeMidiNoteBox.setBounds(selectorRow.reduced(0, 3));
+
+    rhythmContent.removeFromTop(10);
+    auto stepsRow = rhythmContent.removeFromTop(42);
+    const int stepWidth = stepsRow.getWidth() / (int)rhythmStepButtons.size();
+    for (int i = 0; i < (int)rhythmStepButtons.size(); ++i)
+        rhythmStepButtons[(std::size_t)i].setBounds(stepsRow.removeFromLeft(stepWidth).reduced(2, 2));
 }
 
 void BubbleCloudAudioProcessorEditor::layoutControls(std::vector<std::unique_ptr<ControlBinding>>& controls,
@@ -840,12 +1047,44 @@ void BubbleCloudAudioProcessorEditor::setParameterAsToggle(const juce::String& p
 
 void BubbleCloudAudioProcessorEditor::updateToggleControls()
 {
-    if (auto* value = audioProcessor.treeState.getRawParameterValue("FREEZE"))
-        freezeButton.setToggleState(value->load() >= 0.5f, juce::dontSendNotification);
+    freezeButton.setToggleState(audioProcessor.isFreezeActive(), juce::dontSendNotification);
+    if (auto* value = audioProcessor.treeState.getRawParameterValue("TEMPO_SYNC"))
+        tempoSyncButton.setToggleState(value->load() >= 0.5f, juce::dontSendNotification);
+    updateRhythmPatternButtons();
+}
+
+void BubbleCloudAudioProcessorEditor::updateRhythmPatternButtons()
+{
+    const auto* value = audioProcessor.treeState.getRawParameterValue("RHYTHM_PATTERN");
+    if (value == nullptr)
+        return;
+
+    const auto pattern = (uint32_t)juce::roundToInt(juce::jlimit(0.0f, 65535.0f, value->load()));
+    for (int i = 0; i < (int)rhythmStepButtons.size(); ++i) {
+        const bool enabled = (pattern & (1u << i)) != 0;
+        auto& button = rhythmStepButtons[(std::size_t)i];
+        button.setToggleState(enabled, juce::dontSendNotification);
+        button.getProperties().set("rhythmPlayhead", i == rhythmPlayheadStep);
+        button.repaint();
+    }
+}
+
+void BubbleCloudAudioProcessorEditor::commitRhythmPattern()
+{
+    uint32_t pattern = 0;
+    for (int i = 0; i < (int)rhythmStepButtons.size(); ++i) {
+        if (rhythmStepButtons[(std::size_t)i].getToggleState())
+            pattern |= (1u << i);
+    }
+    setParameterValue("RHYTHM_PATTERN", (float)pattern);
 }
 
 void BubbleCloudAudioProcessorEditor::timerCallback()
 {
+    const auto telemetry = audioProcessor.getTelemetrySnapshot();
+    rhythmPlayheadStep = telemetry.tempoSync ? telemetry.rhythmStep : -1;
+    if (cloudVisualizer)
+        cloudVisualizer->setTelemetry(telemetry);
     updateToggleControls();
     if (cloudVisualizer)
         cloudVisualizer->repaint();

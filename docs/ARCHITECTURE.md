@@ -77,6 +77,10 @@ runtime DSP config snapshot
 bubble_engine_process
 ```
 
+A suavização dos macros usa uma constante de tempo em segundos e deriva o coeficiente do sample rate atual. Assim, automação e morph mantêm praticamente a mesma velocidade perceptiva em 44,1, 48, 88,2 e 96 kHz. No wrapper JUCE, callbacks de parâmetro atualizam apenas estado atômico; a aplicação no engine ocorre no início do bloco de áudio, usando cache fixo e sem containers que possam alocar.
+
+O morph de cenas também vive nessa fronteira de plataforma: Density interpola em domínio logarítmico, Mix em potência constante, Space usa uma curva cossenoidal e os demais macros usam smoothstep. Parâmetros discretos e Freeze têm uma banda de histerese de 45–55% para não oscilar quando a automação permanece próxima do centro.
+
 ## Separação de responsabilidades
 
 | Responsabilidade | Core engine | Plataforma |

@@ -7,6 +7,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_EDITOR = REPO_ROOT / "platform" / "juce" / "Source" / "PluginEditor.cpp"
 PLUGIN_PROCESSOR = REPO_ROOT / "platform" / "juce" / "Source" / "PluginProcessor.cpp"
+PLUGIN_PROCESSOR_HEADER = REPO_ROOT / "platform" / "juce" / "Source" / "PluginProcessor.h"
+ENGINE_WRAPPER = REPO_ROOT / "platform" / "juce" / "Source" / "BubbleCloudEngineWrapper.cpp"
+ENGINE_WRAPPER_HEADER = REPO_ROOT / "platform" / "juce" / "Source" / "BubbleCloudEngineWrapper.h"
+JUCE_CMAKE = REPO_ROOT / "platform" / "juce" / "CMakeLists.txt"
+VST_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "build-vst.yml"
+PROCESSOR_SMOKE = REPO_ROOT / "tests" / "juce" / "processor_smoke.cpp"
+CORE_ENGINE = REPO_ROOT / "core" / "engine" / "bubble_engine.c"
 
 EXPECTED_NEW_PRESETS = [
     "Pick Halo",
@@ -115,3 +122,116 @@ def test_advanced_parameters_are_persistent_and_host_tempo_is_forwarded() -> Non
     assert "getPpqPosition()" in processor
     assert "engineWrapper.setHostTempo" in processor
     assert "engineWrapper.syncRhythmPhase" in processor
+
+
+def test_juce_wrapper_preserves_stereo_input_without_audio_thread_allocations() -> None:
+    wrapper = ENGINE_WRAPPER.read_text(encoding="utf-8")
+    wrapper_header = ENGINE_WRAPPER_HEADER.read_text(encoding="utf-8")
+
+    assert "monoMixBuffer" not in wrapper
+    assert "monoMixBuffer" not in wrapper_header
+    assert "inLeft + processed" in wrapper
+    assert "inRight + processed" in wrapper
+    assert "scratchCapacity" in wrapper
+
+    process_body = re.search(
+        r"void BubbleCloudEngineWrapper::process\(.*?\n\}",
+        wrapper,
+        re.DOTALL,
+    )
+    assert process_body is not None
+    assert ".resize(" not in process_body.group(0)
+    assert "std::map" not in wrapper
+    assert "std::map" not in wrapper_header
+
+
+def test_performance_controls_support_midi_capture_scene_morph_and_rhythm_ui() -> None:
+    processor = PLUGIN_PROCESSOR.read_text(encoding="utf-8")
+    processor_header = PLUGIN_PROCESSOR_HEADER.read_text(encoding="utf-8")
+    editor = PLUGIN_EDITOR.read_text(encoding="utf-8")
+    cmake = JUCE_CMAKE.read_text(encoding="utf-8")
+    workflow = VST_WORKFLOW.read_text(encoding="utf-8")
+
+    for parameter_id in ["MORPH", "FREEZE_MIDI_MODE", "FREEZE_MIDI_NOTE"]:
+        assert f'"{parameter_id}"' in processor
+
+    assert "NEEDS_MIDI_INPUT TRUE" in cmake
+    assert "acceptsMidi() const override { return true; }" in processor_header
+    assert "handlePerformanceMidi(midiMessages)" in processor
+    assert "message.isNoteOn()" in processor
+    assert "message.isNoteOff()" in processor
+    assert "PERFORMANCE_SCENES" in processor
+    assert "captureScene(0)" in editor
+    assert "captureScene(1)" in editor
+    assert 'SliderAttachment>(audioProcessor.treeState, "MORPH"' in editor
+    assert "setCaptureHeld(captureButton.isDown())" in editor
+    assert "std::array<juce::TextButton, 16> rhythmStepButtons" in (
+        REPO_ROOT / "platform" / "juce" / "Source" / "PluginEditor.h"
+    ).read_text(encoding="utf-8")
+    assert 'ComboBoxAttachment>(audioProcessor.treeState, "RHYTHM_DIVISION"' in editor
+    assert 'ComboBoxAttachment>(audioProcessor.treeState, "BURST_MODE"' in editor
+    assert "pattern |= (1u << i)" in editor
+    assert '"ENGINE READY"' not in editor
+    assert "BUBBLES_BUILD_PROCESSOR_TESTS=ON" in workflow
+    assert "ctest --test-dir build_juce" in workflow
+
+
+def test_cloud_visualizer_uses_lock_free_engine_telemetry_and_rhythm_playhead() -> None:
+    wrapper = ENGINE_WRAPPER.read_text(encoding="utf-8")
+    wrapper_header = ENGINE_WRAPPER_HEADER.read_text(encoding="utf-8")
+    processor = PLUGIN_PROCESSOR.read_text(encoding="utf-8")
+    editor = PLUGIN_EDITOR.read_text(encoding="utf-8")
+    smoke = PROCESSOR_SMOKE.read_text(encoding="utf-8")
+
+    assert "BubbleCloudVoiceTelemetry" in wrapper_header
+    assert "std::atomic" in wrapper_header
+    assert "bubble_engine_set_metrics_callback" in wrapper
+    assert "publishVoiceTelemetry()" in wrapper
+    assert "telemetryPeakL.exchange" in wrapper
+    assert "telemetrySpawnCount.exchange" in wrapper
+    assert "getTelemetrySnapshot()" in processor
+    assert "setTelemetry(const BubbleCloudTelemetry&" in editor
+    assert "telemetry.voices" in editor
+    assert 'getProperties().set("rhythmPlayhead"' in editor
+    assert "stereoTelemetry.peakLeft" in smoke
+    assert "stereoTelemetry.activeVoices" in smoke
+    assert "rhythmTelemetry.rhythmStep" in smoke
+    assert "std::mutex" not in wrapper
+    assert "std::lock_guard" not in wrapper
+
+
+def test_release_candidate_has_perceptual_morph_calibration_and_pluginval() -> None:
+    processor = PLUGIN_PROCESSOR.read_text(encoding="utf-8")
+    smoke = PROCESSOR_SMOKE.read_text(encoding="utf-8")
+    workflow = VST_WORKFLOW.read_text(encoding="utf-8")
+    core_engine = CORE_ENGINE.read_text(encoding="utf-8")
+
+    assert "morphedContinuousValue" in processor
+    assert "BUBBLE_MACRO_SMOOTH_TIME_SECONDS" in core_engine
+    assert "expf(" in core_engine
+    assert "engine->config.sample_rate" in core_engine
+    for token in [
+        "44100.0",
+        "48000.0",
+        "88200.0",
+        "96000.0",
+        "correlation",
+        "rmsMono",
+        "calibration spread",
+        "getMorphedParameterValue",
+    ]:
+        assert token in smoke
+
+    parameter_callback = re.search(
+        r"void BubbleCloudAudioProcessor::parameterChanged\(.*?\n\}",
+        processor,
+        re.DOTALL,
+    )
+    assert parameter_callback is not None
+    assert "forwardParameterToEngine" not in parameter_callback.group(0)
+
+    assert "pluginval_Windows.zip" in workflow
+    assert "--strictness-level 5" in workflow
+    assert "Get-FileHash" in workflow
+    assert 'COMPANY_NAME "Bubbles Audio"' in JUCE_CMAKE.read_text(encoding="utf-8")
+    assert 'BUNDLE_ID "audio.bubbles.Bubbles"' in JUCE_CMAKE.read_text(encoding="utf-8")

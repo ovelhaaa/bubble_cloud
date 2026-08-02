@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <string.h>
 
-#define BUBBLE_MACRO_SMOOTH_COEF 0.18f
+#define BUBBLE_MACRO_SMOOTH_TIME_SECONDS 0.0035f
 #define BUBBLE_MACRO_EPSILON 0.0005f
 #define BUBBLE_MOTION_HOLD_NEXT_STATE_ADD 0x9E3779B9u
 
@@ -165,6 +165,9 @@ static void ApplyMacroControlRate(BubbleEngine_t* engine) {
         ApplyRuntimeMotionConfig(engine);
         return;
     }
+    const float sample_rate = fmaxf(1.0f, engine->config.sample_rate);
+    const float smoothing_coefficient = 1.0f - expf(
+        -(float)BUBBLES_BLOCK_SIZE / (sample_rate * BUBBLE_MACRO_SMOOTH_TIME_SECONDS));
     uint32_t still_dirty = 0u;
     for (int i = 0; i < BUBBLE_PARAM_MACRO_COUNT; i++) {
         if ((engine->macro_dirty_mask & (1u << i)) == 0u) continue;
@@ -174,7 +177,7 @@ static void ApplyMacroControlRate(BubbleEngine_t* engine) {
         if (delta < BUBBLE_MACRO_EPSILON && delta > -BUBBLE_MACRO_EPSILON) {
             engine->macro_values[i] = target;
         } else {
-            engine->macro_values[i] = current + delta * BUBBLE_MACRO_SMOOTH_COEF;
+            engine->macro_values[i] = current + delta * smoothing_coefficient;
             still_dirty |= (1u << i);
         }
     }

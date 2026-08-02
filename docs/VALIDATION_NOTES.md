@@ -61,3 +61,15 @@ Build the renderer with `make offline` first; the binary is emitted under `build
   - Tighten once stable across CI + hardware targets.
 
 If thresholds fail, inspect the largest-delta columns first (`ducking_gain`, `envelope`, and `out_peak_*` usually identify control vs audio drift quickly).
+
+## JUCE release-candidate checks
+
+When `BUBBLES_BUILD_PROCESSOR_TESTS=ON`, `tests/juce/processor_smoke.cpp` additionally renders a deterministic musical probe through:
+
+- 44.1, 48, 88.2, and 96 kHz;
+- prepared and deliberately irregular block sizes;
+- all 20 JUCE factory presets;
+- stereo correlation and mono-fold compatibility checks;
+- perceptual morph curves, discrete/Freeze hysteresis, MIDI Capture, state restore, and editor snapshot rendering.
+
+The Windows VST workflow runs this executable before validating the built bundle with pluginval strictness level 5. The pluginval archive is version-pinned and SHA-256 verified before execution.

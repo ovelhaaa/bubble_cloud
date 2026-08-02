@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.15)
-project(BubbleCloud VERSION 1.0.0)
+project(BubbleCloud VERSION 1.1.0)
 
 option(BUBBLES_COPY_PLUGIN_AFTER_BUILD "Copy the built VST3 into the configured plug-in directory" ON)
+option(BUBBLES_BUILD_PROCESSOR_TESTS "Build the JUCE processor smoke test" OFF)
 set(BUBBLES_VST3_COPY_DIR "C:/VST" CACHE PATH "Destination directory for the compiled VST3 bundle")
 
 # Add JUCE using FetchContent
@@ -14,8 +15,10 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(juce)
 
 juce_add_plugin(BubbleCloud
+    COMPANY_NAME "Bubbles Audio"
+    BUNDLE_ID "audio.bubbles.Bubbles"
     IS_SYNTH FALSE
-    NEEDS_MIDI_INPUT FALSE
+    NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
@@ -57,3 +60,21 @@ target_link_libraries(BubbleCloud PRIVATE
     juce::juce_audio_utils
     juce::juce_audio_processors
 )
+
+if(BUBBLES_BUILD_PROCESSOR_TESTS)
+    enable_testing()
+    add_executable(BubbleCloudProcessorTests
+        ../../tests/juce/processor_smoke.cpp
+    )
+    target_include_directories(BubbleCloudProcessorTests PRIVATE
+        Source
+        ../../core
+        ../../core/dsp
+    )
+    target_link_libraries(BubbleCloudProcessorTests PRIVATE
+        BubbleCloud
+        juce::juce_audio_utils
+        juce::juce_audio_processors
+    )
+    add_test(NAME bubbles_processor_smoke COMMAND BubbleCloudProcessorTests)
+endif()

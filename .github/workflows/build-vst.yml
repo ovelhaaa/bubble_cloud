@@ -7,6 +7,7 @@ on:
     paths:
       - 'platform/juce/**'
       - 'core/**'
+      - 'tests/juce/**'
       - 'tests/unit/test_juce_plugin_static_guards.py'
       - '.github/workflows/build-vst.yml'
   pull_request:
@@ -15,6 +16,7 @@ on:
     paths:
       - 'platform/juce/**'
       - 'core/**'
+      - 'tests/juce/**'
       - 'tests/unit/test_juce_plugin_static_guards.py'
       - '.github/workflows/build-vst.yml'
   workflow_dispatch:
@@ -38,10 +40,13 @@ jobs:
 
 
       - name: Configure CMake
-        run: cmake -B build_juce -S platform/juce -DCMAKE_BUILD_TYPE=Release -DBUBBLES_COPY_PLUGIN_AFTER_BUILD=OFF
+        run: cmake -B build_juce -S platform/juce -DCMAKE_BUILD_TYPE=Release -DBUBBLES_COPY_PLUGIN_AFTER_BUILD=OFF -DBUBBLES_BUILD_PROCESSOR_TESTS=ON
 
       - name: Build Plugins
         run: cmake --build build_juce --config Release --parallel 4
+
+      - name: Run processor smoke test
+        run: ctest --test-dir build_juce -C Release --output-on-failure
 
       - name: Verify build outputs
         shell: pwsh
@@ -54,6 +59,38 @@ jobs:
           if (-not (Test-Path -LiteralPath $standalone -PathType Leaf)) {
             throw "Missing standalone executable: $standalone"
           }
+
+      - name: Download pluginval 1.0.4
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'pluginval_Windows.zip'
+          $destination = Join-Path $env:RUNNER_TEMP 'pluginval'
+          Invoke-WebRequest `
+            -Uri 'https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip' `
+            -OutFile $archive
+          $actualHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expectedHash = 'c08e61ce3b96db41636f8ec7e76f4c7e2c13ebdac7fa1b5a1f52b4f32ec715ab'
+          if ($actualHash -ne $expectedHash) {
+            throw "pluginval checksum mismatch: $actualHash"
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $executable = Get-ChildItem -LiteralPath $destination -Recurse -Filter pluginval.exe `
+            | Select-Object -First 1
+          if ($null -eq $executable) {
+            throw 'pluginval.exe was not found in the verified archive'
+          }
+          "PLUGINVAL_EXE=$($executable.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Validate VST3 with pluginval
+        shell: pwsh
+        run: |
+          & $env:PLUGINVAL_EXE `
+            --strictness-level 5 `
+            --skip-gui-tests `
+            --timeout-ms 60000 `
+            --sample-rates 44100,48000,88200,96000 `
+            --block-sizes 32,64,127,512,2048 `
+            'build_juce/BubbleCloud_artefacts/Release/VST3/Bubbles.vst3'
 
       - name: Upload VST3 Artifact
         uses: actions/upload-artifact@v4

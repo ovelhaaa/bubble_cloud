@@ -1,10 +1,38 @@
 #include "BubbleCloudEngineWrapper.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+
+namespace
+{
+    constexpr std::array<BubbleParameterId, 19> cachedParameterIds {{
+        BUBBLE_PARAM_DENSITY,
+        BUBBLE_PARAM_BLOOM,
+        BUBBLE_PARAM_MOTION,
+        BUBBLE_PARAM_TEXTURE,
+        BUBBLE_PARAM_SPACE,
+        BUBBLE_PARAM_GRAVITY,
+        BUBBLE_PARAM_MEMORY,
+        BUBBLE_PARAM_CLARITY,
+        BUBBLE_PARAM_FREEZE,
+        BUBBLE_PARAM_SPARKLE,
+        BUBBLE_PARAM_WARMTH,
+        BUBBLE_PARAM_MIX,
+        BUBBLE_ENGINE_PARAM_QUALITY_PROFILE,
+        BUBBLE_ENGINE_PARAM_TEMPO_SYNC_ENABLED,
+        BUBBLE_ENGINE_PARAM_RHYTHM_DIVISION,
+        BUBBLE_ENGINE_PARAM_BURST_MODE,
+        BUBBLE_ENGINE_PARAM_RHYTHM_PATTERN,
+        BUBBLE_ENGINE_PARAM_PITCH_MODE,
+        BUBBLE_ENGINE_PARAM_MOTION_SHAPE,
+    }};
+}
 
 BubbleCloudEngineWrapper::BubbleCloudEngineWrapper()
 {
+    metricsContextL = { this, 0 };
+    metricsContextR = { this, 1 };
 }
 
 BubbleCloudEngineWrapper::~BubbleCloudEngineWrapper()
@@ -23,7 +51,6 @@ void BubbleCloudEngineWrapper::prepare(double sampleRate, int samplesPerBlock)
     // Allocate buffers
     delayBufferL.assign(requiredBufferSize, 0);
     delayBufferR.assign(requiredBufferSize, 0);
-    monoMixBuffer.assign((size_t)safeSamplesPerBlock, 0.0f);
     scratchRightFromLeftEngine.assign((size_t)safeSamplesPerBlock, 0.0f);
     scratchLeftFromRightEngine.assign((size_t)safeSamplesPerBlock, 0.0f);
     
@@ -45,16 +72,36 @@ void BubbleCloudEngineWrapper::prepare(double sampleRate, int samplesPerBlock)
     bubble_engine_init(&engineR, delayBufferR.data(), &configR);
     bubble_engine_set_parameter(&engineL, BUBBLE_PARAM_DEVELOPER_MODE, 1.0f);
     bubble_engine_set_parameter(&engineR, BUBBLE_PARAM_DEVELOPER_MODE, 1.0f);
+    bubble_engine_set_metrics_callback(&engineL, metricsCallback, &metricsContextL);
+    bubble_engine_set_metrics_callback(&engineR, metricsCallback, &metricsContextR);
     lastHostTempo = -1.0f;
     prepared = true;
+
+    telemetryActiveVoices.store(0);
+    telemetryActiveVoiceLimit.store(engineL.active_voice_limit + engineR.active_voice_limit);
+    telemetrySpawnCount.store(0);
+    telemetryRhythmStep.store(-1);
+    telemetryEnvelopeL.store(0.0f);
+    telemetryEnvelopeR.store(0.0f);
+    telemetryPeakL.store(0.0f);
+    telemetryPeakR.store(0.0f);
+    telemetryLimiterGainL.store(1.0f);
+    telemetryLimiterGainR.store(1.0f);
+    telemetryTempoSync.store(0);
+    telemetryFrozen.store(0);
+    telemetrySamplesUntilVoicePublish = 0;
+    for (auto& voice : telemetryVoices)
+        voice.active.store(0);
     
     // Decorrelate the right channel's RNG seed so it doesn't sound completely mono
     engineR.rng_state ^= 0x55555555;
     
-    // Apply previously set parameters (macros)
-    for (auto const& [k, v] : macroValues) {
-        bubble_engine_set_parameter(&engineL, k, v);
-        bubble_engine_set_parameter(&engineR, k, v);
+    // Apply previously set parameters without maps or other dynamic storage.
+    for (std::size_t i = 0; i < cachedParameterIds.size(); ++i) {
+        if (!cachedParameterValid[i])
+            continue;
+        bubble_engine_set_parameter(&engineL, cachedParameterIds[i], cachedParameterValues[i]);
+        bubble_engine_set_parameter(&engineR, cachedParameterIds[i], cachedParameterValues[i]);
     }
 }
 
@@ -74,38 +121,177 @@ void BubbleCloudEngineWrapper::process(const float* inLeft, const float* inRight
         inRight = inLeft;
     }
 
-    // Resize mono mix buffer if needed
-    if (monoMixBuffer.size() < (size_t)numSamples) {
-        monoMixBuffer.resize(numSamples, 0.0f);
+    // The C core is mono-in/stereo-out. Two synchronized instances preserve
+    // each input channel's own memory while retaining the core's spatial DSP.
+    // Processing in prepared-size chunks avoids allocations in the audio callback
+    // if a host unexpectedly supplies a larger block.
+    const int scratchCapacity = (int)std::min(scratchRightFromLeftEngine.size(),
+                                              scratchLeftFromRightEngine.size());
+    if (scratchCapacity <= 0) {
+        std::fill(outLeft, outLeft + numSamples, 0.0f);
+        std::fill(outRight, outRight + numSamples, 0.0f);
+        return;
     }
-    if (scratchRightFromLeftEngine.size() < (size_t)numSamples) {
-        scratchRightFromLeftEngine.resize(numSamples, 0.0f);
+
+    int processed = 0;
+    while (processed < numSamples) {
+        const int chunk = std::min(numSamples - processed, scratchCapacity);
+        bubble_engine_process(&engineL,
+                              inLeft + processed,
+                              outLeft + processed,
+                              scratchRightFromLeftEngine.data(),
+                              chunk);
+        bubble_engine_process(&engineR,
+                              inRight + processed,
+                              scratchLeftFromRightEngine.data(),
+                              outRight + processed,
+                              chunk);
+        processed += chunk;
     }
-    if (scratchLeftFromRightEngine.size() < (size_t)numSamples) {
-        scratchLeftFromRightEngine.resize(numSamples, 0.0f);
+
+    const bool tempoSync = engineL.config.tempo_sync_enabled != 0;
+    const int nextStep = engineL.rhythm_step_index & 15;
+    telemetryRhythmStep.store(tempoSync ? ((nextStep + 15) & 15) : -1, std::memory_order_relaxed);
+    telemetryTempoSync.store(tempoSync ? 1 : 0, std::memory_order_relaxed);
+
+    telemetrySamplesUntilVoicePublish -= numSamples;
+    if (telemetrySamplesUntilVoicePublish <= 0) {
+        publishVoiceTelemetry();
+        telemetrySamplesUntilVoicePublish = std::max(1, (int)(currentSampleRate / 60.0));
     }
-    
-    // Downmix to mono: L+R / 2 (Wait, dual-mono implementation from Phase 1)
-    for (int i = 0; i < numSamples; ++i) {
-        monoMixBuffer[i] = 0.5f * (inLeft[i] + inRight[i]);
+}
+
+void BubbleCloudEngineWrapper::storePeak(std::atomic<float>& destination, float value) noexcept
+{
+    float current = destination.load(std::memory_order_relaxed);
+    while (value > current
+           && !destination.compare_exchange_weak(current, value,
+                                                 std::memory_order_relaxed,
+                                                 std::memory_order_relaxed)) {
     }
-    
-    // The core takes mono in, stereo out. 
-    // We run two instances, each giving a stereo pair. 
-    // For a dual-mono VST, we want to sum the left output of engine L and right output of engine R.
-    // Wait, the user specifically wants downmix for state coherence, then each engine outputs a stereo field.
-    // If we just use L output from engineL and R output from engineR, we get decorrelated dual-mono!
-    // But engineL outputs both Left and Right. To preserve the engine's internal panning (if any), 
-    // we should just use engineL for left and engineR for right, or sum them. 
-    // Let's use engineL's outLeft and engineR's outRight for a true wide stereo from two engines.
-    
-    bubble_engine_process(&engineL, monoMixBuffer.data(), outLeft, scratchRightFromLeftEngine.data(), numSamples);
-    bubble_engine_process(&engineR, monoMixBuffer.data(), scratchLeftFromRightEngine.data(), outRight, numSamples);
+}
+
+void BubbleCloudEngineWrapper::metricsCallback(const BubbleEngineBlockMetrics_t* metrics, void* userData)
+{
+    if (metrics == nullptr || userData == nullptr)
+        return;
+
+    const auto* context = static_cast<const MetricsCallbackContext*>(userData);
+    auto* owner = context->owner;
+    if (owner == nullptr)
+        return;
+
+    int spawnCount = owner->telemetrySpawnCount.load(std::memory_order_relaxed);
+    const int addedSpawns = std::max(0, metrics->spawn_count);
+    while (spawnCount < 1024) {
+        const int nextCount = std::min(1024, spawnCount + addedSpawns);
+        if (owner->telemetrySpawnCount.compare_exchange_weak(spawnCount, nextCount,
+                                                             std::memory_order_relaxed,
+                                                             std::memory_order_relaxed))
+            break;
+    }
+    if (context->channel == 0) {
+        owner->telemetryEnvelopeL.store(metrics->envelope, std::memory_order_relaxed);
+        owner->telemetryEngineStateL.store(metrics->engine_state, std::memory_order_relaxed);
+        owner->telemetryLimiterGainL.store(metrics->limiter_gain, std::memory_order_relaxed);
+        storePeak(owner->telemetryPeakL, metrics->peak_l);
+    } else {
+        owner->telemetryEnvelopeR.store(metrics->envelope, std::memory_order_relaxed);
+        owner->telemetryEngineStateR.store(metrics->engine_state, std::memory_order_relaxed);
+        owner->telemetryLimiterGainR.store(metrics->limiter_gain, std::memory_order_relaxed);
+        storePeak(owner->telemetryPeakR, metrics->peak_r);
+    }
+}
+
+void BubbleCloudEngineWrapper::publishVoiceTelemetry() noexcept
+{
+    int activeVoices = 0;
+
+    const auto publishEngine = [this, &activeVoices](const BubbleEngine_t& engine, int channel) {
+        for (int i = 0; i < BUBBLES_MAX_VOICES; ++i) {
+            const int telemetryIndex = channel * BUBBLES_MAX_VOICES + i;
+            auto& destination = telemetryVoices[(std::size_t)telemetryIndex];
+            const auto& source = engine.voices[i];
+            const bool active = i < engine.active_voice_limit && source.state != VOICE_STATE_INACTIVE;
+            if (!active) {
+                destination.active.store(0, std::memory_order_release);
+                continue;
+            }
+
+            const float panDenominator = std::max(0.0001f, source.pan_l + source.pan_r);
+            const float localPan = std::clamp((source.pan_r - source.pan_l) / panDenominator, -1.0f, 1.0f);
+            const float channelCentre = channel == 0 ? -0.64f : 0.64f;
+            const float globalPan = std::clamp(channelCentre + localPan * 0.34f, -1.0f, 1.0f);
+            destination.phase.store(source.phase, std::memory_order_relaxed);
+            destination.pan.store(globalPan, std::memory_order_relaxed);
+            destination.gain.store(std::abs(source.gain * source.amp), std::memory_order_relaxed);
+            destination.pitchRate.store(std::abs(source.quantized_rate), std::memory_order_relaxed);
+            destination.bubbleClass.store((int)source.bubble_class, std::memory_order_relaxed);
+            destination.reverse.store(source.read_direction != 0 ? 1 : 0, std::memory_order_relaxed);
+            destination.channel.store(channel, std::memory_order_relaxed);
+            destination.active.store(1, std::memory_order_release);
+            ++activeVoices;
+        }
+    };
+
+    publishEngine(engineL, 0);
+    publishEngine(engineR, 1);
+    telemetryActiveVoices.store(activeVoices, std::memory_order_relaxed);
+    telemetryActiveVoiceLimit.store(engineL.active_voice_limit + engineR.active_voice_limit,
+                                    std::memory_order_relaxed);
+    const bool tempoSync = engineL.config.tempo_sync_enabled != 0;
+    const int nextStep = engineL.rhythm_step_index & 15;
+    telemetryRhythmStep.store(tempoSync ? ((nextStep + 15) & 15) : -1, std::memory_order_relaxed);
+    telemetryTempoSync.store(tempoSync ? 1 : 0, std::memory_order_relaxed);
+    const bool frozen = engineL.config.freeze_enabled != 0 || engineL.config.freeze_amount >= 0.5f;
+    telemetryFrozen.store(frozen ? 1 : 0, std::memory_order_relaxed);
+}
+
+BubbleCloudTelemetry BubbleCloudEngineWrapper::getTelemetrySnapshot() noexcept
+{
+    BubbleCloudTelemetry snapshot;
+    snapshot.activeVoices = telemetryActiveVoices.load(std::memory_order_relaxed);
+    snapshot.activeVoiceLimit = telemetryActiveVoiceLimit.load(std::memory_order_relaxed);
+    snapshot.spawnCount = telemetrySpawnCount.exchange(0, std::memory_order_relaxed);
+    const float envelopeL = telemetryEnvelopeL.load(std::memory_order_relaxed);
+    const float envelopeR = telemetryEnvelopeR.load(std::memory_order_relaxed);
+    snapshot.envelope = 0.5f * (envelopeL + envelopeR);
+    snapshot.engineState = envelopeL >= envelopeR
+        ? telemetryEngineStateL.load(std::memory_order_relaxed)
+        : telemetryEngineStateR.load(std::memory_order_relaxed);
+    snapshot.rhythmStep = telemetryRhythmStep.load(std::memory_order_relaxed);
+    snapshot.peakLeft = telemetryPeakL.exchange(0.0f, std::memory_order_relaxed);
+    snapshot.peakRight = telemetryPeakR.exchange(0.0f, std::memory_order_relaxed);
+    snapshot.limiterGain = std::min(telemetryLimiterGainL.load(std::memory_order_relaxed),
+                                    telemetryLimiterGainR.load(std::memory_order_relaxed));
+    snapshot.tempoSync = telemetryTempoSync.load(std::memory_order_relaxed) != 0;
+    snapshot.frozen = telemetryFrozen.load(std::memory_order_relaxed) != 0;
+
+    for (std::size_t i = 0; i < telemetryVoices.size(); ++i) {
+        const auto& source = telemetryVoices[i];
+        auto& destination = snapshot.voices[i];
+        destination.active = source.active.load(std::memory_order_acquire) != 0;
+        if (!destination.active)
+            continue;
+        destination.phase = source.phase.load(std::memory_order_relaxed);
+        destination.pan = source.pan.load(std::memory_order_relaxed);
+        destination.gain = source.gain.load(std::memory_order_relaxed);
+        destination.pitchRate = source.pitchRate.load(std::memory_order_relaxed);
+        destination.bubbleClass = source.bubbleClass.load(std::memory_order_relaxed);
+        destination.reverse = source.reverse.load(std::memory_order_relaxed) != 0;
+        destination.channel = source.channel.load(std::memory_order_relaxed);
+    }
+
+    return snapshot;
 }
 
 void BubbleCloudEngineWrapper::setParameter(BubbleParameterId paramId, float value)
 {
-    macroValues[paramId] = value;
+    const int cacheIndex = cachedParameterIndex(paramId);
+    if (cacheIndex >= 0) {
+        cachedParameterValues[(std::size_t)cacheIndex] = value;
+        cachedParameterValid[(std::size_t)cacheIndex] = true;
+    }
     if (!prepared) {
         return;
     }
@@ -116,8 +302,19 @@ void BubbleCloudEngineWrapper::setParameter(BubbleParameterId paramId, float val
 
 float BubbleCloudEngineWrapper::getParameter(BubbleParameterId paramId) const
 {
-    auto it = macroValues.find(paramId);
-    return it != macroValues.end() ? it->second : 0.0f;
+    const int cacheIndex = cachedParameterIndex(paramId);
+    return cacheIndex >= 0 && cachedParameterValid[(std::size_t)cacheIndex]
+        ? cachedParameterValues[(std::size_t)cacheIndex]
+        : 0.0f;
+}
+
+int BubbleCloudEngineWrapper::cachedParameterIndex(BubbleParameterId paramId) noexcept
+{
+    for (std::size_t i = 0; i < cachedParameterIds.size(); ++i) {
+        if (cachedParameterIds[i] == paramId)
+            return (int)i;
+    }
+    return -1;
 }
 
 void BubbleCloudEngineWrapper::setHostTempo(float bpm)
