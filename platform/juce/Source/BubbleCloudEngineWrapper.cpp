@@ -51,8 +51,12 @@ void BubbleCloudEngineWrapper::prepare(double sampleRate, int samplesPerBlock)
     // Allocate buffers
     delayBufferL.assign(requiredBufferSize, 0);
     delayBufferR.assign(requiredBufferSize, 0);
-    scratchRightFromLeftEngine.assign((size_t)safeSamplesPerBlock, 0.0f);
-    scratchLeftFromRightEngine.assign((size_t)safeSamplesPerBlock, 0.0f);
+    wetLeftFromL.assign((size_t)safeSamplesPerBlock, 0.0f);
+    wetRightFromL.assign((size_t)safeSamplesPerBlock, 0.0f);
+    dryFromL.assign((size_t)safeSamplesPerBlock, 0.0f);
+    wetLeftFromR.assign((size_t)safeSamplesPerBlock, 0.0f);
+    wetRightFromR.assign((size_t)safeSamplesPerBlock, 0.0f);
+    dryFromR.assign((size_t)safeSamplesPerBlock, 0.0f);
     
     // Initialize default configs
     EngineConfig_t configL, configR;
@@ -122,11 +126,14 @@ void BubbleCloudEngineWrapper::process(const float* inLeft, const float* inRight
     }
 
     // The C core is mono-in/stereo-out. Two synchronized instances preserve
-    // each input channel's own memory while retaining the core's spatial DSP.
-    // Processing in prepared-size chunks avoids allocations in the audio callback
-    // if a host unexpectedly supplies a larger block.
-    const int scratchCapacity = (int)std::min(scratchRightFromLeftEngine.size(),
-                                              scratchLeftFromRightEngine.size());
+    // each input channel's own memory. The wrapper consumes the full spatial
+    // wet field from both instances (LL+RL -> left, LR+RR -> right) and keeps
+    // dry strictly channel-local (dry L only on L, dry R only on R). Dry is
+    // never added twice, and a single shared final limiter runs on the summed
+    // stereo bus. Processing in prepared-size chunks avoids allocations in the
+    // audio callback if a host unexpectedly supplies a larger block.
+    const int scratchCapacity = (int)std::min({ wetLeftFromL.size(), wetRightFromL.size(), dryFromL.size(),
+                                                wetLeftFromR.size(), wetRightFromR.size(), dryFromR.size() });
     if (scratchCapacity <= 0) {
         std::fill(outLeft, outLeft + numSamples, 0.0f);
         std::fill(outRight, outRight + numSamples, 0.0f);
@@ -136,16 +143,35 @@ void BubbleCloudEngineWrapper::process(const float* inLeft, const float* inRight
     int processed = 0;
     while (processed < numSamples) {
         const int chunk = std::min(numSamples - processed, scratchCapacity);
-        bubble_engine_process(&engineL,
-                              inLeft + processed,
-                              outLeft + processed,
-                              scratchRightFromLeftEngine.data(),
-                              chunk);
-        bubble_engine_process(&engineR,
-                              inRight + processed,
-                              scratchLeftFromRightEngine.data(),
-                              outRight + processed,
-                              chunk);
+        bubble_engine_process_spatial(&engineL,
+                                      inLeft + processed,
+                                      wetLeftFromL.data(),
+                                      wetRightFromL.data(),
+                                      dryFromL.data(),
+                                      chunk);
+        bubble_engine_process_spatial(&engineR,
+                                      inRight + processed,
+                                      wetLeftFromR.data(),
+                                      wetRightFromR.data(),
+                                      dryFromR.data(),
+                                      chunk);
+
+        float peakL = 0.0f;
+        float peakR = 0.0f;
+        for (int i = 0; i < chunk; ++i) {
+            const float left = dryFromL[(size_t)i] + wetLeftFromL[(size_t)i] + wetLeftFromR[(size_t)i];
+            const float right = dryFromR[(size_t)i] + wetRightFromL[(size_t)i] + wetRightFromR[(size_t)i];
+            outLeft[processed + i] = left;
+            outRight[processed + i] = right;
+            const float absLeft = std::abs(left);
+            const float absRight = std::abs(right);
+            if (absLeft > peakL) peakL = absLeft;
+            if (absRight > peakR) peakR = absRight;
+        }
+
+        bubble_engine_apply_final_limiter(&engineL, outLeft + processed, outRight + processed, chunk);
+        storePeak(telemetryPeakL, peakL);
+        storePeak(telemetryPeakR, peakR);
         processed += chunk;
     }
 

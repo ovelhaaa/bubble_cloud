@@ -20,6 +20,11 @@ void wasm_init(float sample_rate) {
 bubble_engine_default_config(&config);
 config.sample_rate = sample_rate;
 bubble_engine_init(&engine, delay_buffer, &config);
+// Mirror the JUCE wrapper: enable developer mode so the raw DSP parameters used
+// by presets and the parity harness are actually applied. Without this the
+// developer-only gate silently drops region/duration/gain updates, breaking
+// Offline C <-> WASM parity.
+bubble_engine_set_parameter(&engine, BUBBLE_PARAM_DEVELOPER_MODE, 1.0f);
 }
 
 EMSCRIPTEN_KEEPALIVE

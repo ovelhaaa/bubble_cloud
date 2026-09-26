@@ -171,6 +171,16 @@ void bubble_engine_reset(BubbleEngine_t* engine);
 void bubble_engine_reset_motion_phase(BubbleEngine_t* engine);
 void bubble_engine_sync_rhythm_phase(BubbleEngine_t* engine, double ppq_position);
 void bubble_engine_process(BubbleEngine_t* engine, const float* in_mono, float* out_left, float* out_right, int num_samples);
+// Spatial split processing for multi-instance host wrappers. Writes the wet
+// stereo bus and dry mono bus separately and skips the final limiter. The host
+// combines instances and calls bubble_engine_apply_final_limiter on the result.
+void bubble_engine_process_spatial(BubbleEngine_t* engine, const float* in_mono,
+                                   float* out_wet_left, float* out_wet_right,
+                                   float* out_dry_mono, int num_samples);
+// Applies the engine's final-limiter policy to an already mixed stereo block.
+void bubble_engine_apply_final_limiter(BubbleEngine_t* engine, float* out_left, float* out_right, int num_samples);
+// Converts a 44.1 kHz reference sample offset to samples at the given rate.
+int32_t bubble_engine_reference_samples_to_samples(int32_t reference_samples, float sample_rate);
 bool bubble_engine_set_parameter(BubbleEngine_t* engine, BubbleEngineParameterId_t parameter, float value);
 bool bubble_engine_get_parameter(const BubbleEngine_t* engine, BubbleEngineParameterId_t parameter, float* value);
 bool bubble_engine_load_preset(BubbleEngine_t* engine, const BubbleEnginePreset_t* preset);

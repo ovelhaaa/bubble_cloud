@@ -234,6 +234,7 @@ void BubbleCloudAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     expectedNextPpq = 0.0;
     hasExpectedNextPpq = false;
     wasTransportPlaying = false;
+    lastValidHostBpm = 120.0;
     midiFreezeActive.store(false);
     captureHeld.store(false);
     effectiveFreezeActive.store(false);
@@ -350,9 +351,13 @@ void BubbleCloudAudioProcessor::updateHostTransport(int numSamples)
         return;
     }
 
-    double effectiveBpm = 120.0;
+    // BPM fallback priority: current valid host BPM, then the last valid host
+    // BPM, then 120 only as the initial fallback. This avoids forcing 120 and
+    // resynchronising when the host momentarily reports PPQ without a BPM.
+    double effectiveBpm = lastValidHostBpm;
     if (const auto bpm = position->getBpm(); bpm.hasValue() && std::isfinite(*bpm)) {
         effectiveBpm = juce::jlimit(20.0, 300.0, *bpm);
+        lastValidHostBpm = effectiveBpm;
         engineWrapper.setHostTempo((float)effectiveBpm);
     }
 

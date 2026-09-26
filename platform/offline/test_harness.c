@@ -14,6 +14,8 @@
 #define NUM_SAMPLES (SAMPLE_RATE * TEST_DURATION_SEC)
 #define NUM_DRAIN_SAMPLES (SAMPLE_RATE * DRAIN_DURATION_SEC)
 #define SAFETY_BOUND 5.0f
+// Two-second int16 delay buffer at the harness sample rate (see SoundBubbles_RequiredBufferSamples).
+#define BUBBLES_BUFFER_SIZE_SAMPLES (int)(2 * SAMPLE_RATE)
 
 // Memory for the 2-second delay buffer
 static int16_t delay_buffer_memory[BUBBLES_BUFFER_SIZE_SAMPLES];
@@ -71,6 +73,7 @@ static void GenerateTestVector(TestVectorType_t type, float* buffer, int num_sam
 static EngineConfig_t GetBaselineConfig() {
     EngineConfig_t cfg = {0};
 
+    cfg.sample_rate = (float)SAMPLE_RATE;
     cfg.noise_floor = 0.001f;
     cfg.tracking_thresh = 0.01f;
     cfg.sustain_thresh = 0.1f;

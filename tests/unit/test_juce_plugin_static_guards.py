@@ -134,6 +134,15 @@ def test_juce_wrapper_preserves_stereo_input_without_audio_thread_allocations() 
     assert "inRight + processed" in wrapper
     assert "scratchCapacity" in wrapper
 
+    # Full spatial wet field is preserved from both mono instances and dry stays
+    # channel-local with a single shared final limiter (no double-dry).
+    assert "bubble_engine_process_spatial" in wrapper
+    assert "bubble_engine_apply_final_limiter" in wrapper
+    assert "wetLeftFromL" in wrapper_header
+    assert "wetLeftFromR" in wrapper_header
+    assert "dryFromL" in wrapper_header
+    assert "dryFromR" in wrapper_header
+
     process_body = re.search(
         r"void BubbleCloudEngineWrapper::process\(.*?\n\}",
         wrapper,
@@ -143,6 +152,15 @@ def test_juce_wrapper_preserves_stereo_input_without_audio_thread_allocations() 
     assert ".resize(" not in process_body.group(0)
     assert "std::map" not in wrapper
     assert "std::map" not in wrapper_header
+
+
+def test_host_bpm_fallback_preserves_last_valid_bpm() -> None:
+    processor = PLUGIN_PROCESSOR.read_text(encoding="utf-8")
+    header = PLUGIN_PROCESSOR_HEADER.read_text(encoding="utf-8")
+
+    assert "lastValidHostBpm" in header
+    assert "double effectiveBpm = lastValidHostBpm;" in processor
+    assert "lastValidHostBpm = effectiveBpm;" in processor
 
 
 def test_performance_controls_support_midi_capture_scene_morph_and_rhythm_ui() -> None:

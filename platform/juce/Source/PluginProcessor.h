@@ -62,6 +62,7 @@ private:
     double expectedNextPpq = 0.0;
     bool hasExpectedNextPpq = false;
     bool wasTransportPlaying = false;
+    double lastValidHostBpm = 120.0;
     std::array<std::atomic<float>, sceneParameterCount> sceneA;
     std::array<std::atomic<float>, sceneParameterCount> sceneB;
     std::array<float, sceneParameterCount> lastAppliedSceneValues {};

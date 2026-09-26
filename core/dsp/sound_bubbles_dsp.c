@@ -1,15 +1,37 @@
 #define SOUND_BUBBLES_DSP_INTERNAL 1
 #include "sound_bubbles_dsp.h"
 
-size_t SoundBubbles_RequiredBufferSamples(float sample_rate) {
-    return (size_t)(2.0f * sample_rate);
-}
-
 #include <float.h>
 #include <math.h>
 #include <stddef.h>
 
+size_t SoundBubbles_RequiredBufferSamples(float sample_rate) {
+    return (size_t)(2.0f * sample_rate);
+}
+
+int32_t SoundBubbles_ReferenceSamplesToSamples(int32_t reference_samples, float sample_rate) {
+    if (sample_rate <= 0.0f || !isfinite(sample_rate)) {
+        sample_rate = BUBBLES_REFERENCE_SAMPLE_RATE;
+    }
+    float scaled = (float)reference_samples * (sample_rate / BUBBLES_REFERENCE_SAMPLE_RATE);
+    if (!isfinite(scaled)) {
+        return reference_samples;
+    }
+    if (scaled > 2147483000.0f) return 2147483000;
+    if (scaled < -2147483000.0f) return -2147483000;
+    return (int32_t)lroundf(scaled);
+}
+
 void bubble_macro_map_default_values(float macro_values[BUBBLES_MACRO_COUNT]);
+
+static int32_t ResolveFadeSamples(float sample_rate) {
+    if (sample_rate <= 0.0f || !isfinite(sample_rate)) {
+        sample_rate = BUBBLES_REFERENCE_SAMPLE_RATE;
+    }
+    int32_t samples = (int32_t)lroundf(BUBBLES_FADE_MS * 0.001f * sample_rate);
+    if (samples < 1) samples = 1;
+    return samples;
+}
 
 const BubbleQualityProfileLimits_t BUBBLE_QUALITY_PROFILE_LIMITS[BUBBLE_QUALITY_PROFILE_COUNT] = {
     { BUBBLE_QUALITY_PROFILE_MCU_SAFE,     "MCU_SAFE",      35, 256,  8 },
@@ -26,8 +48,9 @@ const BubbleQualityProfileLimits_t BUBBLE_QUALITY_PROFILE_LIMITS[BUBBLE_QUALITY_
 #define ENV_ATTACK_COEF  0.1f   // ~fast tracking for attacks
 #define ENV_RELEASE_COEF 0.01f  // ~slow tracking for sustain/decay
 
-// Minimum phase (age) before a voice is considered "stealable" to avoid dropping very young clicks
-#define STEAL_MIN_PHASE_THRESHOLD 0.05f
+// Young micro-attack bubbles are protected until they are at least this far
+// through their lifespan (ENGINE_BEHAVIOR_SPEC.md rule 1).
+#define STEAL_MICRO_PROTECT_PHASE 0.5f
 #define PRESENCE_BLOOM_TICKS 32
 
 // Internal non-UI defaults for bus and presence shaping (musical tuning constants).
@@ -64,6 +87,19 @@ typedef struct {
 } ReadRegionChoice_t;
 
 // --- Static Helper Prototypes ---
+typedef enum {
+    BUBBLES_OUTPUT_FULL = 0,    // dry + wet + final limiter to out_left/out_right
+    BUBBLES_OUTPUT_SPATIAL = 1  // wet to out_left/out_right, dry to out_dry
+} BubbleOutputMode_t;
+
+static int32_t ResolveFadeSamples(float sample_rate);
+static void ProcessBlockInternal(SoundBubblesEngine_t* engine,
+                                 const float* in_mono,
+                                 float* out_left,
+                                 float* out_right,
+                                 float* out_dry,
+                                 int num_samples,
+                                 BubbleOutputMode_t output_mode);
 static void InitWindowLUTs(void);
 static uint32_t NextRandomU32(SoundBubblesEngine_t* engine);
 static float RandomFloat01(SoundBubblesEngine_t* engine);
@@ -159,6 +195,7 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     ApplyQualityTierDefaults(&engine->config);
     engine->motion_base_config = engine->config;
     engine->active_voice_limit = engine->config.active_voice_limit;
+    engine->fade_samples = ResolveFadeSamples(engine->config.sample_rate);
     SoundBubbles_SetRngSeed(engine, engine->config.rng_seed);
 
     engine->write_ptr = 0;
@@ -254,6 +291,7 @@ void SoundBubbles_UpdateConfig(SoundBubblesEngine_t* engine, const EngineConfig_
     ApplyQualityTierDefaults(&engine->motion_base_config);
     engine->config = engine->motion_base_config;
     engine->active_voice_limit = engine->config.active_voice_limit;
+    engine->fade_samples = ResolveFadeSamples(engine->config.sample_rate);
     DeactivateVoicesAboveActiveLimit(engine);
     if (rng_seed_changed) {
         SoundBubbles_SetRngSeed(engine, engine->config.rng_seed);
@@ -264,6 +302,7 @@ void SoundBubbles_UpdateRuntimeConfig(SoundBubblesEngine_t* engine, const Engine
     engine->config = *new_config;
     ApplyQualityTierDefaults(&engine->config);
     engine->active_voice_limit = engine->config.active_voice_limit;
+    engine->fade_samples = ResolveFadeSamples(engine->config.sample_rate);
     DeactivateVoicesAboveActiveLimit(engine);
 }
 
@@ -291,6 +330,14 @@ void SoundBubbles_SetMetricsCallback(SoundBubblesEngine_t* engine, SoundBubblesM
 // --- Audio-Rate Processing Loop ---
 
 void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mono, float* out_left, float* out_right, int num_samples) {
+    ProcessBlockInternal(engine, in_mono, out_left, out_right, NULL, num_samples, BUBBLES_OUTPUT_FULL);
+}
+
+void SoundBubbles_ProcessBlockSpatial(SoundBubblesEngine_t* engine, const float* in_mono, float* out_wet_left, float* out_wet_right, float* out_dry_mono, int num_samples) {
+    ProcessBlockInternal(engine, in_mono, out_wet_left, out_wet_right, out_dry_mono, num_samples, BUBBLES_OUTPUT_SPATIAL);
+}
+
+static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_mono, float* out_left, float* out_right, float* out_dry, int num_samples, BubbleOutputMode_t output_mode) {
     if (engine == NULL || in_mono == NULL || out_left == NULL || out_right == NULL || num_samples <= 0) return;
     int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(engine->config.sample_rate);
     float block_peak = 0.0f;
@@ -332,7 +379,7 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
             // Handle preemption and forced release fading
             if (v->state == VOICE_STATE_PREEMPT_FADING) {
                 v->fade_counter--;
-                v->amp = (float)v->fade_counter * (1.0f / (float)BUBBLES_FADE_SAMPLES);
+                v->amp = (float)v->fade_counter * (1.0f / (float)engine->fade_samples);
                 if (v->fade_counter <= 0) {
                     v->state = VOICE_STATE_INACTIVE;
                     continue;
@@ -357,7 +404,7 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
             // frozen/live write head neighborhood.
             if (v->state == VOICE_STATE_PLAYING && CheckGuardZoneDirectional(engine->write_ptr, v->read_ptr_float, v->rate, buffer_size)) {
                 v->state = VOICE_STATE_PREEMPT_FADING;
-                v->fade_counter = BUBBLES_FADE_SAMPLES;
+                v->fade_counter = engine->fade_samples;
             }
 
             // Interpolate and apply window
@@ -386,7 +433,8 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
         float sustain_filtered_r = Filter1Pole_ProcessLPF(&engine->sustain_lpf_r, bus_sustain_r);
 
         if (engine->config.sustain_diffusion_enable) {
-            int delay_samples = engine->config.sustain_diffusion_delay;
+            int delay_samples = SoundBubbles_ReferenceSamplesToSamples(
+                engine->config.sustain_diffusion_delay, engine->config.sample_rate);
             if (delay_samples < 2) delay_samples = 2;
             if (delay_samples >= BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY) {
                 delay_samples = BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY - 1;
@@ -438,15 +486,25 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
         float wet_mix_r = wet_sum_r * wet_gain;
         float dry_mix = dry_sample * engine->master_dry_gain;
 
-        float final_l = dry_mix + wet_mix_l;
-        float final_r = dry_mix + wet_mix_r;
-        float limiter_gain = ProcessFinalLimiterSample(engine, &final_l, &final_r);
+        float final_l;
+        float final_r;
+        if (output_mode == BUBBLES_OUTPUT_SPATIAL) {
+            final_l = wet_mix_l;
+            final_r = wet_mix_r;
+            if (out_dry != NULL) {
+                out_dry[i] = dry_mix;
+            }
+        } else {
+            final_l = dry_mix + wet_mix_l;
+            final_r = dry_mix + wet_mix_r;
+            float limiter_gain = ProcessFinalLimiterSample(engine, &final_l, &final_r);
+            if (limiter_gain < engine->metrics_limiter_gain_min) engine->metrics_limiter_gain_min = limiter_gain;
+        }
 
         float out_abs_l = fabsf(final_l);
         float out_abs_r = fabsf(final_r);
         if (out_abs_l > engine->metrics_peak_l_accum) engine->metrics_peak_l_accum = out_abs_l;
         if (out_abs_r > engine->metrics_peak_r_accum) engine->metrics_peak_r_accum = out_abs_r;
-        if (limiter_gain < engine->metrics_limiter_gain_min) engine->metrics_limiter_gain_min = limiter_gain;
 
         out_left[i] = final_l;
         out_right[i] = final_r;
@@ -489,6 +547,26 @@ void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mon
 
             block_peak = 0.0f;
         }
+    }
+}
+
+void SoundBubbles_ApplyFinalLimiter(SoundBubblesEngine_t* engine, float* out_left, float* out_right, int num_samples) {
+    if (engine == NULL || out_left == NULL || out_right == NULL || num_samples <= 0) return;
+
+    CacheFinalLimiterBlockParams(engine);
+    for (int i = 0; i < num_samples; i++) {
+        float final_l = out_left[i];
+        float final_r = out_right[i];
+        float limiter_gain = ProcessFinalLimiterSample(engine, &final_l, &final_r);
+
+        float out_abs_l = fabsf(final_l);
+        float out_abs_r = fabsf(final_r);
+        if (out_abs_l > engine->metrics_peak_l_accum) engine->metrics_peak_l_accum = out_abs_l;
+        if (out_abs_r > engine->metrics_peak_r_accum) engine->metrics_peak_r_accum = out_abs_r;
+        if (limiter_gain < engine->metrics_limiter_gain_min) engine->metrics_limiter_gain_min = limiter_gain;
+
+        out_left[i] = final_l;
+        out_right[i] = final_r;
     }
 }
 
@@ -752,9 +830,18 @@ static void Scheduler_RunTick(SoundBubblesEngine_t* engine) {
     if (engine->strum_pending_count > 0 && spawns_this_tick < SCHED_MAX_SPAWNS_PER_TICK) {
         BubbleClass_t c = (engine->strum_step_index % 3 == 0) ? BUBBLE_CLASS_MICRO_ATTACK :
                           ((engine->strum_step_index % 3 == 1) ? BUBBLE_CLASS_SHORT_INTERMEDIATE : BUBBLE_CLASS_SUSTAIN_BODY);
-        if (Voice_RequestSpawn(engine, c, 0)) { engine->metrics_tick_spawn_count++; spawns_this_tick++; }
-        engine->strum_pending_count--;
-        engine->strum_step_index++;
+        // Voice_RequestSpawn returns true only for an immediate spawn; it queues a
+        // pending spawn when the pool is full and returns false, and returns false
+        // without queueing when the pending queue is also full. Only consume the
+        // strum event when it can be either spawned now or safely queued so strum
+        // events are never silently dropped under saturation.
+        int inactive_idx = Voice_FindInactiveSlot(engine);
+        bool can_place = (inactive_idx >= 0) || (engine->pending_spawn_count < BUBBLES_PENDING_SPAWN_CAPACITY);
+        if (can_place) {
+            if (Voice_RequestSpawn(engine, c, 0)) { engine->metrics_tick_spawn_count++; spawns_this_tick++; }
+            engine->strum_pending_count--;
+            engine->strum_step_index++;
+        }
     }
 
     if (engine->engine_state == ENGINE_STATE_SILENCE) {
@@ -808,12 +895,15 @@ static int Voice_Allocate(SoundBubblesEngine_t* engine) {
         return inactive_idx;
     }
 
-    // 2. Stealing policy when fully occupied (deterministic, bounded, musically protective):
-    //    - Class priority is MICRO first, then SHORT, then SUSTAIN/BODY.
-    //    - Inside a class, steal the "least useful" voice: older phase and lower remaining contribution.
-    //    - Young-voice protection threshold is respected first. If every voice is still young,
-    //      deterministically fall back to the best global candidate so a spawn request can queue.
-    //    - Tie-breaks are resolved by lower voice index for fixed-seed reproducibility.
+    // 2. Stealing policy when fully occupied (deterministic, bounded, musically protective).
+    //    Matches ENGINE_BEHAVIOR_SPEC.md section 6 / SOUND_BUBBLES_V1_BASELINE_SPEC.md rule 1-3:
+    //      - Protect young micro-attacks: never steal a MICRO voice with phase < 0.5.
+    //      - Prefer victims by class rank SUSTAIN (0) -> SHORT (1) -> MICRO (2).
+    //      - Inside a class, steal the oldest voice (highest phase), i.e. the lowest
+    //        remaining musical contribution.
+    //      - If every voice is a protected young micro-attack, deterministically fall
+    //        back to the oldest global candidate so a spawn request can still queue.
+    //      - Tie-breaks are resolved by lower voice index for fixed-seed reproducibility.
     //
     // Active victims are never returned as ready-to-write slots. They are moved into
     // PREEMPT_FADING and keep their read pointer/phase fields intact until the fade
@@ -831,8 +921,8 @@ static int Voice_Allocate(SoundBubblesEngine_t* engine) {
             continue;
         }
 
-        int class_rank = 2; // lowest steal priority by default (Sustain/Body)
-        if (v->bubble_class == BUBBLE_CLASS_MICRO_ATTACK) {
+        int class_rank = 2; // MICRO is the most protected victim class by default
+        if (v->bubble_class == BUBBLE_CLASS_SUSTAIN_BODY) {
             class_rank = 0;
         } else if (v->bubble_class == BUBBLE_CLASS_SHORT_INTERMEDIATE) {
             class_rank = 1;
@@ -840,7 +930,8 @@ static int Voice_Allocate(SoundBubblesEngine_t* engine) {
 
         float remaining_contrib = (1.0f - Clamp01(v->phase)) * Clamp01(v->amp);
         float usefulness_score = Clamp01(v->phase) + (1.0f - Clamp01(remaining_contrib));
-        bool old_enough = (v->phase > STEAL_MIN_PHASE_THRESHOLD);
+        bool protected_micro = (v->bubble_class == BUBBLE_CLASS_MICRO_ATTACK)
+            && (v->phase < STEAL_MICRO_PROTECT_PHASE);
 
         bool better_than_best_protected =
             (class_rank < best_protected_rank) ||
@@ -849,7 +940,7 @@ static int Voice_Allocate(SoundBubblesEngine_t* engine) {
               (usefulness_score == best_protected_score &&
                (best_protected_idx < 0 || i < best_protected_idx))));
 
-        if (old_enough && better_than_best_protected) {
+        if (!protected_micro && better_than_best_protected) {
             best_protected_rank = class_rank;
             best_protected_score = usefulness_score;
             best_protected_idx = i;
@@ -873,7 +964,7 @@ static int Voice_Allocate(SoundBubblesEngine_t* engine) {
     if (victim_idx >= 0) {
         BubbleVoice_t* victim = &engine->voices[victim_idx];
         victim->state = VOICE_STATE_PREEMPT_FADING;
-        victim->fade_counter = BUBBLES_FADE_SAMPLES;
+        victim->fade_counter = engine->fade_samples;
     }
 
     return -1;
@@ -1101,8 +1192,10 @@ static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadR
     int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(engine->config.sample_rate);
     const int32_t max_safe = buffer_size - BUBBLES_GUARD_ZONE_SAMPLES - 1;
 
-    int32_t min_offset = region->min_offset_samples;
-    int32_t max_offset = region->max_offset_samples;
+    // Region bounds are authored as 44.1 kHz reference samples; convert to the
+    // engine's actual sample rate so the musical time span is rate invariant.
+    int32_t min_offset = SoundBubbles_ReferenceSamplesToSamples(region->min_offset_samples, engine->config.sample_rate);
+    int32_t max_offset = SoundBubbles_ReferenceSamplesToSamples(region->max_offset_samples, engine->config.sample_rate);
 
     if (min_offset < min_safe) min_offset = min_safe;
     if (max_offset < min_safe) max_offset = min_safe;
@@ -1382,8 +1475,8 @@ static void DeactivateVoicesAboveActiveLimit(SoundBubblesEngine_t* engine) {
         BubbleVoice_t* voice = &engine->voices[i];
         if (voice->state == VOICE_STATE_INACTIVE) continue;
         voice->state = VOICE_STATE_PREEMPT_FADING;
-        if (voice->fade_counter <= 0 || voice->fade_counter > BUBBLES_FADE_SAMPLES) {
-            voice->fade_counter = BUBBLES_FADE_SAMPLES;
+        if (voice->fade_counter <= 0 || voice->fade_counter > engine->fade_samples) {
+            voice->fade_counter = engine->fade_samples;
         }
     }
 }

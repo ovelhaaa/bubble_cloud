@@ -396,6 +396,44 @@ void bubble_engine_process(BubbleEngine_t* engine, const float* in_mono, float* 
     }
 }
 
+void bubble_engine_process_spatial(BubbleEngine_t* engine, const float* in_mono,
+                                   float* out_wet_left, float* out_wet_right,
+                                   float* out_dry_mono, int num_samples) {
+    if (engine == NULL || engine->delay_buffer == NULL || in_mono == NULL
+        || out_wet_left == NULL || out_wet_right == NULL || num_samples <= 0) {
+        return;
+    }
+
+    int processed = 0;
+    while (processed < num_samples) {
+        int until_control = BUBBLES_BLOCK_SIZE - engine->block_counter;
+        if (until_control <= 0 || until_control > BUBBLES_BLOCK_SIZE) {
+            until_control = BUBBLES_BLOCK_SIZE;
+        }
+        int chunk = num_samples - processed;
+        if (chunk > until_control) {
+            chunk = until_control;
+        }
+        SoundBubbles_ProcessBlockSpatial(engine, &in_mono[processed],
+                                         &out_wet_left[processed],
+                                         &out_wet_right[processed],
+                                         out_dry_mono != NULL ? &out_dry_mono[processed] : NULL,
+                                         chunk);
+        processed += chunk;
+        if (engine->block_counter == 0) {
+            ApplyMacroControlRate(engine);
+        }
+    }
+}
+
+void bubble_engine_apply_final_limiter(BubbleEngine_t* engine, float* out_left, float* out_right, int num_samples) {
+    SoundBubbles_ApplyFinalLimiter(engine, out_left, out_right, num_samples);
+}
+
+int32_t bubble_engine_reference_samples_to_samples(int32_t reference_samples, float sample_rate) {
+    return SoundBubbles_ReferenceSamplesToSamples(reference_samples, sample_rate);
+}
+
 bool bubble_engine_set_parameter(BubbleEngine_t* engine, BubbleEngineParameterId_t parameter, float value) {
     if (engine == NULL) {
         return false;

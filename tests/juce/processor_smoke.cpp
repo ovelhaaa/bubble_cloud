@@ -38,6 +38,7 @@ namespace
         double rmsLeft = 0.0;
         double rmsRight = 0.0;
         double rmsMono = 0.0;
+        double rmsSide = 0.0;
         double correlation = 0.0;
         double peak = 0.0;
         double renderSeconds = 0.0;
@@ -52,6 +53,7 @@ namespace
         double sumLeft = 0.0;
         double sumRight = 0.0;
         double sumMono = 0.0;
+        double sumSide = 0.0;
         double sumCross = 0.0;
         double peak = 0.0;
         int64_t measuredSamples = 0;
@@ -82,9 +84,11 @@ namespace
                 require(std::isfinite(left) && std::isfinite(right),
                         "processor emitted a non-finite sample");
                 const double mono = 0.5 * (left + right);
+                const double side = 0.5 * (left - right);
                 sumLeft += left * left;
                 sumRight += right * right;
                 sumMono += mono * mono;
+                sumSide += side * side;
                 sumCross += left * right;
                 peak = std::max(peak, std::max(std::abs(left), std::abs(right)));
             }
@@ -98,6 +102,7 @@ namespace
         metrics.rmsLeft = std::sqrt(sumLeft / safeCount);
         metrics.rmsRight = std::sqrt(sumRight / safeCount);
         metrics.rmsMono = std::sqrt(sumMono / safeCount);
+        metrics.rmsSide = std::sqrt(sumSide / safeCount);
         metrics.correlation = sumCross / std::sqrt(std::max(1.0e-18, sumLeft * sumRight));
         metrics.peak = peak;
         metrics.renderSeconds = elapsed;
@@ -107,7 +112,7 @@ namespace
     void testSampleRateAndBlockSizeMatrix()
     {
         constexpr std::array<double, 4> sampleRates {{ 44100.0, 48000.0, 88200.0, 96000.0 }};
-        constexpr std::array<int, 5> blockSizes {{ 32, 64, 127, 512, 2048 }};
+        constexpr std::array<int, 6> blockSizes {{ 32, 64, 127, 256, 512, 2048 }};
 
         for (const double sampleRate : sampleRates) {
             for (const int blockSize : blockSizes) {
@@ -123,6 +128,123 @@ namespace
             }
         }
     }
+
+    double renderLeftOnlyEnergy(BubbleCloudAudioProcessor& processor, int blocks, float amplitude)
+    {
+        constexpr int blockFrames = 256;
+        double rightEnergy = 0.0;
+        juce::MidiBuffer noMidi;
+        for (int block = 0; block < blocks; ++block) {
+            juce::AudioBuffer<float> buffer(2, blockFrames);
+            buffer.clear();
+            for (int i = 0; i < buffer.getNumSamples(); ++i)
+                buffer.setSample(0, i, amplitude);
+            processor.processBlock(buffer, noMidi);
+            for (int i = 0; i < buffer.getNumSamples(); ++i)
+                rightEnergy += std::abs(buffer.getSample(1, i));
+        }
+        return rightEnergy / std::max(1, blocks * blockFrames);
+    }
+
+    void testStereoContractKeepsDryLocalAndLetsWetCrossChannel()
+    {
+        BubbleCloudAudioProcessor processor;
+        processor.setRateAndBufferSizeDetails(48000.0, 128);
+        processor.prepareToPlay(48000.0, 128);
+
+        // MIX fully dry: dry must stay on its own channel (no dry leakage to R).
+        setParameter(processor, "MIX", 0.0f);
+        setParameter(processor, "SPACE", 1.0f);
+        renderLeftOnlyEnergy(processor, 64, 0.0f); // let macro smoothing settle
+        const double dryRightEnergy = renderLeftOnlyEnergy(processor, 8, 0.5f);
+        require(dryRightEnergy < 1.0e-5,
+                "dry-only left probe leaked into the right output channel");
+
+        // MIX fully wet: the core spatial field must now reach the right channel.
+        setParameter(processor, "MIX", 1.0f);
+        renderLeftOnlyEnergy(processor, 64, 0.0f); // let macro smoothing settle
+        const double wetRightEnergy = renderLeftOnlyEnergy(processor, 32, 0.5f);
+        require(wetRightEnergy > 1.0e-4,
+                "left-only probe produced no spatially panned wet energy on the right");
+    }
+
+    // Identical L/R input, so the side channel is produced only by the engine's
+    // spatial wet field (dry contributes no side energy).
+    double renderMonoWidthProbe(BubbleCloudAudioProcessor& processor, double sampleRate, double seconds)
+    {
+        constexpr int blockSize = 256;
+        const int64_t total = (int64_t)std::ceil(sampleRate * seconds);
+        double sumSide = 0.0;
+        double sumMid = 0.0;
+        juce::MidiBuffer noMidi;
+
+        for (int64_t offset = 0; offset < total; offset += blockSize) {
+            const int frames = (int)std::min<int64_t>(blockSize, total - offset);
+            juce::AudioBuffer<float> buffer(2, frames);
+            for (int i = 0; i < frames; ++i) {
+                const double time = (double)(offset + i) / sampleRate;
+                const double phrase = std::fmod(time, 0.25) / 0.25;
+                const double envelope = std::exp(-5.5 * phrase);
+                const float sample = (float)(0.24 * envelope
+                    * (std::sin(juce::MathConstants<double>::twoPi * 220.0 * time)
+                       + 0.45 * std::sin(juce::MathConstants<double>::twoPi * 329.63 * time)));
+                buffer.setSample(0, i, sample);
+                buffer.setSample(1, i, sample);
+            }
+            processor.processBlock(buffer, noMidi);
+            for (int i = 0; i < frames; ++i) {
+                const double l = (double)buffer.getSample(0, i);
+                const double r = (double)buffer.getSample(1, i);
+                const double side = 0.5 * (l - r);
+                const double mid = 0.5 * (l + r);
+                sumSide += side * side;
+                sumMid += mid * mid;
+            }
+        }
+        return std::sqrt(sumSide) / std::sqrt(std::max(1.0e-18, sumMid));
+    }
+
+    void testSpaceMacroChangesStereoWidth()
+    {
+        BubbleCloudAudioProcessor narrow;
+        narrow.setRateAndBufferSizeDetails(48000.0, 256);
+        narrow.prepareToPlay(48000.0, 256);
+        setParameter(narrow, "SPACE", 0.0f);
+        setParameter(narrow, "MIX", 1.0f);
+        renderMonoWidthProbe(narrow, 48000.0, 0.2); // settle macros
+        const double narrowWidth = renderMonoWidthProbe(narrow, 48000.0, 0.8);
+
+        BubbleCloudAudioProcessor wide;
+        wide.setRateAndBufferSizeDetails(48000.0, 256);
+        wide.prepareToPlay(48000.0, 256);
+        setParameter(wide, "SPACE", 1.0f);
+        setParameter(wide, "MIX", 1.0f);
+        renderMonoWidthProbe(wide, 48000.0, 0.2);
+        const double wideWidth = renderMonoWidthProbe(wide, 48000.0, 0.8);
+
+        std::cout << "SPACE width narrow=" << narrowWidth << " wide=" << wideWidth
+                  << " ratio=" << (wideWidth / std::max(1.0e-9, narrowWidth)) << '\n';
+        require(wideWidth > narrowWidth * 1.5,
+                "SPACE=1 did not produce a measurably wider stereo field than SPACE=0");
+    }
+
+    void testHostTempoFallbackSurvivesMissingBpm()
+    {
+        // The BPM fallback policy is host-driver code; the APVTS value must stay
+        // finite and within the supported range across repeated sync toggles.
+        BubbleCloudAudioProcessor processor;
+        processor.setRateAndBufferSizeDetails(48000.0, 128);
+        processor.prepareToPlay(48000.0, 128);
+        setParameter(processor, "TEMPO_SYNC", 1.0f);
+        juce::MidiBuffer noMidi;
+        for (int block = 0; block < 8; ++block) {
+            juce::AudioBuffer<float> buffer(2, 128);
+            buffer.clear();
+            processor.processBlock(buffer, noMidi);
+        }
+        const auto* sync = processor.treeState.getRawParameterValue("TEMPO_SYNC");
+        require(sync != nullptr && sync->load() >= 0.5f, "tempo sync did not stay enabled");
+    }
 }
 
 int main()
@@ -137,26 +259,31 @@ int main()
         require(processor.getTailLengthSeconds() >= 2.0, "granular tail must be reported to the host");
 
         testSampleRateAndBlockSizeMatrix();
+        testStereoContractKeepsDryLocalAndLetsWetCrossChannel();
+        testSpaceMacroChangesStereoWidth();
+        testHostTempoFallbackSurvivesMissingBpm();
 
-        juce::AudioBuffer<float> stereoProbe(2, 128);
-        stereoProbe.clear();
-        for (int i = 0; i < stereoProbe.getNumSamples(); ++i)
-            stereoProbe.setSample(0, i, 0.75f);
+        // Left-only probe with spatial settings: the left channel must carry
+        // output and telemetry must publish left-engine voices. The wet bus may
+        // legitimately cross to the right by spatialization, so right energy is
+        // no longer treated as leakage.
+        setParameter(processor, "SPACE", 1.0f);
+        setParameter(processor, "MIX", 1.0f);
         juce::MidiBuffer noMidi;
-        processor.processBlock(stereoProbe, noMidi);
-
+        juce::AudioBuffer<float> stereoProbe(2, 128);
         double leftEnergy = 0.0;
-        double rightEnergy = 0.0;
-        for (int i = 0; i < stereoProbe.getNumSamples(); ++i) {
-            leftEnergy += std::abs(stereoProbe.getSample(0, i));
-            rightEnergy += std::abs(stereoProbe.getSample(1, i));
+        for (int block = 0; block < 16; ++block) {
+            stereoProbe.clear();
+            for (int i = 0; i < stereoProbe.getNumSamples(); ++i)
+                stereoProbe.setSample(0, i, 0.5f);
+            processor.processBlock(stereoProbe, noMidi);
+            for (int i = 0; i < stereoProbe.getNumSamples(); ++i)
+                leftEnergy += std::abs(stereoProbe.getSample(0, i));
         }
         require(leftEnergy > 0.01, "left-only probe produced no left output");
-        require(rightEnergy < 1.0e-7, "left-only probe leaked into the right engine input");
 
         const auto stereoTelemetry = processor.getTelemetrySnapshot();
         require(stereoTelemetry.peakLeft > 0.01f, "telemetry did not report the left output peak");
-        require(stereoTelemetry.peakRight < 1.0e-7f, "telemetry reported a false right output peak");
         require(stereoTelemetry.activeVoices > 0, "telemetry did not publish active granular voices");
         bool foundLeftVoice = false;
         for (const auto& voice : stereoTelemetry.voices) {

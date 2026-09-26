@@ -87,9 +87,16 @@ private:
     
     std::vector<int16_t> delayBufferL;
     std::vector<int16_t> delayBufferR;
-    
-    std::vector<float> scratchRightFromLeftEngine;
-    std::vector<float> scratchLeftFromRightEngine;
+
+    // Per-instance spatial split buffers. Each mono instance yields a wet stereo
+    // bus plus its own dry mono bus; the wrapper sums wet from both instances
+    // (full spatial field) and places dry on its own channel only.
+    std::vector<float> wetLeftFromL;
+    std::vector<float> wetRightFromL;
+    std::vector<float> dryFromL;
+    std::vector<float> wetLeftFromR;
+    std::vector<float> wetRightFromR;
+    std::vector<float> dryFromR;
 
     double currentSampleRate = 44100.0;
     float lastHostTempo = -1.0f;

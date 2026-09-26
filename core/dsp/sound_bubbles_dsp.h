@@ -9,8 +9,16 @@
 // --- System & Algorithmic Constants ---
 #define BUBBLES_BLOCK_SIZE 32
 #define BUBBLES_MAX_VOICES BUBBLE_ENGINE_MAX_VOICES
-#define BUBBLES_FADE_SAMPLES 44           // ~1ms preemption fade at 44.1kHz (kept as abstract default, logic adapts)
+// Preemption fade is a musical time (1 ms) converted to samples per engine
+// sample rate. BUBBLES_FADE_SAMPLES remains the 44.1 kHz reference value used
+// by legacy callers and tests; the DSP uses engine->fade_samples instead.
+#define BUBBLES_FADE_MS 1.0f
+#define BUBBLES_FADE_SAMPLES 44
 #define BUBBLES_GUARD_ZONE_SAMPLES 64
+// Reference rate used to interpret time-denominated fields (read regions,
+// diffusion delay, ...) that are authored/stored as 44.1 kHz sample offsets.
+#define BUBBLES_REFERENCE_SAMPLE_RATE 44100.0f
+#define BUBBLES_REFERENCE_SAMPLE_RATE_INT 44100
 #define SCHED_MAX_SPAWNS_PER_TICK 3
 #define BUBBLES_PENDING_SPAWN_CAPACITY 4
 #define BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY 96
@@ -86,8 +94,11 @@ typedef struct {
     WindowType_t window_type;
 } BubbleClassConfig_t;
 
-// Semantic read region (distance behind write head). Values are in samples.
-// Defaults target musically meaningful temporal zones:
+// Semantic read region (distance behind write head). Stored values are
+// reference samples at BUBBLES_REFERENCE_SAMPLE_RATE (44.1 kHz), i.e. they are
+// effectively a musical time. They are converted to the engine's actual
+// sample rate at spawn time so attack/body/memory stay invariant across
+// 44.1/48/88.2/96 kHz and higher. Defaults target:
 //   Attack: 10-80ms, Body: 80-250ms, Memory: 250-900ms.
 typedef struct {
     int32_t min_offset_samples;
@@ -322,6 +333,8 @@ typedef struct {
     EngineConfig_t motion_base_config;
     BubbleMotionState motion_state;
     int32_t active_voice_limit;
+    // Preemption fade length resolved from BUBBLES_FADE_MS at config.sample_rate.
+    int32_t fade_samples;
     int32_t block_counter;         // Triggers control ticks every 32 samples
     uint32_t rng_state;            // Internal deterministic PRNG state
 
@@ -381,6 +394,28 @@ SOUND_BUBBLES_DEPRECATED void SoundBubbles_SetRngSeed(SoundBubblesEngine_t* engi
 
 // Audio Processing: Processes num_samples. DSP core owns final dry/wet output policy.
 SOUND_BUBBLES_DEPRECATED void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mono, float* out_left, float* out_right, int num_samples);
+
+// Spatial split processing: writes the wet stereo bus to out_wet_left/out_wet_right
+// and the dry mono bus to out_dry_mono, deliberately skipping the final limiter.
+// Wrappers combining several mono spatial instances own dry placement and apply
+// SoundBubbles_ApplyFinalLimiter once on the summed stereo bus. No allocation/locks.
+SOUND_BUBBLES_DEPRECATED void SoundBubbles_ProcessBlockSpatial(SoundBubblesEngine_t* engine,
+                                                               const float* in_mono,
+                                                               float* out_wet_left,
+                                                               float* out_wet_right,
+                                                               float* out_dry_mono,
+                                                               int num_samples);
+
+// Applies the engine's final-limiter policy and telemetry accumulation to an
+// already sum-mixed stereo block. Uses the same state as the in-process limiter.
+SOUND_BUBBLES_DEPRECATED void SoundBubbles_ApplyFinalLimiter(SoundBubblesEngine_t* engine,
+                                                             float* out_left,
+                                                             float* out_right,
+                                                             int num_samples);
+
+// Converts a 44.1 kHz reference offset into samples at the given rate. Exposed so
+// host layers and tests can share the exact same sample-rate conversion.
+SOUND_BUBBLES_DEPRECATED int32_t SoundBubbles_ReferenceSamplesToSamples(int32_t reference_samples, float sample_rate);
 
 // Optional metrics callback registration. Pass NULL callback to disable export.
 SOUND_BUBBLES_DEPRECATED void SoundBubbles_SetMetricsCallback(SoundBubblesEngine_t* engine, SoundBubblesMetricsCallback_t callback, void* user_data);
