@@ -71,6 +71,21 @@ const BubbleQualityProfileLimits_t BUBBLE_QUALITY_PROFILE_LIMITS[BUBBLE_QUALITY_
 #define BUBBLE_MOTION_DIFFUSION_AMOUNT_SEED_XOR 0x6006u
 #define BUBBLE_MOTION_INITIAL_VALUE_SEED_XOR 0xA5A5A5A5u
 
+// M2 stereo coherence: probability that a spawn-time decision is drawn from the
+// shared coherence stream instead of the per-channel stream. Attacks are almost
+// identical between channels; sustain/decay/freeze progressively open up.
+#define SPAWN_COHERENCE_ATTACK  0.80f
+#define SPAWN_COHERENCE_SHORT   0.40f
+#define SPAWN_COHERENCE_SUSTAIN 0.22f
+
+// M2 context-conditioned reverse probability scaling per phrase phase.
+#define REVERSE_SCALE_TRANSIENT 0.12f
+#define REVERSE_SCALE_ATTACK    0.30f
+#define REVERSE_SCALE_SUSTAIN   1.00f
+#define REVERSE_SCALE_DECAY     1.70f
+#define REVERSE_SCALE_SILENCE   0.80f
+#define REVERSE_SCALE_FREEZE    2.10f
+
 #if !defined(BUBBLES_QUALITY_ESP32_SAFE) && !defined(BUBBLES_QUALITY_WASM_FULL)
 #define BUBBLES_QUALITY_STANDARD 1
 #endif
@@ -84,6 +99,8 @@ static const uint32_t RNG_STATE_FALLBACK = 0x6D2B79F5u;
 typedef struct {
     const ReadRegionConfig_t* region;
     uint8_t region_id;
+    uint8_t memory_tier;   // BUBBLES_MEMORY_TIER_*
+    float recent_bias;     // 0..1, higher = prefer the recent edge of the region
 } ReadRegionChoice_t;
 
 // --- Static Helper Prototypes ---
@@ -103,6 +120,12 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine,
 static void InitWindowLUTs(void);
 static uint32_t NextRandomU32(SoundBubblesEngine_t* engine);
 static float RandomFloat01(SoundBubblesEngine_t* engine);
+static uint32_t NextCoherenceU32(SoundBubblesEngine_t* engine);
+static float RandomCoherenceFloat01(SoundBubblesEngine_t* engine);
+static float SpawnRandomFloat01(SoundBubblesEngine_t* engine, float coherence);
+static float ResolveSpawnCoherence(SoundBubblesEngine_t* engine);
+static float ResolveContextReverseProbability(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, uint8_t region_id);
+static float ResolveMicroDetuneCents(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class);
 static inline int32_t WrapIntIndex(int32_t index, int32_t size);
 static inline float WrapFloatIndex(float index, float size);
 static inline float LinearInterpolate(const int16_t* buffer, float index_float, int32_t buffer_size);
@@ -130,7 +153,7 @@ static bool Voice_RequestSpawn(SoundBubblesEngine_t* engine, BubbleClass_t b_cla
 static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleClass_t b_class, int generation);
 static float LookupWindow(float phase, WindowType_t type);
 static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state);
-static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadRegionConfig_t* region);
+static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadRegionConfig_t* region, float recent_bias, float coherence);
 static int32_t RefineReadOffsetSmartStart(const SoundBubblesEngine_t* engine, int32_t read_offset_samples, int32_t range, int32_t buffer_size);
 static float EnvelopeVariantGain(float phase, uint8_t variant, int family);
 static float SoftClip(float x, float amount);
@@ -196,6 +219,7 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     engine->motion_base_config = engine->config;
     engine->active_voice_limit = engine->config.active_voice_limit;
     engine->fade_samples = ResolveFadeSamples(engine->config.sample_rate);
+    engine->channel_decorrelation = 0u;
     SoundBubbles_SetRngSeed(engine, engine->config.rng_seed);
 
     engine->write_ptr = 0;
@@ -319,7 +343,17 @@ void SoundBubbles_ResetMotionPhase(SoundBubblesEngine_t* engine) {
 
 void SoundBubbles_SetRngSeed(SoundBubblesEngine_t* engine, uint32_t seed) {
     engine->config.rng_seed = seed;
-    engine->rng_state = (seed == 0u) ? RNG_STATE_FALLBACK : seed;
+    uint32_t base = (seed == 0u) ? RNG_STATE_FALLBACK : seed;
+    // The per-channel stream is deliberately decorrelated; the shared coherence
+    // stream stays identical between L/R engines so events remain aligned.
+    engine->rng_state = base ^ engine->channel_decorrelation;
+    engine->coherence_rng_state = (base == 0u) ? RNG_STATE_FALLBACK : base;
+}
+
+void SoundBubbles_SetChannelDecorrelation(SoundBubblesEngine_t* engine, uint32_t decorrelation_mask) {
+    if (engine == NULL) return;
+    engine->channel_decorrelation = decorrelation_mask;
+    SoundBubbles_SetRngSeed(engine, engine->config.rng_seed);
 }
 
 void SoundBubbles_SetMetricsCallback(SoundBubblesEngine_t* engine, SoundBubblesMetricsCallback_t callback, void* user_data) {
@@ -744,7 +778,10 @@ static void Scheduler_SpawnImmediateBurst(SoundBubblesEngine_t* engine) {
 }
 
 static BubbleClass_t Scheduler_SelectClassForState(SoundBubblesEngine_t* engine) {
-    float r = RandomFloat01(engine);
+    // Class is an "important event": on attacks it is drawn from the shared
+    // coherence stream so both stereo channels pick the same bubble type, while
+    // during sustain/decay the channels become independent and the field opens.
+    float r = SpawnRandomFloat01(engine, ResolveSpawnCoherence(engine));
     switch (engine->engine_state) {
         case ENGINE_STATE_TRANSIENT_BURST:
             return BUBBLE_CLASS_MICRO_ATTACK;
@@ -1056,22 +1093,15 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     v->phase = 0.0f;
     v->amp = 1.0f;
     v->quantized_rate = ResolvePitchModeRate(engine);
-    if (engine->force_reverse_spawns > 0) {
-        v->read_direction = 1u;
-        engine->force_reverse_spawns--;
-    } else {
-        v->read_direction = (RandomFloat01(engine) < Clamp01(engine->config.reverse_probability)) ? 1u : 0u;
-    }
-    v->rate = (v->read_direction != 0u) ? -v->quantized_rate : v->quantized_rate;
-    if (engine->config.attack_rate_jitter && b_class == BUBBLE_CLASS_MICRO_ATTACK) {
-        float d = Clamp(engine->config.attack_rate_jitter_depth, 0.0f, 0.2f);
-        float j = (RandomFloat01(engine) * 2.0f - 1.0f) * d;
-        v->quantized_rate = Clamp(v->quantized_rate + j, 0.25f, 4.0f);
-        v->rate = (v->read_direction != 0u) ? -v->quantized_rate : v->quantized_rate;
-    }
     v->gain = 1.0f;
 
-    float duration_ms = class_cfg->duration_ms_min + (RandomFloat01(engine) * (class_cfg->duration_ms_max - class_cfg->duration_ms_min));
+    // M2: spawn-time decisions are split between the shared coherence stream
+    // (event alignment) and the per-channel stream (spatial nuance). Attacks
+    // share more so transients stay coherent; sustain/decay/freeze open up.
+    float coherence = ResolveSpawnCoherence(engine);
+
+    float duration_ms = class_cfg->duration_ms_min +
+        (RandomFloat01(engine) * (class_cfg->duration_ms_max - class_cfg->duration_ms_min));
     if (v->generation == 1) {
         duration_ms *= Clamp(engine->config.droplet_length_scale, 0.2f, 1.0f);
         v->gain *= Clamp(engine->config.droplet_gain, 0.0f, 1.0f);
@@ -1085,7 +1115,25 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     v->phase_inc = 1.0f / duration_samples;
 
     ReadRegionChoice_t region_choice = ResolveReadRegionChoice(engine, b_class, engine->engine_state);
-    int32_t read_offset_samples = ChooseReadOffsetSamples(engine, region_choice.region);
+    v->memory_tier = region_choice.memory_tier;
+    int32_t read_offset_samples = ChooseReadOffsetSamples(engine, region_choice.region, region_choice.recent_bias, coherence);
+
+    // Context-conditioned reverse (M2): rare on attacks, opening through sustain,
+    // decay and freeze so the cloud can unfurl backwards after the event.
+    if (engine->force_reverse_spawns > 0) {
+        v->read_direction = 1u;
+        engine->force_reverse_spawns--;
+    } else {
+        float reverse_probability = ResolveContextReverseProbability(engine, b_class, region_choice.region_id);
+        v->read_direction = (RandomFloat01(engine) < reverse_probability) ? 1u : 0u;
+    }
+    v->rate = (v->read_direction != 0u) ? -v->quantized_rate : v->quantized_rate;
+    if (engine->config.attack_rate_jitter && b_class == BUBBLE_CLASS_MICRO_ATTACK) {
+        float d = Clamp(engine->config.attack_rate_jitter_depth, 0.0f, 0.2f);
+        float j = (RandomFloat01(engine) * 2.0f - 1.0f) * d;
+        v->quantized_rate = Clamp(v->quantized_rate + j, 0.25f, 4.0f);
+        v->rate = (v->read_direction != 0u) ? -v->quantized_rate : v->quantized_rate;
+    }
 
     // Clamp spawn offsets so reverse and high-rate reads have a guard-banded
     // path through the ring buffer for the expected voice duration. Forward
@@ -1112,6 +1160,16 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
         read_offset_samples = RefineReadOffsetSmartStart(engine, read_offset_samples, engine->config.smart_start_range, buffer_size);
     }
     v->read_ptr_float = (float)WrapIntIndex(engine->write_ptr - read_offset_samples, buffer_size);
+
+    // M2: fixed per-grain microdetune decided once at birth and held for life.
+    // Applied after the offset guard so a sub-cent rate change can never trip the
+    // pitch-up forward clamp and shove the read deep into the buffer.
+    v->microdetune_cents = ResolveMicroDetuneCents(engine, b_class);
+    if (v->microdetune_cents != 0.0f) {
+        float detune_ratio = powf(2.0f, v->microdetune_cents / 1200.0f);
+        v->quantized_rate = Clamp(v->quantized_rate * detune_ratio, 0.25f, 4.0f);
+        v->rate = (v->read_direction != 0u) ? -v->quantized_rate : v->quantized_rate;
+    }
 
     float spread = (b_class == BUBBLE_CLASS_MICRO_ATTACK) ? engine->config.attack_pan_spread : engine->config.sustain_pan_spread;
     float pan = (RandomFloat01(engine) * 2.0f - 1.0f) * Clamp01(spread) * Clamp01(engine->config.stereo_width);
@@ -1157,7 +1215,11 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
 static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state) {
     // Deterministic map from "what bubble" + "what phrase phase" => temporal memory slice.
     // Attack-oriented contexts read from attack/body. Tail-oriented contexts read from memory.
+    // M2 annotates the slice with a temporal tier/recent bias; ChooseReadOffsetSamples then
+    // applies the non-uniform, recent-weighted distribution inside that region.
     ReadRegionChoice_t choice;
+    choice.memory_tier = BUBBLES_MEMORY_TIER_RECENT;
+    choice.recent_bias = 0.60f;
 
     if (bubble_class == BUBBLE_CLASS_MICRO_ATTACK) {
         choice.region = &engine->config.attack_region;
@@ -1165,31 +1227,130 @@ static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, 
         return choice;
     }
 
-    float mem_bias = 0.0f;
-    if (bubble_class == BUBBLE_CLASS_SHORT_INTERMEDIATE) {
-        mem_bias = Clamp01(engine->config.memory_mix);
-        if (engine_state == ENGINE_STATE_SUSTAIN_BODY || engine_state == ENGINE_STATE_SPARSE_DECAY) {
-            mem_bias = Clamp01(mem_bias + engine->config.memory_pull * 0.35f);
-        }
-    } else {
-        mem_bias = Clamp01(engine->config.memory_mix + engine->config.memory_pull);
-        if (engine_state == ENGINE_STATE_TRANSIENT_BURST || engine_state == ENGINE_STATE_ATTACK_ONGOING) {
-            mem_bias *= 0.35f;
-        }
+    // M2 temporal depth curve. Recent body material dominates (~60%), medium
+    // body is still common (~25%) and deep memory is a rarer ghost (~15%). The
+    // MEMORY macro/state modulate the deep share, but a recent floor keeps the
+    // cloud connected to the phrase. The tier roll is shared between channels
+    // (via SpawnRandomFloat01) so stereo attacks stay aligned while sustain
+    // opens up.
+    float memory_mix = Clamp01(engine->config.memory_mix);
+    float memory_pull = Clamp01(engine->config.memory_pull);
+    float deep_weight = BUBBLES_MEMORY_WEIGHT_DEEP + 0.30f * memory_mix + 0.10f * memory_pull;
+    float recent_weight = BUBBLES_MEMORY_WEIGHT_RECENT - 0.18f * memory_mix;
+
+    if (engine_state == ENGINE_STATE_TRANSIENT_BURST || engine_state == ENGINE_STATE_ATTACK_ONGOING) {
+        deep_weight *= 0.30f;
+        recent_weight += 0.12f;
+    } else if (engine_state == ENGINE_STATE_SPARSE_DECAY) {
+        deep_weight += 0.10f;
+    }
+    bool frozen = (engine->config.freeze_enabled != 0) || (engine->config.freeze_amount >= 0.5f);
+    if (frozen) {
+        deep_weight += 0.18f;
     }
 
-    if (RandomFloat01(engine) < mem_bias) {
-        choice.region = &engine->config.memory_region;
-        choice.region_id = 2;
-    } else {
+    if (recent_weight < 0.35f) recent_weight = 0.35f;
+    if (deep_weight < 0.02f) deep_weight = 0.02f;
+    if (deep_weight > BUBBLES_MEMORY_DEEP_MAX_SHARE) deep_weight = BUBBLES_MEMORY_DEEP_MAX_SHARE;
+    float medium_weight = 1.0f - recent_weight - deep_weight;
+    if (medium_weight < 0.08f) {
+        medium_weight = 0.08f;
+        recent_weight = 1.0f - medium_weight - deep_weight;
+        if (recent_weight < 0.30f) recent_weight = 0.30f;
+    }
+
+    float roll = SpawnRandomFloat01(engine, ResolveSpawnCoherence(engine));
+    if (roll < recent_weight) {
         choice.region = &engine->config.body_region;
         choice.region_id = 1;
+        choice.memory_tier = BUBBLES_MEMORY_TIER_RECENT;
+        choice.recent_bias = 0.78f;
+    } else if (roll < recent_weight + medium_weight) {
+        choice.region = &engine->config.body_region;
+        choice.region_id = 1;
+        choice.memory_tier = BUBBLES_MEMORY_TIER_MEDIUM;
+        choice.recent_bias = 0.45f;
+    } else {
+        choice.region = &engine->config.memory_region;
+        choice.region_id = 2;
+        choice.memory_tier = BUBBLES_MEMORY_TIER_DEEP;
+        choice.recent_bias = 0.38f;
     }
 
     return choice;
 }
 
-static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadRegionConfig_t* region) {
+// M2 stereo coherence amount for a spawn, driven by the (shared) phrase state:
+// attacks stay almost identical between channels, while sustain/decay/freeze
+// progressively open into a wide field. Using state rather than class keeps the
+// class draw itself coherent on attacks and independent on tails.
+static float ResolveSpawnCoherence(SoundBubblesEngine_t* engine) {
+    float coherence;
+    switch (engine->engine_state) {
+        case ENGINE_STATE_TRANSIENT_BURST: coherence = SPAWN_COHERENCE_ATTACK; break;
+        case ENGINE_STATE_ATTACK_ONGOING: coherence = SPAWN_COHERENCE_ATTACK * 0.9f; break;
+        case ENGINE_STATE_SUSTAIN_BODY: coherence = SPAWN_COHERENCE_SUSTAIN; break;
+        case ENGINE_STATE_SPARSE_DECAY: coherence = SPAWN_COHERENCE_SHORT * 0.5f; break;
+        default: coherence = 0.5f; break;
+    }
+    bool frozen = (engine->config.freeze_enabled != 0) || (engine->config.freeze_amount >= 0.5f);
+    if (frozen) {
+        coherence = fminf(coherence, 0.12f);
+    }
+    return Clamp(coherence, 0.0f, 1.0f);
+}
+
+// M2 context-conditioned reverse. The authored reverse_probability stays the
+// ceiling; phrase phase scales it so articulation is never smeared but the tail
+// can progressively unfurl backwards.
+static float ResolveContextReverseProbability(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, uint8_t region_id) {
+    float base = Clamp01(engine->config.reverse_probability);
+    if (base <= 0.0f) {
+        return 0.0f;
+    }
+    float scale;
+    switch (engine->engine_state) {
+        case ENGINE_STATE_TRANSIENT_BURST: scale = REVERSE_SCALE_TRANSIENT; break;
+        case ENGINE_STATE_ATTACK_ONGOING: scale = REVERSE_SCALE_ATTACK; break;
+        case ENGINE_STATE_SUSTAIN_BODY: scale = REVERSE_SCALE_SUSTAIN; break;
+        case ENGINE_STATE_SPARSE_DECAY: scale = REVERSE_SCALE_DECAY; break;
+        case ENGINE_STATE_SILENCE:
+        default: scale = REVERSE_SCALE_SILENCE; break;
+    }
+    if (bubble_class == BUBBLE_CLASS_MICRO_ATTACK) {
+        scale *= 0.6f;
+    }
+    bool frozen = (engine->config.freeze_enabled != 0) || (engine->config.freeze_amount >= 0.5f);
+    if (frozen) {
+        scale = fmaxf(scale, REVERSE_SCALE_FREEZE);
+    }
+    if (region_id == 2) {
+        scale *= 1.25f;
+    }
+    return Clamp01(base * scale);
+}
+
+// M2 fixed per-grain microdetune in cents, drawn at birth and held. Attack grains
+// stay nearly pure; sustain bodies thicken; freeze accepts the most ensemble.
+static float ResolveMicroDetuneCents(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class) {
+    bool frozen = (engine->config.freeze_enabled != 0) || (engine->config.freeze_amount >= 0.5f);
+    float max_cents;
+    if (frozen) {
+        max_cents = BUBBLES_MICRODETUNE_FREEZE_CENTS;
+    } else {
+        switch (bubble_class) {
+            case BUBBLE_CLASS_MICRO_ATTACK: max_cents = BUBBLES_MICRODETUNE_ATTACK_CENTS; break;
+            case BUBBLE_CLASS_SHORT_INTERMEDIATE: max_cents = BUBBLES_MICRODETUNE_SHORT_CENTS; break;
+            case BUBBLE_CLASS_SUSTAIN_BODY: max_cents = BUBBLES_MICRODETUNE_SUSTAIN_CENTS; break;
+            default: max_cents = BUBBLES_MICRODETUNE_SHORT_CENTS; break;
+        }
+    }
+    // Envelope variation scales ensemble thickness between 60% and 100%.
+    max_cents *= 0.6f + 0.4f * Clamp01(engine->config.envelope_variation);
+    return (RandomFloat01(engine) * 2.0f - 1.0f) * max_cents;
+}
+
+static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadRegionConfig_t* region, float recent_bias, float coherence) {
     // Clamp and normalize range so presets stay ring-buffer safe.
     const int32_t min_safe = BUBBLES_GUARD_ZONE_SAMPLES;
     int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(engine->config.sample_rate);
@@ -1211,10 +1372,41 @@ static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadR
         return min_offset;
     }
 
-    // Deterministic uniform selection over [min_offset, max_offset].
-    uint32_t rnd = NextRandomU32(engine);
-    uint32_t bucket = (uint32_t)(span + 1);
-    return min_offset + (int32_t)(rnd % bucket);
+    // M2: non-uniform temporal selection. The region span is split into
+    // recent / medium / deep thirds. Recent material dominates and deep tails are
+    // rare, so most grains stay near the phrase while occasional ghosts reach
+    // back. The band choice is shared between channels; the in-band position is
+    // per-channel, preserving read-offset differences for width.
+    float w_recent = BUBBLES_MEMORY_WEIGHT_RECENT + 0.30f * (recent_bias - 0.5f);
+    float w_deep = BUBBLES_MEMORY_WEIGHT_DEEP - 0.12f * (recent_bias - 0.5f);
+    if (w_recent < 0.34f) w_recent = 0.34f;
+    if (w_deep < 0.02f) w_deep = 0.02f;
+    float w_medium = 1.0f - w_recent - w_deep;
+    if (w_medium < 0.05f) {
+        w_medium = 0.05f;
+        w_recent = 1.0f - w_medium - w_deep;
+    }
+
+    float band_lo;
+    float band_hi;
+    float tier_roll = SpawnRandomFloat01(engine, coherence);
+    if (tier_roll < w_recent) {
+        band_lo = 0.0f;
+        band_hi = 1.0f / 3.0f;
+    } else if (tier_roll < w_recent + w_medium) {
+        band_lo = 1.0f / 3.0f;
+        band_hi = 2.0f / 3.0f;
+    } else {
+        band_lo = 2.0f / 3.0f;
+        band_hi = 1.0f;
+    }
+
+    float u = RandomFloat01(engine);
+    float t = band_lo + (band_hi - band_lo) * u;
+    int32_t offset = min_offset + (int32_t)(t * (float)span);
+    if (offset < min_offset) offset = min_offset;
+    if (offset > max_offset) offset = max_offset;
+    return offset;
 }
 
 static int32_t RefineReadOffsetSmartStart(const SoundBubblesEngine_t* engine, int32_t read_offset_samples, int32_t range, int32_t buffer_size) {
@@ -1290,6 +1482,37 @@ static float RandomFloat01(SoundBubblesEngine_t* engine) {
     return (float)(rnd >> 8) * kInv24Bit;
 }
 
+// Shared event stream (M2). Advanced identically by both stereo engines when
+// their musical state matches, keeping class/duration/memory-tier events
+// time-aligned without forcing the whole engine to be mono.
+static uint32_t NextCoherenceU32(SoundBubblesEngine_t* engine) {
+    uint32_t x = engine->coherence_rng_state;
+    if (x == 0u) x = RNG_STATE_FALLBACK;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    engine->coherence_rng_state = x;
+    return x;
+}
+
+static float RandomCoherenceFloat01(SoundBubblesEngine_t* engine) {
+    const float kInv24Bit = 1.0f / 16777216.0f; // 2^24
+    uint32_t rnd = NextCoherenceU32(engine);
+    return (float)(rnd >> 8) * kInv24Bit;
+}
+
+// With probability `coherence` the value comes from the shared stream (same on
+// both channels); otherwise it is drawn from this channel's own stream. Both
+// engines consume the same number of coherence draws, so the shared stream stays
+// in lockstep as long as their musical state matches.
+static float SpawnRandomFloat01(SoundBubblesEngine_t* engine, float coherence) {
+    float roll = RandomCoherenceFloat01(engine);
+    if (roll < coherence) {
+        return RandomCoherenceFloat01(engine);
+    }
+    return RandomFloat01(engine);
+}
+
 static inline float Clamp01(float x) {
     return Clamp(x, 0.0f, 1.0f);
 }
@@ -1362,19 +1585,31 @@ static inline bool CheckGuardZoneDirectional(int32_t write_ptr, float read_ptr_f
 static float ResolvePitchModeRate(SoundBubblesEngine_t* engine) {
     switch (engine->config.pitch_mode) {
         case BUBBLE_PITCH_MODE_OCTAVE_UP:
-            return 2.0f;
+            return BUBBLES_PITCH_RATIO_OCTAVE_UP;
         case BUBBLE_PITCH_MODE_OCTAVE_DOWN:
-            return 0.5f;
+            return BUBBLES_PITCH_RATIO_OCTAVE_DOWN;
         case BUBBLE_PITCH_MODE_FIFTH:
-            return 1.5f;
+            // Tempered (12-TET) fifth, not the just 3/2 ratio.
+            return BUBBLES_PITCH_RATIO_FIFTH_12TET;
         case BUBBLE_PITCH_MODE_SHIMMER:
         {
+            // Weighted harmonic cloud. Unison stays the anchor and the more
+            // extreme intervals are progressively rarer, so high Sparkle adds
+            // depth without turning every grain into an obvious pitch shift.
             float shimmer = Clamp01(engine->config.shimmer_amount);
-            return (RandomFloat01(engine) < shimmer) ? 2.0f : 1.0f;
+            if (shimmer <= 0.0f) return BUBBLES_PITCH_RATIO_UNISON;
+            float w_unison = 1.0f - 0.55f * shimmer;
+            float w_octave = 0.28f * shimmer;
+            float w_fifth = 0.18f * shimmer;
+            float roll = RandomFloat01(engine);
+            if (roll < w_unison) return BUBBLES_PITCH_RATIO_UNISON;
+            if (roll < w_unison + w_octave) return BUBBLES_PITCH_RATIO_OCTAVE_UP;
+            if (roll < w_unison + w_octave + w_fifth) return BUBBLES_PITCH_RATIO_FIFTH_12TET;
+            return BUBBLES_PITCH_RATIO_OCTAVE_FIFTH;
         }
         case BUBBLE_PITCH_MODE_UNISON:
         default:
-            return 1.0f;
+            return BUBBLES_PITCH_RATIO_UNISON;
     }
 }
 

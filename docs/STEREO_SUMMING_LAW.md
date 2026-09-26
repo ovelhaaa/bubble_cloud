@@ -84,3 +84,19 @@ publicados como telemetria final.
 - `tests/juce/processor_smoke.cpp`: contrato estéreo via APVTS e transporte
   BPM/PPQ com playhead simulado.
 - `tests/unit/test_juce_plugin_static_guards.py`: guardas da lei e da telemetria.
+
+## 6) Atualização M2 — coerência interna entre canais
+
+A partir da M2, os dois engines **não são mais totalmente decorrelacionados**.
+Cada engine mantém um stream espacial próprio (`rng_state`, decorrelacionado por
+`channel_decorrelation`), mas compartilha um stream de eventos
+(`coherence_rng_state`) usado para decisões importantes de spawn (classe, tier
+temporal, banda de offset). A fração compartilhada é função da fase da frase:
+ataques quase alinhados; sustain/decay/freeze progressivamente independentes.
+
+A lei de soma `1/sqrt(2)` permanece inalterada e continua conservando a energia
+wet total quando os campos são decorrelacionados. Com coerência parcial, uma
+pequena parcela correlacionada soma em amplitude; a lei ainda limita o dual-mono
+(o wrapper probe valida `dualMono <= singleEngine * 1.5`) e o limiter
+compartilhado absorve picos genuínos — nunca é usado como compensador de ganho.
+Para ler offsets exatos, veja `docs/M2_CHARACTER.md`.

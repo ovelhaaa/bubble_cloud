@@ -169,6 +169,10 @@ void bubble_macro_map_resolve(const float macro_values[BUBBLES_MACRO_COUNT],
 void bubble_engine_init(BubbleEngine_t* engine, int16_t* delay_buffer_memory, const BubbleEngineConfig_t* initial_config);
 void bubble_engine_reset(BubbleEngine_t* engine);
 void bubble_engine_reset_motion_phase(BubbleEngine_t* engine);
+// M2 stereo coherence: per-channel decorrelation mask applied on top of the
+// shared config seed. The shared coherence stream is unaffected, so multi-engine
+// hosts can align important events while keeping spatial differences.
+void bubble_engine_set_channel_decorrelation(BubbleEngine_t* engine, uint32_t decorrelation_mask);
 void bubble_engine_sync_rhythm_phase(BubbleEngine_t* engine, double ppq_position);
 void bubble_engine_process(BubbleEngine_t* engine, const float* in_mono, float* out_left, float* out_right, int num_samples);
 // Spatial split processing for multi-instance host wrappers. Writes the wet

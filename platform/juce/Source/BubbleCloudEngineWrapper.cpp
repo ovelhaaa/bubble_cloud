@@ -97,8 +97,13 @@ void BubbleCloudEngineWrapper::prepare(double sampleRate, int samplesPerBlock)
     for (auto& voice : telemetryVoices)
         voice.active.store(0);
     
-    // Decorrelate the right channel's RNG seed so it doesn't sound completely mono
-    engineR.rng_state ^= 0x55555555;
+    // M2 stereo coherence: keep a shared event stream (class/duration/memory
+    // tier) aligned between channels via the channel-decorrelation mask, while
+    // the per-channel stream stays decorrelated for pan/offset/pitch width. This
+    // replaces the old unconditional rng_state XOR so presets that set rng_seed
+    // can no longer accidentally collapse both channels to the same stream.
+    bubble_engine_set_channel_decorrelation(&engineL, 0u);
+    bubble_engine_set_channel_decorrelation(&engineR, 0x55555555u);
     
     // Apply previously set parameters without maps or other dynamic storage.
     for (std::size_t i = 0; i < cachedParameterIds.size(); ++i) {

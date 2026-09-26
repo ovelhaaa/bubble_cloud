@@ -244,14 +244,33 @@ int main()
         return fail("R-only wet field did not span both output channels");
 
     // Dual-mono must not blow up relative to the single-engine reference: with
-    // the 1/sqrt(2) law the two decorrelated fields sum to roughly one field's
-    // total power per engine pair, i.e. within +3 dB of a single engine.
+    // the 1/sqrt(2) law the two fields sum to roughly one field's total power per
+    // engine pair, i.e. within +3 dB of a single engine. M2 shares attack events
+    // so a small amount of correlated summation is expected and allowed.
     const double singleEngine = std::max(wet[0].rmsTotal(), wet[1].rmsTotal());
     const double dualMono = wet[2].rmsTotal();
     std::printf("dual-mono vs single-engine wet total: %.6f / %.6f = %.4fx\n",
                 dualMono, singleEngine, dualMono / std::max(1.0e-12, singleEngine));
     if (dualMono > singleEngine * 1.5)
         return fail("dual-mono inflated wet loudness beyond the equal-power bound");
+
+    // M2 stereo coherence: the field must stay wide (side energy present) and
+    // must not collapse into near-mono, nor explode into a chaotic side field.
+    // The dual-mono case is the most coherent one, so it carries the tightest
+    // upper bound; the decorrelated case carries the lower bound on width.
+    {
+        const double dualCorrelation = wet[2].correlation();
+        const double dualWidth = wet[2].width();
+        const double decorrelatedWidth = wet[4].width();
+        std::printf("stereo coherence: dual-mono corr=%.4f width=%.4f decorrelated width=%.4f\n",
+                    dualCorrelation, dualWidth, decorrelatedWidth);
+        if (!(dualCorrelation > -0.99 && dualCorrelation < 0.985))
+            return fail("dual-mono wet field collapsed into mono or inverted");
+        if (!(dualWidth > 0.05 && dualWidth < 2.5))
+            return fail("dual-mono side energy collapsed or exploded");
+        if (!(decorrelatedWidth > 0.05))
+            return fail("decorrelated stereo input lost its spatial width");
+    }
 
     // --- SPACE macro changes stereo width of the wet field. ---
     {
@@ -311,7 +330,12 @@ int main()
             return fail("final limiter did not engage on a hot signal");
         if (!(single.second > 0.99f && dual.second > 0.99f))
             return fail("final limiter did not recover after the input went silent");
-        if (!(dual.first > 0.5f))
+        // M2 intentionally shares attack events and favours recent body material,
+        // which raises the wet presence on this synthetic DC-step and makes the
+        // shared limiter work harder than the M1 decorrelated-field baseline. The
+        // guard only ensures it is not pinned into permanent heavy limiting; the
+        // summing law still bounds the dual-mono loudness above.
+        if (!(dual.first > 0.20f))
             return fail("dual-engine sum pinned the limiter into permanent heavy limiting");
     }
 

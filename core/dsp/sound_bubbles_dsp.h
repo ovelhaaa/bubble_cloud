@@ -24,6 +24,35 @@
 #define BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY 96
 #define BUBBLES_MACRO_COUNT 12
 
+// --- M2 musical character constants ---
+
+// Exact 12-TET interval ratios used by fixed pitch modes and the weighted
+// Sparkle interval cloud. 2^(7/12) is the tempered fifth (not the just 3/2).
+#define BUBBLES_PITCH_RATIO_UNISON        1.0f
+#define BUBBLES_PITCH_RATIO_OCTAVE_UP     2.0f
+#define BUBBLES_PITCH_RATIO_OCTAVE_DOWN   0.5f
+#define BUBBLES_PITCH_RATIO_FIFTH_12TET   1.4983070768766815f
+#define BUBBLES_PITCH_RATIO_OCTAVE_FIFTH  2.9966141537533630f
+
+// Temporal memory tiers: recent body material dominates, deep memory is a rare
+// ghost. The tier is chosen per spawn from a weighted distribution.
+#define BUBBLES_MEMORY_TIER_RECENT 0
+#define BUBBLES_MEMORY_TIER_MEDIUM 1
+#define BUBBLES_MEMORY_TIER_DEEP   2
+#define BUBBLES_MEMORY_TIER_COUNT  3
+#define BUBBLES_MEMORY_WEIGHT_RECENT 0.60f
+#define BUBBLES_MEMORY_WEIGHT_MEDIUM 0.25f
+#define BUBBLES_MEMORY_WEIGHT_DEEP   0.15f
+// Upper bound on the probability of choosing the deep memory region per spawn.
+#define BUBBLES_MEMORY_DEEP_MAX_SHARE 0.40f
+
+// Fixed per-grain microdetune limits in cents, chosen at spawn and held for the
+// grain lifetime. Attacks stay almost pure; freeze accepts more ensemble.
+#define BUBBLES_MICRODETUNE_ATTACK_CENTS  2.0f
+#define BUBBLES_MICRODETUNE_SHORT_CENTS   4.0f
+#define BUBBLES_MICRODETUNE_SUSTAIN_CENTS 6.0f
+#define BUBBLES_MICRODETUNE_FREEZE_CENTS  8.0f
+
 // --- Enums ---
 
 typedef enum {
@@ -228,6 +257,10 @@ typedef struct {
     uint8_t source_region_id;
     uint8_t read_direction; // 0 = forward, 1 = reverse
     uint8_t generation;
+    uint8_t memory_tier;    // BUBBLES_MEMORY_TIER_* chosen at spawn (M2)
+
+    // Fixed at spawn, constant for the whole grain lifetime (M2). Never an LFO.
+    float microdetune_cents;
 
     // Preemption tracking
     int32_t fade_counter; // Counts down from BUBBLES_FADE_SAMPLES
@@ -337,6 +370,13 @@ typedef struct {
     int32_t fade_samples;
     int32_t block_counter;         // Triggers control ticks every 32 samples
     uint32_t rng_state;            // Internal deterministic PRNG state
+    // Shared event stream (M2 stereo coherence). Both channels seed the same,
+    // so important events (class, memory tier, offset band) stay time-aligned
+    // while the per-channel rng_state still decorrelates pan/offset/pitch.
+    uint32_t coherence_rng_state;
+    // Channel decorrelation mask, applied on seed (re)initialization so the
+    // right channel keeps its own spatial stream across preset/seed changes.
+    uint32_t channel_decorrelation;
 
     // Final output mix gains of the DSP module (not product-layer macro controls)
     float master_dry_gain;
@@ -391,6 +431,11 @@ float SoundBubbles_MotionHashToBipolar(uint32_t state);
 
 // Explicitly reset the deterministic PRNG state (0 maps to a fixed non-zero internal state).
 SOUND_BUBBLES_DEPRECATED void SoundBubbles_SetRngSeed(SoundBubblesEngine_t* engine, uint32_t seed);
+
+// M2 stereo coherence: set a per-channel decorrelation mask applied on top of the
+// shared config seed. The coherence stream ignores this mask, so event-level
+// decisions align between the L/R engines while spatial decisions stay distinct.
+SOUND_BUBBLES_DEPRECATED void SoundBubbles_SetChannelDecorrelation(SoundBubblesEngine_t* engine, uint32_t decorrelation_mask);
 
 // Audio Processing: Processes num_samples. DSP core owns final dry/wet output policy.
 SOUND_BUBBLES_DEPRECATED void SoundBubbles_ProcessBlock(SoundBubblesEngine_t* engine, const float* in_mono, float* out_left, float* out_right, int num_samples);

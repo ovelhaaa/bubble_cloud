@@ -120,16 +120,22 @@ static int test_pitch_reverse_and_droplet_spawn_metadata(void) {
     init_engine(&engine, delay, &config);
     CHECK(bubble_engine_set_parameter(&engine, BUBBLE_PARAM_DEVELOPER_MODE, 1.0f), "enable developer mode");
     CHECK(bubble_engine_set_parameter(&engine, BUBBLE_ENGINE_PARAM_PITCH_MODE, (float)BUBBLE_PITCH_MODE_OCTAVE_UP), "set octave-up mode");
-    CHECK(bubble_engine_set_parameter(&engine, BUBBLE_ENGINE_PARAM_REVERSE_PROBABILITY, 1.0f), "force reverse direction");
+    // M2 makes reverse context-conditioned (rare on attacks). Use the explicit
+    // REVERSE_SWELL burst to force reverse deterministically for this metadata
+    // check of pitch-rate/reverse coupling.
+    CHECK(bubble_engine_set_parameter(&engine, BUBBLE_ENGINE_PARAM_BURST_MODE, (float)BUBBLE_BURST_MODE_REVERSE_SWELL), "use reverse-swell burst");
+    CHECK(bubble_engine_set_parameter(&engine, BUBBLE_ENGINE_PARAM_BURST_IMMEDIATE_COUNT, 3.0f), "reverse-swell burst count");
     process_constant(&engine, 1.0f, BUBBLES_BLOCK_SIZE);
     CHECK(active_voice_count(&engine) >= 1, "transient block creates at least one bubble voice");
     int checked = 0;
     for (int i = 0; i < engine.active_voice_limit; i++) {
         BubbleVoice_t* voice = &engine.voices[i];
         if (voice->state == VOICE_STATE_INACTIVE) continue;
-        CHECK(voice->read_direction == 1u, "reverse probability of 1 creates reverse voices");
-        CHECK_CLOSE(voice->quantized_rate, 2.0f, 0.0001f, "octave-up pitch mode uses 2x quantized rate");
-        CHECK_CLOSE(voice->rate, -2.0f, 0.0001f, "reverse octave-up voice has negative 2x playback rate");
+        CHECK(voice->read_direction == 1u, "reverse-swell burst creates reverse voices");
+        // M2 adds a fixed per-grain microdetune on top of the octave-up interval.
+        float expected_rate = 2.0f * powf(2.0f, voice->microdetune_cents / 1200.0f);
+        CHECK_CLOSE(voice->quantized_rate, expected_rate, 0.0005f, "octave-up pitch mode uses 2x quantized rate plus microdetune");
+        CHECK_CLOSE(voice->rate, -expected_rate, 0.0005f, "reverse octave-up voice has negative 2x playback rate");
         checked++;
     }
     CHECK(checked > 0, "inspected octave-up reverse voice metadata");

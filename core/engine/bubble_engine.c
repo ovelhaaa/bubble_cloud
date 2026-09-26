@@ -307,6 +307,11 @@ void bubble_engine_reset_motion_phase(BubbleEngine_t* engine) {
     SoundBubbles_ResetMotionPhase(engine);
 }
 
+void bubble_engine_set_channel_decorrelation(BubbleEngine_t* engine, uint32_t decorrelation_mask) {
+    if (engine == NULL) return;
+    SoundBubbles_SetChannelDecorrelation(engine, decorrelation_mask);
+}
+
 void bubble_engine_sync_rhythm_phase(BubbleEngine_t* engine, double ppq_position) {
     if (engine == NULL || !isfinite(ppq_position)) return;
 
