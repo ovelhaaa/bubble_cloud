@@ -131,6 +131,7 @@ See `docs/PRESET_FORMAT.md`, `docs/macro_ranges.md`, and `docs/macro_matrix.yaml
 
 - `docs/ARCHITECTURE.md` — shared engine/platform boundaries and real-time rules.
 - `docs/DSP_DESIGN.md` — DSP behavior, states, scheduling, and quality-profile invariants.
+- `docs/STEREO_SUMMING_LAW.md` — explicit dual-engine stereo wet summing law and final-bus telemetry contract.
 - `docs/PRESET_FORMAT.md` — canonical JSON preset contract and migration expectations.
 - `docs/WASM_INTEGRATION.md` — browser/WASM integration notes and parity guidance.
 - `docs/EMBEDDED_PORTING.md` — embedded host responsibilities and callback constraints.

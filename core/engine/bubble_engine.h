@@ -178,7 +178,8 @@ void bubble_engine_process_spatial(BubbleEngine_t* engine, const float* in_mono,
                                    float* out_wet_left, float* out_wet_right,
                                    float* out_dry_mono, int num_samples);
 // Applies the engine's final-limiter policy to an already mixed stereo block.
-void bubble_engine_apply_final_limiter(BubbleEngine_t* engine, float* out_left, float* out_right, int num_samples);
+// Returns the minimum limiter gain observed over the block (1.0 = no limiting).
+float bubble_engine_apply_final_limiter(BubbleEngine_t* engine, float* out_left, float* out_right, int num_samples);
 // Converts a 44.1 kHz reference sample offset to samples at the given rate.
 int32_t bubble_engine_reference_samples_to_samples(int32_t reference_samples, float sample_rate);
 bool bubble_engine_set_parameter(BubbleEngine_t* engine, BubbleEngineParameterId_t parameter, float value);

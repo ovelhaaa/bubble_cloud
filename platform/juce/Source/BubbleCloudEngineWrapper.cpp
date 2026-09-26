@@ -89,8 +89,8 @@ void BubbleCloudEngineWrapper::prepare(double sampleRate, int samplesPerBlock)
     telemetryEnvelopeR.store(0.0f);
     telemetryPeakL.store(0.0f);
     telemetryPeakR.store(0.0f);
-    telemetryLimiterGainL.store(1.0f);
-    telemetryLimiterGainR.store(1.0f);
+    telemetryFinalLimiterGain.store(1.0f);
+    telemetryClipCount.store(0);
     telemetryTempoSync.store(0);
     telemetryFrozen.store(0);
     telemetrySamplesUntilVoicePublish = 0;
@@ -156,22 +156,33 @@ void BubbleCloudEngineWrapper::process(const float* inLeft, const float* inRight
                                       dryFromR.data(),
                                       chunk);
 
-        float peakL = 0.0f;
-        float peakR = 0.0f;
+        const int32_t clipsBefore = engineL.metrics_clip_count_accum;
         for (int i = 0; i < chunk; ++i) {
-            const float left = dryFromL[(size_t)i] + wetLeftFromL[(size_t)i] + wetLeftFromR[(size_t)i];
-            const float right = dryFromR[(size_t)i] + wetRightFromL[(size_t)i] + wetRightFromR[(size_t)i];
+            float left = 0.0f;
+            float right = 0.0f;
+            sumStereoBus(dryFromL[(size_t)i], dryFromR[(size_t)i],
+                         wetLeftFromL[(size_t)i], wetRightFromL[(size_t)i],
+                         wetLeftFromR[(size_t)i], wetRightFromR[(size_t)i],
+                         left, right);
             outLeft[processed + i] = left;
             outRight[processed + i] = right;
-            const float absLeft = std::abs(left);
-            const float absRight = std::abs(right);
-            if (absLeft > peakL) peakL = absLeft;
-            if (absRight > peakR) peakR = absRight;
         }
 
-        bubble_engine_apply_final_limiter(&engineL, outLeft + processed, outRight + processed, chunk);
-        storePeak(telemetryPeakL, peakL);
-        storePeak(telemetryPeakR, peakR);
+        // Final telemetry is measured on the shared stereo bus after the single
+        // limiter, so it reflects exactly what the host receives.
+        const float blockLimiterGain = bubble_engine_apply_final_limiter(
+            &engineL, outLeft + processed, outRight + processed, chunk);
+        storeMin(telemetryFinalLimiterGain, blockLimiterGain);
+
+        const int32_t clipsAfter = engineL.metrics_clip_count_accum;
+        if (clipsAfter > clipsBefore) {
+            telemetryClipCount.fetch_add(clipsAfter - clipsBefore, std::memory_order_relaxed);
+        }
+
+        for (int i = 0; i < chunk; ++i) {
+            storePeak(telemetryPeakL, std::abs(outLeft[processed + i]));
+            storePeak(telemetryPeakR, std::abs(outRight[processed + i]));
+        }
         processed += chunk;
     }
 
@@ -191,6 +202,16 @@ void BubbleCloudEngineWrapper::storePeak(std::atomic<float>& destination, float 
 {
     float current = destination.load(std::memory_order_relaxed);
     while (value > current
+           && !destination.compare_exchange_weak(current, value,
+                                                 std::memory_order_relaxed,
+                                                 std::memory_order_relaxed)) {
+    }
+}
+
+void BubbleCloudEngineWrapper::storeMin(std::atomic<float>& destination, float value) noexcept
+{
+    float current = destination.load(std::memory_order_relaxed);
+    while (value < current
            && !destination.compare_exchange_weak(current, value,
                                                  std::memory_order_relaxed,
                                                  std::memory_order_relaxed)) {
@@ -219,13 +240,9 @@ void BubbleCloudEngineWrapper::metricsCallback(const BubbleEngineBlockMetrics_t*
     if (context->channel == 0) {
         owner->telemetryEnvelopeL.store(metrics->envelope, std::memory_order_relaxed);
         owner->telemetryEngineStateL.store(metrics->engine_state, std::memory_order_relaxed);
-        owner->telemetryLimiterGainL.store(metrics->limiter_gain, std::memory_order_relaxed);
-        storePeak(owner->telemetryPeakL, metrics->peak_l);
     } else {
         owner->telemetryEnvelopeR.store(metrics->envelope, std::memory_order_relaxed);
         owner->telemetryEngineStateR.store(metrics->engine_state, std::memory_order_relaxed);
-        owner->telemetryLimiterGainR.store(metrics->limiter_gain, std::memory_order_relaxed);
-        storePeak(owner->telemetryPeakR, metrics->peak_r);
     }
 }
 
@@ -288,8 +305,8 @@ BubbleCloudTelemetry BubbleCloudEngineWrapper::getTelemetrySnapshot() noexcept
     snapshot.rhythmStep = telemetryRhythmStep.load(std::memory_order_relaxed);
     snapshot.peakLeft = telemetryPeakL.exchange(0.0f, std::memory_order_relaxed);
     snapshot.peakRight = telemetryPeakR.exchange(0.0f, std::memory_order_relaxed);
-    snapshot.limiterGain = std::min(telemetryLimiterGainL.load(std::memory_order_relaxed),
-                                    telemetryLimiterGainR.load(std::memory_order_relaxed));
+    snapshot.limiterGain = telemetryFinalLimiterGain.exchange(1.0f, std::memory_order_relaxed);
+    snapshot.clipCount = telemetryClipCount.exchange(0, std::memory_order_relaxed);
     snapshot.tempoSync = telemetryTempoSync.load(std::memory_order_relaxed) != 0;
     snapshot.frozen = telemetryFrozen.load(std::memory_order_relaxed) != 0;
 

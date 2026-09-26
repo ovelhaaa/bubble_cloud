@@ -28,6 +28,9 @@ dist/
 renders/
 outputs/
 
+# Test artifacts
+bubbles_editor_smoke.png
+
 # Versioned audio fixtures/samples are allowed explicitly.
 !tests/fixtures/audio/*.wav
 !assets/samples/*.wav

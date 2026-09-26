@@ -25,6 +25,16 @@ namespace
         parameter->setValueNotifyingHost(parameter->convertTo0to1(value));
     }
 
+    // Minimal scriptable host playhead so the transport fallback logic can be
+    // driven deterministically without a DAW wrapper.
+    class FakePlayHead : public juce::AudioPlayHead
+    {
+    public:
+        juce::Optional<PositionInfo> getPosition() const override { return position; }
+
+        PositionInfo position;
+    };
+
     void processSilence(BubbleCloudAudioProcessor& processor, const juce::MidiBuffer& midi)
     {
         juce::AudioBuffer<float> buffer(2, 128);
@@ -230,20 +240,91 @@ namespace
 
     void testHostTempoFallbackSurvivesMissingBpm()
     {
-        // The BPM fallback policy is host-driver code; the APVTS value must stay
-        // finite and within the supported range across repeated sync toggles.
+        // Simulates a real host transport: playing at 90 BPM with valid PPQ, a
+        // temporary BPM loss while PPQ keeps advancing, then BPM reappearing.
+        // The fallback must keep 90 BPM, advance expectedNextPpq at 90 BPM and
+        // never mistake the missing BPM for a transport jump.
         BubbleCloudAudioProcessor processor;
-        processor.setRateAndBufferSizeDetails(48000.0, 128);
-        processor.prepareToPlay(48000.0, 128);
+        processor.setRateAndBufferSizeDetails(48000.0, 512);
+        processor.prepareToPlay(48000.0, 512);
         setParameter(processor, "TEMPO_SYNC", 1.0f);
-        juce::MidiBuffer noMidi;
-        for (int block = 0; block < 8; ++block) {
-            juce::AudioBuffer<float> buffer(2, 128);
+
+        FakePlayHead playHead;
+        processor.setPlayHead(&playHead);
+
+        constexpr int blockSize = 512;
+        constexpr double bpm = 90.0;
+        const double blockQuarterNotes = ((double)blockSize / 48000.0) * (bpm / 60.0);
+        double ppq = 0.0;
+
+        auto processBlockAdvancing = [&](bool provideBpm) {
+            playHead.position.setIsPlaying(true);
+            if (provideBpm)
+                playHead.position.setBpm(bpm);
+            else
+                playHead.position.setBpm(juce::Optional<double>{});
+            playHead.position.setPpqPosition(ppq);
+            juce::AudioBuffer<float> buffer(2, blockSize);
             buffer.clear();
-            processor.processBlock(buffer, noMidi);
-        }
-        const auto* sync = processor.treeState.getRawParameterValue("TEMPO_SYNC");
-        require(sync != nullptr && sync->load() >= 0.5f, "tempo sync did not stay enabled");
+            juce::MidiBuffer midi;
+            processor.processBlock(buffer, midi);
+            ppq += blockQuarterNotes;
+        };
+
+        processBlockAdvancing(true);
+        auto state = processor.getTransportTestState();
+        require(state.syncRhythmPhaseCalls == 1,
+                "the first playing block did not phase-sync exactly once");
+        require(std::abs(state.lastValidHostBpm - bpm) < 1e-6,
+                "the 90 BPM host value was not captured");
+        require(state.hasExpectedNextPpq
+                    && std::abs(state.expectedNextPpq - blockQuarterNotes) < 1e-9,
+                "expectedNextPpq was not seeded from the first block");
+
+        for (int i = 0; i < 24; ++i)
+            processBlockAdvancing(true);
+        state = processor.getTransportTestState();
+        require(state.syncRhythmPhaseCalls == 1,
+                "a steady 90 BPM transport caused a false transport-jump resync");
+        require(std::abs(state.lastValidHostBpm - bpm) < 1e-6,
+                "lastValidHostBpm drifted during steady playback");
+
+        const double ppqBeforeAbsence = state.expectedNextPpq;
+        for (int i = 0; i < 24; ++i)
+            processBlockAdvancing(false); // BPM missing, PPQ still valid
+        state = processor.getTransportTestState();
+        require(std::abs(state.lastValidHostBpm - bpm) < 1e-6,
+                "lastValidHostBpm did not survive the missing host BPM");
+        require(state.syncRhythmPhaseCalls == 1,
+                "a missing host BPM was mistaken for a transport jump");
+        const double absenceAdvance = state.expectedNextPpq - ppqBeforeAbsence;
+        require(std::abs(absenceAdvance - 24.0 * blockQuarterNotes) < 1e-6,
+                "expectedNextPpq did not advance at the retained 90 BPM");
+
+        for (int i = 0; i < 8; ++i)
+            processBlockAdvancing(true); // BPM reappears
+        state = processor.getTransportTestState();
+        require(std::abs(state.lastValidHostBpm - bpm) < 1e-6,
+                "lastValidHostBpm changed when the BPM reappeared unchanged");
+        require(state.syncRhythmPhaseCalls == 1,
+                "BPM reappearance triggered an unnecessary resync");
+
+        ppq += 4.0; // genuine transport jump
+        processBlockAdvancing(true);
+        state = processor.getTransportTestState();
+        require(state.syncRhythmPhaseCalls == 2,
+                "a genuine transport jump did not resync exactly once");
+
+        playHead.position.setIsPlaying(false);
+        playHead.position.setPpqPosition(juce::Optional<double>{});
+        juce::AudioBuffer<float> buffer(2, blockSize);
+        buffer.clear();
+        juce::MidiBuffer midi;
+        processor.processBlock(buffer, midi);
+        state = processor.getTransportTestState();
+        require(!state.hasExpectedNextPpq, "stopping the transport did not clear the PPQ latch");
+        require(std::abs(state.lastValidHostBpm - bpm) < 1e-6,
+                "stopping the transport discarded the last valid BPM");
     }
 }
 

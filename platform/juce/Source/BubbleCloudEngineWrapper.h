@@ -33,6 +33,7 @@ struct BubbleCloudTelemetry
     float peakLeft = 0.0f;
     float peakRight = 0.0f;
     float limiterGain = 1.0f;
+    int clipCount = 0;
     bool tempoSync = false;
     bool frozen = false;
 };
@@ -57,6 +58,30 @@ public:
     EngineConfig_t getConfig() const;
     void setConfig(const EngineConfig_t& config);
 
+    // Explicit stereo wet summing law.
+    //
+    // Each engine contributes its own decorrelated spatial wet field (separate
+    // RNG streams) to the shared output bus:
+    //     L = dryL + wetSumGain * (wetLL + wetRL)
+    //     R = dryR + wetSumGain * (wetLR + wetRR)
+    //
+    // Two independent fields sum in power, so the equal-power factor 1/sqrt(2)
+    // conserves the total wet energy of the single-field reference architecture
+    // for mono, dual-mono and stereo input, while preserving the stereo width
+    // ratio. The dry bus stays channel-local and is never scaled.
+    static constexpr float wetSumGain = 0.70710678118654752440f;
+
+    // Applies the bus law above. Exposed so native probes can validate the
+    // arithmetic directly without duplicating the constants.
+    static inline void sumStereoBus(float dryL, float dryR,
+                                    float wetLeftFromL, float wetRightFromL,
+                                    float wetLeftFromR, float wetRightFromR,
+                                    float& outL, float& outR) noexcept
+    {
+        outL = dryL + wetSumGain * (wetLeftFromL + wetLeftFromR);
+        outR = dryR + wetSumGain * (wetRightFromL + wetRightFromR);
+    }
+
 private:
     struct AtomicVoiceTelemetry
     {
@@ -78,6 +103,7 @@ private:
 
     static void metricsCallback(const BubbleEngineBlockMetrics_t* metrics, void* userData);
     static void storePeak(std::atomic<float>& destination, float value) noexcept;
+    static void storeMin(std::atomic<float>& destination, float value) noexcept;
     static int cachedParameterIndex(BubbleParameterId paramId) noexcept;
     void publishVoiceTelemetry() noexcept;
 
@@ -116,8 +142,10 @@ private:
     std::atomic<float> telemetryEnvelopeR { 0.0f };
     std::atomic<float> telemetryPeakL { 0.0f };
     std::atomic<float> telemetryPeakR { 0.0f };
-    std::atomic<float> telemetryLimiterGainL { 1.0f };
-    std::atomic<float> telemetryLimiterGainR { 1.0f };
+    // Final-bus readings captured after the shared limiter, not the per-engine
+    // pre-limiter wet metrics owned by the core.
+    std::atomic<float> telemetryFinalLimiterGain { 1.0f };
+    std::atomic<int> telemetryClipCount { 0 };
     std::atomic<int> telemetryTempoSync { 0 };
     std::atomic<int> telemetryFrozen { 0 };
     

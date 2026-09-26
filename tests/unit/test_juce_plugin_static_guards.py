@@ -143,6 +143,21 @@ def test_juce_wrapper_preserves_stereo_input_without_audio_thread_allocations() 
     assert "dryFromL" in wrapper_header
     assert "dryFromR" in wrapper_header
 
+    # Explicit stereo wet summing law: equal-power 1/sqrt(2) on the decorrelated
+    # wet fields, dry untouched, expressed in one testable helper.
+    assert "wetSumGain" in wrapper_header
+    assert "0.70710678118654752440f" in wrapper_header
+    assert "sumStereoBus" in wrapper
+    assert "sumStereoBus" in wrapper_header
+
+    # Final-bus telemetry is captured after the shared limiter, not from the
+    # per-engine pre-limiter metrics.
+    assert "telemetryFinalLimiterGain" in wrapper_header
+    assert "telemetryClipCount" in wrapper_header
+    assert "storeMin" in wrapper
+    assert "telemetryFinalLimiterGain.exchange" in wrapper
+    assert "telemetryClipCount.exchange" in wrapper
+
     process_body = re.search(
         r"void BubbleCloudEngineWrapper::process\(.*?\n\}",
         wrapper,
@@ -157,10 +172,21 @@ def test_juce_wrapper_preserves_stereo_input_without_audio_thread_allocations() 
 def test_host_bpm_fallback_preserves_last_valid_bpm() -> None:
     processor = PLUGIN_PROCESSOR.read_text(encoding="utf-8")
     header = PLUGIN_PROCESSOR_HEADER.read_text(encoding="utf-8")
+    cmake = JUCE_CMAKE.read_text(encoding="utf-8")
+    smoke = PROCESSOR_SMOKE.read_text(encoding="utf-8")
 
     assert "lastValidHostBpm" in header
     assert "double effectiveBpm = lastValidHostBpm;" in processor
     assert "lastValidHostBpm = effectiveBpm;" in processor
+
+    # A test-only seam (compiled out of production) lets the smoke test drive a
+    # real fake host playhead and observe the fallback state.
+    assert "TransportTestState" in header
+    assert "getTransportTestState" in header
+    assert "getTransportTestState" in processor
+    assert "setPlayHead" in smoke
+    assert "syncRhythmPhaseCalls" in smoke
+    assert "BUBBLES_BUILD_PROCESSOR_TESTS=1" in cmake
 
 
 def test_performance_controls_support_midi_capture_scene_morph_and_rhythm_ui() -> None:

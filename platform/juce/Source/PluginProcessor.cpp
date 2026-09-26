@@ -240,6 +240,9 @@ void BubbleCloudAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     effectiveFreezeActive.store(false);
     lastAppliedFreeze = -1.0f;
     sceneApplicationDirty.store(true);
+#if defined(BUBBLES_BUILD_PROCESSOR_TESTS)
+    transportSyncRhythmPhaseCalls = 0;
+#endif
 
     if (const auto* morph = treeState.getRawParameterValue("MORPH"))
     {
@@ -369,6 +372,9 @@ void BubbleCloudAudioProcessor::updateHostTransport(int numSamples)
             || std::abs(*ppq - expectedNextPpq) > 0.125;
         if (transportJumped) {
             engineWrapper.syncRhythmPhase(*ppq);
+#if defined(BUBBLES_BUILD_PROCESSOR_TESTS)
+            ++transportSyncRhythmPhaseCalls;
+#endif
         }
 
         const double sampleRate = getSampleRate();
@@ -641,3 +647,16 @@ juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new BubbleCloudAudioProcessor();
 }
+
+#if defined(BUBBLES_BUILD_PROCESSOR_TESTS)
+BubbleCloudAudioProcessor::TransportTestState BubbleCloudAudioProcessor::getTransportTestState() const noexcept
+{
+    TransportTestState state;
+    state.lastValidHostBpm = lastValidHostBpm;
+    state.expectedNextPpq = expectedNextPpq;
+    state.hasExpectedNextPpq = hasExpectedNextPpq;
+    state.wasTransportPlaying = wasTransportPlaying;
+    state.syncRhythmPhaseCalls = transportSyncRhythmPhaseCalls;
+    return state;
+}
+#endif

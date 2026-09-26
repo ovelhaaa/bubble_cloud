@@ -63,6 +63,9 @@ target_link_libraries(BubbleCloud PRIVATE
 
 if(BUBBLES_BUILD_PROCESSOR_TESTS)
     enable_testing()
+    # Compile the transport test seam into the plug-in target for this test build
+    # only; production builds leave it out.
+    target_compile_definitions(BubbleCloud PUBLIC BUBBLES_BUILD_PROCESSOR_TESTS=1)
     add_executable(BubbleCloudProcessorTests
         ../../tests/juce/processor_smoke.cpp
     )

@@ -550,14 +550,16 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
     }
 }
 
-void SoundBubbles_ApplyFinalLimiter(SoundBubblesEngine_t* engine, float* out_left, float* out_right, int num_samples) {
-    if (engine == NULL || out_left == NULL || out_right == NULL || num_samples <= 0) return;
+float SoundBubbles_ApplyFinalLimiter(SoundBubblesEngine_t* engine, float* out_left, float* out_right, int num_samples) {
+    if (engine == NULL || out_left == NULL || out_right == NULL || num_samples <= 0) return 1.0f;
 
+    float min_gain = 1.0f;
     CacheFinalLimiterBlockParams(engine);
     for (int i = 0; i < num_samples; i++) {
         float final_l = out_left[i];
         float final_r = out_right[i];
         float limiter_gain = ProcessFinalLimiterSample(engine, &final_l, &final_r);
+        if (limiter_gain < min_gain) min_gain = limiter_gain;
 
         float out_abs_l = fabsf(final_l);
         float out_abs_r = fabsf(final_r);
@@ -568,6 +570,7 @@ void SoundBubbles_ApplyFinalLimiter(SoundBubblesEngine_t* engine, float* out_lef
         out_left[i] = final_l;
         out_right[i] = final_r;
     }
+    return min_gain;
 }
 
 // --- Internal Helper Implementations ---

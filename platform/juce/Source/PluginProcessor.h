@@ -43,6 +43,20 @@ public:
     BubbleCloudTelemetry getTelemetrySnapshot() noexcept;
     float getMorphedParameterValue(const juce::String& parameterID) const;
 
+#if defined(BUBBLES_BUILD_PROCESSOR_TESTS)
+    // Test-only observation of the host transport fallback state. Compiled out
+    // of production builds (the macro is set only when the test target is on).
+    struct TransportTestState
+    {
+        double lastValidHostBpm = 120.0;
+        double expectedNextPpq = 0.0;
+        bool hasExpectedNextPpq = false;
+        bool wasTransportPlaying = false;
+        int syncRhythmPhaseCalls = 0;
+    };
+    TransportTestState getTransportTestState() const noexcept;
+#endif
+
     juce::AudioProcessorValueTreeState treeState;
 
 private:
@@ -75,6 +89,10 @@ private:
     std::atomic<bool> sceneApplicationDirty { true };
     std::atomic<bool> midiFreezeActive { false };
     float lastAppliedFreeze = -1.0f;
+
+#if defined(BUBBLES_BUILD_PROCESSOR_TESTS)
+    int transportSyncRhythmPhaseCalls = 0;
+#endif
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BubbleCloudAudioProcessor)
 };

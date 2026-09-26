@@ -426,8 +426,8 @@ void bubble_engine_process_spatial(BubbleEngine_t* engine, const float* in_mono,
     }
 }
 
-void bubble_engine_apply_final_limiter(BubbleEngine_t* engine, float* out_left, float* out_right, int num_samples) {
-    SoundBubbles_ApplyFinalLimiter(engine, out_left, out_right, num_samples);
+float bubble_engine_apply_final_limiter(BubbleEngine_t* engine, float* out_left, float* out_right, int num_samples) {
+    return SoundBubbles_ApplyFinalLimiter(engine, out_left, out_right, num_samples);
 }
 
 int32_t bubble_engine_reference_samples_to_samples(int32_t reference_samples, float sample_rate) {

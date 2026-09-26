@@ -408,10 +408,12 @@ SOUND_BUBBLES_DEPRECATED void SoundBubbles_ProcessBlockSpatial(SoundBubblesEngin
 
 // Applies the engine's final-limiter policy and telemetry accumulation to an
 // already sum-mixed stereo block. Uses the same state as the in-process limiter.
-SOUND_BUBBLES_DEPRECATED void SoundBubbles_ApplyFinalLimiter(SoundBubblesEngine_t* engine,
-                                                             float* out_left,
-                                                             float* out_right,
-                                                             int num_samples);
+// Returns the minimum limiter gain observed over the block (1.0 = no limiting)
+// so hosts can publish a final-bus gain-reduction reading without extra storage.
+SOUND_BUBBLES_DEPRECATED float SoundBubbles_ApplyFinalLimiter(SoundBubblesEngine_t* engine,
+                                                              float* out_left,
+                                                              float* out_right,
+                                                              int num_samples);
 
 // Converts a 44.1 kHz reference offset into samples at the given rate. Exposed so
 // host layers and tests can share the exact same sample-rate conversion.
