@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0-rc.4 — 2026-09-27
+
+- **M2.3 — Explicit shared event identity.** Removes the last fragility of M2.2 stereo coherence without touching public parameters, presets, UI or the summing law.
+- Root cause: `SpawnRandomFloat01` still advanced an implicit `tick_shared_ordinal++` per shared draw, so a spawn that one channel executed and the other did not could shift the shared decision of a *later common spawn inside the same scheduler tick* (e.g. L: A, extra, B vs R: A, B — B got a different ordinal on each channel).
+- Shared decisions are now keyed by an explicit logical spawn identity: the scheduler assigns one `spawnOrdinal` per top-level spawn (SPRAY, STRUM, SWARM, REVERSE_SWELL, SINGLE, rhythm steps, density accumulator) and threads it unchanged through `Voice_RequestSpawn` → pending queue → `Voice_SpawnInit`, where CLASS / REGION_TIER / OFFSET_BAND all reuse the same `(shared_event_seed, scheduler_tick, spawn_ordinal, decision_kind)` key.
+- `SharedSpawnRandom(engine, coherence, spawn_ordinal, kind)` is pure with respect to identity: it never advances a counter and never depends on how many decisions preceded it. Same identity always yields the same shared value.
+- Second-generation (droplet) spawns derive a stable, collision-free child identity from their parent (`BUBBLES_SPAWN_DERIVED_FLAG | (parentOrdinal << 8) | generation`) and never consume or shift a primary ordinal. Saturated spawns preserve their `spawn_ordinal` in the pending queue and reuse it verbatim when they become a voice.
+- Asymmetric-spawn semantics: L spawn #0 ↔ R spawn #0, L spawn #1 ↔ R spawn #1; an extra spawn without a counterpart stays valid but does not shift the IDs of the others. The number of spawns is never artificially synchronised between channels.
+- Tests: `tests/dsp/m2_coherence_guard_harness.c` added the exact same-tick asymmetry case (including a reproduction of the M2.2 implicit-counter failure), pending-queue identity preservation, parent-derived collision-free droplet identity, and an 8000-tick asymmetric multi-spawn stress. All prior M2.2 tests were adapted to the explicit identity.
+- Preserved: channel-local duration/pan/fine offset/Sparkle pitch/microdetune/attack jitter/reverse (stereo width unchanged), memory weights, Sparkle weights, 12-TET fifth, reverse curves, microdetune ranges, Smart Start/guard fix, summing law, limiter, BPM/PPQ, presets/UI. No allocation, locks or I/O in the callback; CPU unchanged.
+
 ## 1.2.0-rc.3 — 2026-09-27
 
 - **M2.2 — Guard finalization & robust stereo coherence.** Two M2.1 edge cases closed without touching public parameters, presets, UI or the summing law.

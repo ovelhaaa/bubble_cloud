@@ -1,6 +1,6 @@
 # M2 — Musical Cloud Character
 
-**Versão:** 1.2.0 (M2.2)
+**Versão:** 1.2.0 (M2.3)
 **Última atualização:** 2026-09-27
 
 Este documento descreve a milestone **M2 — Musical Cloud Character**, que
@@ -47,10 +47,12 @@ Agora o motor tem **dois mecanismos de aleatoriedade**:
 - `rng_state`: stream **por canal**, sequencial, decorrelacionado pela máscara
   `channel_decorrelation` (aplicada em `SoundBubbles_SetRngSeed`, persistindo
   entre trocas de preset/seed).
-- Decisões compartilhadas **event-addressable** (M2.2): não existe mais um
-  stream compartilhado mutável. O valor compartilhado de um evento lógico é um
-  hash stateless de `(shared_event_seed, scheduler_tick, tick_shared_ordinal,
-  decision_kind)`, calculado sob demanda e idêntico nos dois canais.
+- Decisões compartilhadas **keyed por identidade explícita de spawn** (M2.3):
+  não existe stream compartilhado mutável nem contador implícito de draws. O
+  scheduler atribui um `spawnOrdinal` explícito por spawn lógico e o valor
+  compartilhado é um hash stateless de
+  `(shared_event_seed, scheduler_tick, spawn_ordinal, decision_kind)`,
+  calculado sob demanda e idêntico nos dois canais.
 
 A coerência de cada decisão de spawn depende apenas da fase da frase:
 
@@ -62,20 +64,32 @@ A coerência de cada decisão de spawn depende apenas da fase da frase:
 | `SPARSE_DECAY` | 0.20 | cauda larga |
 | Freeze | ≤ 0.12 | campo bem aberto |
 
-`SpawnRandomFloat01(engine, coherence, kind)` deriva o `roll` e o valor
-candidato compartilhado da **mesma identidade de evento** (o `roll` e o valor
-usam lanes distintas do hash). Com probabilidade `coherence` devolve o valor
-compartilhado; caso contrário devolve um draw do stream local do canal.
+`SharedSpawnRandom(engine, coherence, spawn_ordinal, kind)` deriva o `roll` e o
+valor candidato compartilhado da **mesma identidade de spawn** (o `roll` e o
+valor usam lanes distintas do hash). Com probabilidade `coherence` devolve o
+valor compartilhado; caso contrário devolve um draw do stream local do canal. O
+helper é **puro em relação à identidade**: não incrementa contador algum e não
+depende de quantas decisões anteriores ocorreram.
 
-Porque a decisão compartilhada é endereçada por evento e **não por ordem de
-stream**, ela não depende de quantos spawns o outro canal executou antes. O
-`tick_shared_ordinal` reinicia a cada control tick e a identidade inclui o
-`scheduler_tick` (contador monotônico de ticks, idêntico nos dois canais), então
-é impossível colidir dois spawns no mesmo tick e a contagem assimétrica de
-spawns não desloca decisões futuras:
+Porque a decisão compartilhada é endereçada pela identidade lógica explícita e
+**não pela ordem de consumo de RNG**, ela não depende de quantos spawns o outro
+canal executou antes — nem mesmo de spawns assimétricos dentro do mesmo tick. O
+`scheduler_tick` (contador monotônico, idêntico nos dois canais) e o
+`spawn_ordinal` (0, 1, 2, ... por spawn lógico) formam a chave:
 
 ```text
-Shared stereo decisions are event-addressable rather than stream-order-dependent.
+shared key =
+(
+    shared_event_seed,
+    scheduler_tick,
+    spawnOrdinal,
+    decisionKind
+)
+```
+
+```text
+Shared decisions are keyed by explicit logical spawn identity,
+not by RNG consumption order.
 Asymmetric spawn counts therefore do not shift future shared decisions.
 ```
 
@@ -102,6 +116,51 @@ frágil sob contagem assimétrica de spawns).
 Justificativa musical: transientes mais coerentes e “punchy” quando as duas
 entradas coincidem; sustain/decay/freeze abrem em um halo largo. A compatibilidade
 mono é preservada e a correlação dual-mono fica controlada (ver §7).
+
+### 2.1 Identidade de spawn explícita (M2.3)
+
+O scheduler é o único dono da numeração. Para cada spawn lógico de topo (SPRAY,
+STRUM, SWARM, REVERSE_SWELL, SINGLE, passos de ritmo e o acumulador de
+densidade) ele reserva um `spawnOrdinal` (`Scheduler_NextSpawnOrdinal`) e o
+carrega inalterado por `Voice_RequestSpawn` → pending queue → `Voice_SpawnInit`,
+onde todas as decisões compartilhadas daquele grain reutilizam a mesma
+identidade base:
+
+```text
+spawn #0:
+  CLASS
+  REGION_TIER
+  OFFSET_BAND
+
+spawn #1:
+  CLASS
+  REGION_TIER
+  OFFSET_BAND
+```
+
+Semântica para spawns assimétricos, dentro de um tick:
+
+- L spawn #0 ↔ R spawn #0;
+- L spawn #1 ↔ R spawn #1;
+- um spawn extra sem correspondente continua válido, mas não desloca os IDs dos
+  demais.
+
+A quantidade de spawns **não** é sincronizada artificialmente entre canais.
+
+Spawn saturado: quando a pool está cheia, o request entra na `pending_spawns`
+com o `spawnOrdinal` capturado no momento do request e o reutiliza quando
+finalmente vira voice (nunca é recalculado).
+
+Second-generation (droplets): a identidade deriva do parent e de uma
+geração/sub-ordinal:
+
+```text
+derived = BUBBLES_SPAWN_DERIVED_FLAG | (parentOrdinal << 8) | generation
+```
+
+O bit alto isola o namespace derivado dos ordinais primários (que permanecem
+pequenos e com o bit alto limpo), então um droplet nunca colide com um spawn
+primário e nunca consome nem desloca o próximo ordinal primário do tick.
 
 ## 3. Voicing do Sparkle
 
@@ -225,16 +284,22 @@ Destaques (M1 → M2, trecho de frase determinístico a 48 kHz):
 As mudanças ocorrem apenas no **spawn** (control-rate, ~30–80 eventos/s): o
 hash stateless por decisão compartilhada (poucos xorshift/multiply, sem
 alocação, lock ou estado global), `powf` por grain e seleção de tier. Nenhum
-custo novo no laço por amostra. O teste de orçamento (`tests/performance`) e o
-smoke de bloco continuam dentro do budget.
+custo novo no laço por amostra. A M2.3 troca o incremento implícito dentro do
+helper (um `++` por draw compartilhado) por um único `Scheduler_NextSpawnOrdinal`
+por spawn lógico, então o custo de CPU permanece o mesmo. O teste de orçamento
+(`tests/performance`) e o smoke de bloco continuam dentro do budget.
 
-Regressões M2.2: `tests/dsp/m2_coherence_guard_harness.c` cobre (A) divergência
-de `coherence` entre canais, (B) contagem desigual de spawns reconvergindo,
-(C) divergência estéreo longa e assimétrica, (D) determinismo por identidade de
-evento, (E) decorrelação das decisões locais e a regressão de Smart Start vs
-guard, além do guard com microdetune na matriz 44.1/48/88.2/96 kHz. Somam-se o
-`m2_character_harness.c`, o wrapper stereo probe e a matriz de sample
-rate/block.
+Regressões M2.2/M2.3: `tests/dsp/m2_coherence_guard_harness.c` cobre (A)
+divergência de `coherence` entre canais, (B) contagem desigual de spawns
+reconvergindo, (C) divergência estéreo longa e assimétrica, (D) determinismo por
+identidade de spawn, (E) decorrelação das decisões locais, (10) a assimetria
+*same-tick* exata (evento A, spawn extra em L, evento B no mesmo tick) incluindo
+a reprodução do contador implícito M2.2 que falhava, (11) preservação da
+identidade na pending queue saturada, (12) identidade derivada e sem colisão de
+droplets e (13) o stress assimétrico multi-spawn de 8000 ticks. Somam-se a
+regressão de Smart Start vs guard, o guard com microdetune na matriz
+44.1/48/88.2/96 kHz, o `m2_character_harness.c`, o wrapper stereo probe, a
+matriz de sample rate/block e a paridade Offline/WASM.
 
 ## 9. Riscos remanescentes
 

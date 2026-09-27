@@ -2,19 +2,24 @@
 //
 // This is a white-box harness: it includes the DSP implementation so it can
 // drive the static spawn/guard helpers directly, then links the engine and macro
-// layers. It covers the M2.1 fixes plus the M2.2 robustness milestone without
-// changing any public API:
+// layers. It covers the M2.1/M2.2 fixes plus the M2.3 explicit-identity milestone
+// without changing any public API:
 //
-//   1. Shared stereo decisions are event-addressable (M2.2). The shared value of
-//      a logical event is derived from a stateless hash of
-//      (base seed, scheduler_tick, tick_shared_ordinal, decision kind), so a
-//      channel that executes more or fewer spawns cannot shift the shared
-//      decision of a later logical event. A pre-M2.2 build used a sequential
-//      `coherence_rng_state` stream and desynchronised after an asymmetric spawn.
-//   2. Smart Start cannot invalidate the guard (M2.2). Smart Start now runs
+//   1. Shared stereo decisions are keyed by an *explicit logical spawn identity*
+//      (M2.3). The shared value of a logical spawn is a stateless hash of
+//      (base seed, scheduler_tick, spawn_ordinal, decision kind). The scheduler
+//      owns the ordinal: one per top-level spawn, while second-generation
+//      (droplet) spawns derive a stable child ordinal from their parent. A
+//      channel that executes more or fewer spawns — even inside the same tick —
+//      therefore cannot shift the shared decision of a later common spawn. The
+//      earlier implicit `tick_shared_ordinal++` counter is reproduced in test 10
+//      to prove the exact same-tick asymmetry failure it caused.
+//   2. Saturated spawns preserve their ordinal in the pending queue and reuse it
+//      verbatim when they finally become a voice.
+//   3. Smart Start cannot invalidate the guard (M2.2). Smart Start now runs
 //      before the guard clamp, so the offset that lands in `read_ptr_float` is
 //      always protected for the grain's real rate.
-//   3. The fixed per-grain microdetune is folded into the playback rate *before*
+//   4. The fixed per-grain microdetune is folded into the playback rate *before*
 //      the guard-band clamp, and the forward guard is based on the real relative
 //      grain travel (rate - 1), so a few cents around rate 1.0 do not shove the
 //      read into a distant region or let a grain run into the write head.
@@ -55,11 +60,27 @@ static void base_config(EngineConfig_t* cfg, uint32_t seed) {
 // --- Shared-event helpers -------------------------------------------------
 
 // Begin a new logical control tick. The identity of a shared decision is
-// (scheduler_tick, tick_shared_ordinal, kind); resetting the ordinal models the
+// (scheduler_tick, spawn_ordinal, kind); resetting the spawn ordinal models the
 // control-tick boundary the DSP performs internally.
 static void begin_tick(BubbleEngine_t* engine, uint32_t tick) {
     engine->scheduler_tick = tick;
-    engine->tick_shared_ordinal = 0;
+    engine->tick_spawn_ordinal = 0;
+}
+
+// Reserve the next explicit logical-spawn ordinal, exactly as the scheduler does
+// for each top-level spawn.
+static uint32_t next_ordinal(BubbleEngine_t* engine) {
+    return Scheduler_NextSpawnOrdinal(engine);
+}
+
+// Legacy M2.2 model: a single implicit ordinal per tick, advanced by *every*
+// shared draw. This is precisely the `tick_shared_ordinal++` behavior that the
+// M2.3 explicit spawn identity removes. It exists only so the harness can prove
+// the same-tick asymmetry failure without checking out the old tree.
+static float legacy_shared_draw(uint32_t seed, uint32_t tick, uint32_t* running_ordinal,
+                                BubbleSharedDecisionKind_t kind) {
+    const uint32_t ordinal = (*running_ordinal)++;
+    return SharedEventUnit(seed, tick, ordinal, (uint32_t)kind, BUBBLES_SHARED_LANE_VALUE);
 }
 
 // --- 1. Shared decisions ignore temporary coherence divergence (test A) ---
@@ -92,9 +113,9 @@ static int test_shared_decisions_ignore_coherence_divergence(void) {
     for (uint32_t tick = 1; tick <= 256; tick++) {
         begin_tick(&left, tick);
         begin_tick(&right, tick);
-        for (int e = 0; e < 4; e++) {
-            (void)SpawnRandomFloat01(&left, coherence_left, BUBBLES_SHARED_DECISION_CLASS);
-            (void)SpawnRandomFloat01(&right, coherence_right, BUBBLES_SHARED_DECISION_CLASS);
+        for (uint32_t e = 0; e < 4u; e++) {
+            (void)SharedSpawnRandom(&left, coherence_left, e, BUBBLES_SHARED_DECISION_CLASS);
+            (void)SharedSpawnRandom(&right, coherence_right, e, BUBBLES_SHARED_DECISION_CLASS);
         }
     }
     CHECK(left.rng_state != right.rng_state,
@@ -106,9 +127,9 @@ static int test_shared_decisions_ignore_coherence_divergence(void) {
     begin_tick(&left, 100000);
     begin_tick(&right, 100000);
     int shared_matches = 0;
-    for (int i = 0; i < 256; i++) {
-        const float a = SpawnRandomFloat01(&left, 1.0f, BUBBLES_SHARED_DECISION_REGION_TIER);
-        const float b = SpawnRandomFloat01(&right, 1.0f, BUBBLES_SHARED_DECISION_REGION_TIER);
+    for (uint32_t i = 0; i < 256u; i++) {
+        const float a = SharedSpawnRandom(&left, 1.0f, i, BUBBLES_SHARED_DECISION_REGION_TIER);
+        const float b = SharedSpawnRandom(&right, 1.0f, i, BUBBLES_SHARED_DECISION_REGION_TIER);
         if (a == b) shared_matches++;
     }
     CHECK(shared_matches == 256, "shared decisions reproduce identically across coherence divergence");
@@ -133,38 +154,42 @@ static int test_unequal_spawn_count_reconverges(void) {
     bubble_engine_set_channel_decorrelation(&right, 0x55555555u);
 
     // Both channels process the same logical event every tick, but L periodically
-    // consumes additional shared decisions that R never draws. Pre-M2.2 the
-    // sequential shared stream advanced further on L and every later shared
-    // decision drifted out of lockstep.
+    // consumes additional (derived) shared decisions that R never draws. Under the
+    // explicit identity model those extras live in the derived namespace and never
+    // shift the shared decision of a later primary ordinal.
     for (uint32_t tick = 1; tick <= 512; tick++) {
         begin_tick(&left, tick);
         begin_tick(&right, tick);
 
-        const float l_first = SpawnRandomFloat01(&left, 1.0f, BUBBLES_SHARED_DECISION_CLASS);
-        const float r_first = SpawnRandomFloat01(&right, 1.0f, BUBBLES_SHARED_DECISION_CLASS);
+        const uint32_t ord = next_ordinal(&left);
+        const uint32_t r_ord = next_ordinal(&right);
+        const float l_first = SharedSpawnRandom(&left, 1.0f, ord, BUBBLES_SHARED_DECISION_CLASS);
+        const float r_first = SharedSpawnRandom(&right, 1.0f, r_ord, BUBBLES_SHARED_DECISION_CLASS);
         CHECK(l_first == r_first, "first logical event keeps the same shared decision");
 
         const int l_extra = (tick % 4u == 0u) ? 3 : ((tick % 7u == 0u) ? 1 : 0);
         const int r_extra = (tick % 5u == 0u) ? 2 : 0;
         for (int e = 0; e < l_extra; e++) {
-            (void)SpawnRandomFloat01(&left, 1.0f, BUBBLES_SHARED_DECISION_REGION_TIER);
+            (void)SharedSpawnRandom(&left, 1.0f, SpawnDerivedOrdinal(ord, (uint32_t)(1 + e)), BUBBLES_SHARED_DECISION_REGION_TIER);
         }
         for (int e = 0; e < r_extra; e++) {
-            (void)SpawnRandomFloat01(&right, 1.0f, BUBBLES_SHARED_DECISION_REGION_TIER);
+            (void)SharedSpawnRandom(&right, 1.0f, SpawnDerivedOrdinal(r_ord, (uint32_t)(1 + e)), BUBBLES_SHARED_DECISION_REGION_TIER);
         }
     }
 
     // A large asymmetry on one tick must not leak into the next logical event.
     begin_tick(&left, 9000);
     begin_tick(&right, 9000);
+    const uint32_t big_ord = next_ordinal(&left);
+    (void)next_ordinal(&right);
     for (int e = 0; e < 32; e++) {
-        (void)SpawnRandomFloat01(&left, 1.0f, BUBBLES_SHARED_DECISION_OFFSET_BAND);
+        (void)SharedSpawnRandom(&left, 1.0f, SpawnDerivedOrdinal(big_ord, (uint32_t)e), BUBBLES_SHARED_DECISION_OFFSET_BAND);
     }
     begin_tick(&left, 9001);
     begin_tick(&right, 9001);
-    for (int i = 0; i < 32; i++) {
-        const float a = SpawnRandomFloat01(&left, 1.0f, BUBBLES_SHARED_DECISION_OFFSET_BAND);
-        const float b = SpawnRandomFloat01(&right, 1.0f, BUBBLES_SHARED_DECISION_OFFSET_BAND);
+    for (uint32_t i = 0; i < 32u; i++) {
+        const float a = SharedSpawnRandom(&left, 1.0f, i, BUBBLES_SHARED_DECISION_OFFSET_BAND);
+        const float b = SharedSpawnRandom(&right, 1.0f, i, BUBBLES_SHARED_DECISION_OFFSET_BAND);
         CHECK(a == b, "shared decisions reconverge after unequal spawn counts");
     }
     return 0;
@@ -201,8 +226,10 @@ static int test_long_stereo_divergence_keeps_event_identity(void) {
         begin_tick(&left, tick);
         begin_tick(&right, tick);
 
-        const float a = SpawnRandomFloat01(&left, 1.0f, BUBBLES_SHARED_DECISION_CLASS);
-        const float b = SpawnRandomFloat01(&right, 1.0f, BUBBLES_SHARED_DECISION_CLASS);
+        const uint32_t a_ord = next_ordinal(&left);
+        const uint32_t r_a_ord = next_ordinal(&right);
+        const float a = SharedSpawnRandom(&left, 1.0f, a_ord, BUBBLES_SHARED_DECISION_CLASS);
+        const float b = SharedSpawnRandom(&right, 1.0f, r_a_ord, BUBBLES_SHARED_DECISION_CLASS);
         if (a != b) mismatches++;
 
         const int l_extra = (int)((tick * 7u + 3u) % 5u);
@@ -210,12 +237,12 @@ static int test_long_stereo_divergence_keeps_event_identity(void) {
         for (int e = 1; e < l_extra; e++) {
             const BubbleSharedDecisionKind_t k = (e % 2) ? BUBBLES_SHARED_DECISION_REGION_TIER
                                                           : BUBBLES_SHARED_DECISION_CLASS;
-            (void)SpawnRandomFloat01(&left, 1.0f, k);
+            (void)SharedSpawnRandom(&left, 1.0f, SpawnDerivedOrdinal(a_ord, (uint32_t)e), k);
         }
         for (int e = 1; e < r_extra; e++) {
             const BubbleSharedDecisionKind_t k = (e % 2) ? BUBBLES_SHARED_DECISION_OFFSET_BAND
                                                           : BUBBLES_SHARED_DECISION_CLASS;
-            (void)SpawnRandomFloat01(&right, 1.0f, k);
+            (void)SharedSpawnRandom(&right, 1.0f, SpawnDerivedOrdinal(r_a_ord, (uint32_t)e), k);
         }
     }
     CHECK(mismatches == 0, "shared event identity holds across long asymmetric divergence");
@@ -239,19 +266,18 @@ static int test_shared_event_decision_determinism(void) {
 
     // Burn a very different number of prior shared decisions into `a`.
     begin_tick(&a, 77);
-    for (int i = 0; i < 1000; i++) {
-        (void)SpawnRandomFloat01(&a, 1.0f, BUBBLES_SHARED_DECISION_CLASS);
+    for (uint32_t i = 0; i < 1000u; i++) {
+        (void)SharedSpawnRandom(&a, 1.0f, i, BUBBLES_SHARED_DECISION_CLASS);
     }
 
     // Same seed + same event identity => exact same shared decision, regardless
     // of the draw history before it.
     a.scheduler_tick = 4242;
-    a.tick_shared_ordinal = 5;
     b.scheduler_tick = 4242;
-    b.tick_shared_ordinal = 5;
     for (int i = 0; i < 64; i++) {
-        const float va = SpawnRandomFloat01(&a, 1.0f, BUBBLES_SHARED_DECISION_OFFSET_BAND);
-        const float vb = SpawnRandomFloat01(&b, 1.0f, BUBBLES_SHARED_DECISION_OFFSET_BAND);
+        const uint32_t identity = 5u;
+        const float va = SharedSpawnRandom(&a, 1.0f, identity, BUBBLES_SHARED_DECISION_OFFSET_BAND);
+        const float vb = SharedSpawnRandom(&b, 1.0f, identity, BUBBLES_SHARED_DECISION_OFFSET_BAND);
         CHECK(va == vb, "same seed + same event identity => exact same shared decision");
     }
     return 0;
@@ -284,8 +310,8 @@ static int test_channel_local_decisions_stay_decorrelated(void) {
 
     begin_tick(&left, 7);
     begin_tick(&right, 7);
-    CHECK(SpawnRandomFloat01(&left, 1.0f, BUBBLES_SHARED_DECISION_CLASS) ==
-              SpawnRandomFloat01(&right, 1.0f, BUBBLES_SHARED_DECISION_CLASS),
+    CHECK(SharedSpawnRandom(&left, 1.0f, 0u, BUBBLES_SHARED_DECISION_CLASS) ==
+              SharedSpawnRandom(&right, 1.0f, 0u, BUBBLES_SHARED_DECISION_CLASS),
           "shared decision matches even though the local streams differ");
     return 0;
 }
@@ -443,7 +469,8 @@ static int run_guard_scenario(const GuardScenario* scenario, float sample_rate, 
     int negative_detune = 0;
     for (int i = 0; i < 600; i++) {
         engine.force_reverse_spawns = scenario->force_reverse ? 1 : 0;
-        Voice_SpawnInit(&engine, 0, scenario->bubble_class, 0);
+        engine.tick_spawn_ordinal = (uint32_t)i;
+        Voice_SpawnInit(&engine, 0, scenario->bubble_class, 0, (uint32_t)i);
         BubbleVoice_t* voice = &engine.voices[0];
 
         if (voice->microdetune_cents > 0.0005f) positive_detune++;
@@ -543,7 +570,8 @@ static int test_smart_start_cannot_invalidate_guard(void) {
 
         int reproduced = 0;
         for (int i = 0; i < 64; i++) {
-            Voice_SpawnInit(&engine, 0, BUBBLE_CLASS_SUSTAIN_BODY, 0);
+            engine.tick_spawn_ordinal = (uint32_t)i;
+            Voice_SpawnInit(&engine, 0, BUBBLE_CLASS_SUSTAIN_BODY, 0, (uint32_t)i);
             BubbleVoice_t* voice = &engine.voices[0];
             if (voice->rate <= 1.0f) continue;
             const int32_t offset = WrapIntIndex(engine.write_ptr - (int32_t)voice->read_ptr_float, buffer);
@@ -579,8 +607,10 @@ static int test_fixed_seed_spawn_sequence_is_deterministic(void) {
     for (int i = 0; i < 2000; i++) {
         first.engine_state = (i % 5 == 0) ? ENGINE_STATE_ATTACK_ONGOING : ENGINE_STATE_SUSTAIN_BODY;
         second.engine_state = first.engine_state;
-        Voice_SpawnInit(&first, 0, BUBBLE_CLASS_SHORT_INTERMEDIATE, 0);
-        Voice_SpawnInit(&second, 0, BUBBLE_CLASS_SHORT_INTERMEDIATE, 0);
+        first.tick_spawn_ordinal = (uint32_t)i;
+        second.tick_spawn_ordinal = (uint32_t)i;
+        Voice_SpawnInit(&first, 0, BUBBLE_CLASS_SHORT_INTERMEDIATE, 0, (uint32_t)i);
+        Voice_SpawnInit(&second, 0, BUBBLE_CLASS_SHORT_INTERMEDIATE, 0, (uint32_t)i);
         BubbleVoice_t* a = &first.voices[0];
         BubbleVoice_t* b = &second.voices[0];
         CHECK(a->source_region_id == b->source_region_id && a->memory_tier == b->memory_tier,
@@ -588,6 +618,211 @@ static int test_fixed_seed_spawn_sequence_is_deterministic(void) {
         CHECK(a->microdetune_cents == b->microdetune_cents && a->rate == b->rate,
               "identical seeds produce identical microdetune and rate");
     }
+    return 0;
+}
+
+// --- 10. Same-tick asymmetry: an extra spawn must not shift a common spawn --
+
+// Reproduces the exact failure mode the explicit identity fixes:
+//
+//     begin tick
+//     L/R process event A
+//     L processes an extra spawn
+//     L/R process event B in the same tick
+//
+// Under the M2.2 implicit `tick_shared_ordinal++` counter the extra draw advanced
+// L's ordinal, so B received ordinal 2 on L and ordinal 1 on R. The explicit
+// identity gives the extra a derived child ordinal and keeps B at ordinal 1 on
+// both channels.
+static int test_same_tick_asymmetry_does_not_shift_common_spawns(void) {
+    static int16_t delay_l[DELAY_SAMPLES];
+    static int16_t delay_r[DELAY_SAMPLES];
+    EngineConfig_t cfg;
+    base_config(&cfg, 0xA5C11Du);
+    zero_delay(delay_l);
+    zero_delay(delay_r);
+
+    BubbleEngine_t left;
+    BubbleEngine_t right;
+    bubble_engine_init(&left, delay_l, &cfg);
+    bubble_engine_init(&right, delay_r, &cfg);
+
+    const uint32_t seed = left.shared_event_seed;
+    const uint32_t tick = 1u;
+
+    // -- M2.2 model: every shared draw advances one running ordinal. This is the
+    //    pre-M2.3 behavior and must reproduce the asymmetry bug.
+    {
+        uint32_t legacy_l = 0u;
+        uint32_t legacy_r = 0u;
+        const float a_l = legacy_shared_draw(seed, tick, &legacy_l, BUBBLES_SHARED_DECISION_CLASS);
+        const float a_r = legacy_shared_draw(seed, tick, &legacy_r, BUBBLES_SHARED_DECISION_CLASS);
+        CHECK(a_l == a_r, "M2.2 model: event A aligns on both channels");
+        // L-only extra spawn.
+        (void)legacy_shared_draw(seed, tick, &legacy_l, BUBBLES_SHARED_DECISION_CLASS);
+        const float b_l = legacy_shared_draw(seed, tick, &legacy_l, BUBBLES_SHARED_DECISION_CLASS);
+        const float b_r = legacy_shared_draw(seed, tick, &legacy_r, BUBBLES_SHARED_DECISION_CLASS);
+        CHECK(b_l != b_r, "M2.2 implicit counter reproduces the same-tick asymmetry failure");
+    }
+
+    // -- M2.3 explicit identity: the extra is a derived child, so B keeps its
+    //    primary ordinal on both channels.
+    begin_tick(&left, tick);
+    begin_tick(&right, tick);
+    const uint32_t a_ord = next_ordinal(&left);       // 0
+    const uint32_t r_a_ord = next_ordinal(&right);    // 0
+    CHECK(a_ord == 0u && r_a_ord == 0u, "event A has the same explicit ordinal on L/R");
+    const float sa_l = SharedSpawnRandom(&left, 1.0f, a_ord, BUBBLES_SHARED_DECISION_CLASS);
+    const float sa_r = SharedSpawnRandom(&right, 1.0f, r_a_ord, BUBBLES_SHARED_DECISION_CLASS);
+    CHECK(sa_l == sa_r, "event A produces the same shared decision on L/R");
+
+    const uint32_t extra_l = SpawnDerivedOrdinal(a_ord, 1u);
+    (void)SharedSpawnRandom(&left, 1.0f, extra_l, BUBBLES_SHARED_DECISION_CLASS);
+
+    const uint32_t b_ord = next_ordinal(&left);        // 1
+    const uint32_t r_b_ord = next_ordinal(&right);     // 1
+    CHECK(b_ord == 1u && r_b_ord == 1u, "extra spawn does not shift event B's explicit ordinal");
+    CHECK(extra_l != b_ord, "derived child identity cannot collide with a primary ordinal");
+    const float sb_l = SharedSpawnRandom(&left, 1.0f, b_ord, BUBBLES_SHARED_DECISION_CLASS);
+    const float sb_r = SharedSpawnRandom(&right, 1.0f, r_b_ord, BUBBLES_SHARED_DECISION_CLASS);
+    CHECK(sb_l == sb_r, "event B produces the same shared decision on L/R after the extra spawn");
+    CHECK(sb_l != sa_l, "distinct logical spawns keep distinct shared identities");
+    return 0;
+}
+
+// --- 11. Saturated spawns preserve their explicit identity in the queue ------
+
+static int test_pending_spawn_queue_preserves_identity(void) {
+    static int16_t delay[DELAY_SAMPLES];
+    EngineConfig_t cfg;
+    base_config(&cfg, 0xB0BAC1u);
+    cfg.active_voice_limit = 4;
+    cfg.droplet_enable = 0; // keep the queue deterministic for this test
+    zero_delay(delay);
+
+    BubbleEngine_t engine;
+    bubble_engine_init(&engine, delay, &cfg);
+    begin_tick(&engine, 1);
+
+    // Saturate the pool with playing voices.
+    for (int i = 0; i < engine.active_voice_limit; i++) {
+        Voice_SpawnInit(&engine, i, BUBBLE_CLASS_SUSTAIN_BODY, 0, next_ordinal(&engine));
+    }
+    CHECK(engine.pending_spawn_count == 0, "pool saturated, nothing queued yet");
+
+    const uint32_t ord = next_ordinal(&engine);
+    const bool immediate = Voice_RequestSpawn(&engine, BUBBLE_CLASS_SHORT_INTERMEDIATE, 0, ord);
+    CHECK(!immediate, "saturated request is queued rather than spawned immediately");
+    CHECK(engine.pending_spawn_count == 1, "saturated request entered the pending queue");
+    const uint32_t stored = engine.pending_spawns[engine.pending_spawn_head].spawn_ordinal;
+    CHECK(stored == ord, "pending request preserved its explicit spawn ordinal");
+
+    // Free a slot and flush; the voice must reuse the queued identity verbatim.
+    engine.voices[0].state = VOICE_STATE_INACTIVE;
+    const int flushed = Voice_FlushPendingSpawns(&engine, 1);
+    CHECK(flushed == 1, "pending spawn flushed into the freed slot");
+    CHECK(engine.voices[0].spawn_ordinal == ord,
+          "flushed voice kept the queued identity instead of recomputing it");
+    return 0;
+}
+
+// --- 12. Droplets have a deterministic, collision-free derived identity -------
+
+static int test_droplet_identity_is_parent_derived_and_collision_free(void) {
+    const uint32_t p0 = 0u, p1 = 1u, p2 = 2u;
+    const uint32_t c0 = SpawnDerivedOrdinal(p0, 1u);
+    const uint32_t c1 = SpawnDerivedOrdinal(p1, 1u);
+    const uint32_t c2 = SpawnDerivedOrdinal(p2, 1u);
+
+    CHECK((c0 & BUBBLES_SPAWN_DERIVED_FLAG) != 0u, "child ordinal lives in the derived namespace");
+    CHECK(c0 != c1 && c1 != c2 && c0 != c2, "children of different parents never collide");
+    CHECK(c0 != p0 && c1 != p1 && c2 != p2, "child ordinal never equals a primary ordinal");
+    CHECK((c2 & ~BUBBLES_SPAWN_DERIVED_FLAG) ==
+              ((p2 & BUBBLES_SPAWN_PARENT_MASK) << BUBBLES_SPAWN_PARENT_SHIFT) + 1u,
+          "child ordinal encodes parent and generation");
+    CHECK(SpawnDerivedOrdinal(p2, 1u) == c2, "child identity is stable across calls");
+
+    // Same parent + generation on both channels => same shared droplet decision.
+    static int16_t delay_l[DELAY_SAMPLES];
+    static int16_t delay_r[DELAY_SAMPLES];
+    EngineConfig_t cfg;
+    base_config(&cfg, 0xD20F1Eu);
+    zero_delay(delay_l);
+    zero_delay(delay_r);
+    BubbleEngine_t left;
+    BubbleEngine_t right;
+    bubble_engine_init(&left, delay_l, &cfg);
+    bubble_engine_init(&right, delay_r, &cfg);
+    begin_tick(&left, 5);
+    begin_tick(&right, 5);
+    const float l = SharedSpawnRandom(&left, 1.0f, c2, BUBBLES_SHARED_DECISION_REGION_TIER);
+    const float r = SharedSpawnRandom(&right, 1.0f, c2, BUBBLES_SHARED_DECISION_REGION_TIER);
+    CHECK(l == r, "droplet shared decision is identical across channels");
+    return 0;
+}
+
+// --- 13. Long same-tick asymmetric multi-spawn stress ------------------------
+
+static int test_long_asymmetric_multispawn_stress(void) {
+    static int16_t delay_l[DELAY_SAMPLES];
+    static int16_t delay_r[DELAY_SAMPLES];
+    EngineConfig_t cfg;
+    base_config(&cfg, 0x57E55u);
+    zero_delay(delay_l);
+    zero_delay(delay_r);
+
+    BubbleEngine_t left;
+    BubbleEngine_t right;
+    bubble_engine_init(&left, delay_l, &cfg);
+    bubble_engine_init(&right, delay_r, &cfg);
+    bubble_engine_set_channel_decorrelation(&left, 0u);
+    bubble_engine_set_channel_decorrelation(&right, 0x55555555u);
+
+    const BubbleSharedDecisionKind_t kinds[3] = {
+        BUBBLES_SHARED_DECISION_CLASS,
+        BUBBLES_SHARED_DECISION_REGION_TIER,
+        BUBBLES_SHARED_DECISION_OFFSET_BAND
+    };
+
+    uint32_t rng = 0x1234ABCDu;
+    int mismatches = 0;
+    for (uint32_t tick = 1; tick <= 8000; tick++) {
+        const EngineState_t state = (EngineState_t)(tick % 5u);
+        left.engine_state = state;
+        right.engine_state = state;
+        begin_tick(&left, tick);
+        begin_tick(&right, tick);
+
+        // Canonical multi-spawn count for the tick (config/state driven, equal on
+        // both channels).
+        rng = rng * 1664525u + 1013904223u;
+        const int canonical = 1 + (int)((rng >> 28) % 3u);
+
+        for (int s = 0; s < canonical; s++) {
+            const uint32_t ol = next_ordinal(&left);
+            const uint32_t orr = next_ordinal(&right);
+            if (ol != orr) mismatches++;
+
+            for (int k = 0; k < 3; k++) {
+                const float vl = SharedSpawnRandom(&left, 1.0f, ol, kinds[k]);
+                const float vr = SharedSpawnRandom(&right, 1.0f, orr, kinds[k]);
+                if (vl != vr) mismatches++;
+            }
+
+            // Asymmetric derived/second-generation spawns must not consume a primary
+            // ordinal on either channel.
+            const uint32_t child = SpawnDerivedOrdinal(ol, 1u);
+            if (((rng >> (s + 1)) & 1u) == 0u) {
+                (void)SharedSpawnRandom(&left, 1.0f, child, BUBBLES_SHARED_DECISION_REGION_TIER);
+            }
+            if (((rng >> (s + 8)) & 1u) == 0u) {
+                (void)SharedSpawnRandom(&right, 1.0f, child, BUBBLES_SHARED_DECISION_REGION_TIER);
+            }
+        }
+
+        if (left.tick_spawn_ordinal != right.tick_spawn_ordinal) mismatches++;
+    }
+    CHECK(mismatches == 0, "8000 asymmetric multi-spawn ticks keep shared identities aligned");
     return 0;
 }
 
@@ -602,5 +837,9 @@ int main(void) {
     if (test_engine_guard_with_microdetune() != 0) return 1;
     if (test_smart_start_cannot_invalidate_guard() != 0) return 1;
     if (test_fixed_seed_spawn_sequence_is_deterministic() != 0) return 1;
+    if (test_same_tick_asymmetry_does_not_shift_common_spawns() != 0) return 1;
+    if (test_pending_spawn_queue_preserves_identity() != 0) return 1;
+    if (test_droplet_identity_is_parent_derived_and_collision_free() != 0) return 1;
+    if (test_long_asymmetric_multispawn_stress() != 0) return 1;
     return 0;
 }

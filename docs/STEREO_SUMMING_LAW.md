@@ -89,9 +89,10 @@ publicados como telemetria final.
 
 A partir da M2, os dois engines **não são mais totalmente decorrelacionados**.
 Cada engine mantém um stream espacial próprio (`rng_state`, decorrelacionado por
-`channel_decorrelation`) e compartilha **decisões event-addressable**: o valor
-compartilhado de um evento lógico é um hash stateless de
-`(base seed, scheduler_tick, tick_shared_ordinal, decision kind)`. A coerência é
+`channel_decorrelation`) e compartilha **decisões keyed por identidade explícita
+de spawn** (M2.3): o scheduler atribui um `spawnOrdinal` por spawn lógico e o
+valor compartilhado é um hash stateless de
+`(base seed, scheduler_tick, spawn_ordinal, decision kind)`. A coerência é
 **estatística e controlada, não identidade total**: a classe do bubble e as
 decisões de categoria/região de memória (`tier`, banda temporal do offset) usam o
 valor compartilhado com probabilidade `coherence`; `pan`, offset fino, seleção de
@@ -99,20 +100,26 @@ pitch, microdetune, duração, jitter de ataque e reverse permanecem canal-local
 fração compartilhada é função da fase da frase: ataques quase alinhados;
 sustain/decay/freeze progressivamente independentes.
 
-M2.2: substituiu-se o stream compartilhado sequencial (`coherence_rng_state`) por
-decisões endereçáveis por evento. Como não há estado compartilhado mutável, a
-contagem de spawns de um canal não desloca as decisões compartilhadas de eventos
-seguintes:
+M2.2 substituiu o stream compartilhado sequencial (`coherence_rng_state`) por
+decisões endereçáveis. M2.3 fechou a última fragilidade: em vez de um
+`tick_shared_ordinal++` implícito (que ainda podia divergir *dentro* do mesmo
+tick quando um canal executava um spawn extra entre dois eventos comuns), o
+scheduler passa a atribuir um `spawnOrdinal` **explícito** por spawn lógico, e
+droplets derivam uma identidade estável do parent
+(`BUBBLES_SPAWN_DERIVED_FLAG | (parentOrdinal << 8) | generation`) sem consumir
+nem deslocar os ordinais primários. O helper `SharedSpawnRandom` é puro: não
+incrementa contador e não depende da ordem em que os draws aconteceram.
 
 ```text
-Shared stereo decisions are event-addressable rather than stream-order-dependent.
+Shared decisions are keyed by explicit logical spawn identity,
+not by RNG consumption order.
 Asymmetric spawn counts therefore do not shift future shared decisions.
 ```
 
-Isso torna a coerência robusta a envelopes L/R diferentes, densidades diferentes
-e preempção assimétrica (situações normais em stereo real). A sequência
-determinística exata muda em relação à M2.1; distribuições e caráter musical são
-preservados.
+Isso torna a coerência robusta a envelopes L/R diferentes, densidades diferentes,
+preempção assimétrica e spawns extras no mesmo tick (situações normais em stereo
+real). A sequência determinística exata muda em relação à M2.1/M2.2; distribuições
+e caráter musical são preservados.
 
 A lei de soma `1/sqrt(2)` permanece inalterada e continua conservando a energia
 wet total quando os campos são decorrelacionados. Com coerência parcial, uma

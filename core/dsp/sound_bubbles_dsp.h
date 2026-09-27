@@ -259,6 +259,11 @@ typedef struct {
     uint8_t generation;
     uint8_t memory_tier;    // BUBBLES_MEMORY_TIER_* chosen at spawn (M2)
 
+    // Explicit logical spawn identity (M2.3), assigned by the scheduler and held
+    // for observation/debugging. Shared stereo decisions of this grain were keyed
+    // by (spawn_ordinal, decision kind) at initialization time.
+    uint32_t spawn_ordinal;
+
     // Fixed at spawn, constant for the whole grain lifetime (M2). Never an LFO.
     float microdetune_cents;
 
@@ -276,6 +281,9 @@ typedef struct {
 typedef struct {
     BubbleClass_t bubble_class;
     uint8_t generation;
+    // Explicit logical spawn identity, captured when the request was created and
+    // preserved until the voice is actually initialized (saturation queue).
+    uint32_t spawn_ordinal;
 } PendingSpawn_t;
 
 typedef struct {
@@ -370,14 +378,19 @@ typedef struct {
     int32_t fade_samples;
     int32_t block_counter;         // Triggers control ticks every 32 samples
     uint32_t rng_state;            // Internal deterministic per-channel PRNG state
-    // Stateless shared-event RNG (M2.2). Shared stereo decisions are addressed by
-    // (shared_event_seed, scheduler_tick, tick_shared_ordinal, decision kind) and
-    // hashed on demand, so a channel that executes more or fewer spawns cannot
-    // shift the shared decision of a later logical event. No mutable shared
-    // stream state is kept; only the per-channel `rng_state` remains sequential.
+    // Stateless shared-event RNG (M2.2/M2.3). Shared stereo decisions are
+    // addressed by an explicit logical spawn identity
+    // (shared_event_seed, scheduler_tick, spawn_ordinal, decision kind) and hashed
+    // on demand, so a channel that executes more or fewer spawns cannot shift the
+    // shared decision of a later logical event. The scheduler owns the ordinal
+    // sequence: it assigns one explicit `tick_spawn_ordinal` per logical top-level
+    // spawn, while second-generation (droplet) spawns derive a stable child ordinal
+    // from their parent instead of consuming a new primary ordinal. No mutable
+    // shared stream state is kept; only the per-channel `rng_state` remains
+    // sequential.
     uint32_t shared_event_seed;    // Undecorrelated base seed for shared decisions
     uint32_t scheduler_tick;       // Monotonic control-tick counter (logical event time)
-    uint32_t tick_shared_ordinal;  // Shared-decision ordinal within the current tick
+    uint32_t tick_spawn_ordinal;   // Next explicit logical-spawn ordinal within the tick
     // Channel decorrelation mask, applied on seed (re)initialization so the
     // right channel keeps its own spatial stream across preset/seed changes.
     uint32_t channel_decorrelation;
