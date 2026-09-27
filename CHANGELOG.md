@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0-rc.6 — 2026-09-27
+
+- **M2 — Musical Cloud Character: FROZEN.** Documentation-only freeze. No DSP, scheduler, RNG, preset, parameter, UI or sound changes.
+- Documented the single remaining semantic limitation of shared stereo identity as an explicit contract: shared coherence is keyed by canonical logical provenance and does **not** heuristically pair schedulers that diverged. If L and R produce different event counts **within the same source in the same tick**, the streams of that source genuinely diverged and no implicit semantic correspondence is assumed for subsequent events (e.g. `L: DENSITY #0, extra, #2` vs `R: DENSITY #0, #1` — `L #2` is not assumed to match `R #1`). This is deterministic by contract, not a bug.
+- Replaced the absolute claim “asymmetric top-level spawn counts never shift future shared decisions” with the precise formulation: asymmetric events from independent scheduler sources cannot shift each other's identities; events within the same source retain deterministic local ordering; diverging counts for the same source imply no implicit correspondence.
+- Added `docs/M2_CHARACTER.md` §2.2 “Same-source correspondence contract” and §10 “M2 FROZEN — contratos congelados”, plus the matching caveat in `docs/STEREO_SUMMING_LAW.md` §6. The `1/sqrt(2)` summing law is unchanged.
+- Frozen contracts registered: recent-weighted Memory distribution; Sparkle weighted voicing; 12-TET fifth; fixed per-grain microdetune; context-conditioned reverse; partial stereo coherence; canonical scheduler provenance; same-source correspondence contract; pending identity preservation; droplet-derived identity; Smart Start before final guard clamp; stereo wet summing law `1/sqrt(2)`; shared final limiter; SR invariance; BPM/PPQ behavior; voice stealing; STRUM saturation handling.
+
 ## 1.2.0-rc.5 — 2026-09-27
 
 - **M2.4 — Canonical scheduler event identity.** Closes the last real-scheduler fragility of the M2 stereo coherence: shared identity is now derived from the logical provenance of the event, never from per-channel spawn execution order.

@@ -410,9 +410,11 @@ typedef struct {
     // Stateless shared-event RNG (M2.2/M2.3/M2.4). Shared stereo decisions are
     // addressed by a canonical logical event identity
     // (shared_event_seed, tick, source, event_index, child_index, decision kind)
-    // and hashed on demand, so a channel that executes more or fewer spawns —
-    // even top-level extras inside the same tick — cannot shift the shared
-    // decision of a later common event. The scheduler owns one independent
+    // and hashed on demand, so extra top-level spawns of one source cannot shift
+    // the shared decision of a common event of another source. Within a single
+    // source the local ordering is deterministic: if the two channels produce
+    // different counts for that source, no implicit semantic correspondence is
+    // assumed for subsequent events. The scheduler owns one independent
     // per-source event index per control tick, while second-generation (droplet)
     // spawns derive a stable child identity from their parent's full provenance
     // instead of consuming a new primary event index. No mutable shared stream

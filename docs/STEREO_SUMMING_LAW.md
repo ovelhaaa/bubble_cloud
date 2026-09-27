@@ -116,7 +116,10 @@ os draws aconteceram.
 ```text
 Shared stereo identity is derived from canonical scheduler event provenance,
 not from local spawn execution order.
-Asymmetric top-level spawn counts therefore do not shift future shared decisions.
+Asymmetric events from independent scheduler sources cannot shift each other's
+shared identities. Events within the same source retain deterministic local
+ordering; if the two channels produce different counts for that source, no
+implicit semantic correspondence is assumed for subsequent events.
 ```
 
 A fila de saturados preserva o `SharedSpawnId` completo (incluindo o `tick` de
@@ -124,9 +127,13 @@ origem) até a materialização; nenhum campo é recalculado e não há
 alocação/lock/contador global no callback.
 
 Isso torna a coerência robusta a envelopes L/R diferentes, densidades diferentes,
-preempção assimétrica e spawns extras no mesmo tick (situações normais em stereo
-real). A sequência determinística exata muda em relação à M2.1/M2.2; distribuições
-e caráter musical são preservados.
+preempção assimétrica e spawns extras de sources independentes no mesmo tick
+(situações normais em stereo real). Enquanto os dois canais produzirem a mesma
+proveniência para um evento, a identidade compartilhada coincide; quando a
+cardinalidade de um *mesmo source* diverge, os streams daquele source realmente
+divergiram e não há emparelhamento heurístico (ver `docs/M2_CHARACTER.md` §2.2).
+A sequência determinística exata muda em relação à M2.1/M2.2; distribuições e
+caráter musical são preservados.
 
 A lei de soma `1/sqrt(2)` permanece inalterada e continua conservando a energia
 wet total quando os campos são decorrelacionados. Com coerência parcial, uma

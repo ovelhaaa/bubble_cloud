@@ -1,6 +1,6 @@
 # M2 — Musical Cloud Character
 
-**Versão:** 1.3.0 (M2.4)
+**Versão:** 1.3.0 (M2.4) — **M2 FROZEN**
 **Última atualização:** 2026-09-27
 
 Este documento descreve a milestone **M2 — Musical Cloud Character**, que
@@ -74,9 +74,8 @@ e não depende de quantas decisões anteriores ocorreram.
 
 Porque a decisão compartilhada é endereçada pela proveniência lógica explícita e
 **não pela ordem de consumo de RNG nem pela ordem de execução local de spawns**,
-ela não depende de quantos spawns o outro canal executou antes — nem mesmo de
-spawns top-level assimétricos dentro do mesmo tick. A identidade é
-`SharedSpawnId = (tick, source, event_index, child_index)`:
+ela não depende de quantos spawns de *outros sources* o canal executou antes. A
+identidade é `SharedSpawnId = (tick, source, event_index, child_index)`:
 
 ```text
 shared key =
@@ -93,7 +92,10 @@ shared key =
 ```text
 Shared stereo identity is derived from canonical scheduler event provenance,
 not from local spawn execution order.
-Asymmetric top-level spawn counts therefore do not shift future shared decisions.
+Asymmetric events from independent scheduler sources cannot shift each other's
+shared identities. Events within the same source retain deterministic local
+ordering; if the two channels produce different counts for that source, no
+implicit semantic correspondence is assumed for subsequent events.
 ```
 
 A decisão de região/tier é consumida para **todas** as classes (inclusive micro
@@ -145,10 +147,13 @@ endereçado por `child_index`; ele não cria acoplamento entre fontes.
 
 Semântica para spawns assimétricos, dentro de um tick:
 
-- `density`/`rhythm`/`strum`/`burst` têm contadores independentes, então um spawn
-  top-level extra de uma fonte **não desloca** as identidades das demais;
-- um spawn extra sem correspondente continua válido, mas não desloca os IDs dos
-  demais;
+- sources diferentes (`density`/`rhythm`/`strum`/`burst`) têm contadores
+  independentes, então um spawn top-level extra de uma fonte **não desloca** as
+  identidades das demais;
+- dentro de um mesmo source a ordem local é determinística e preservada; se os
+  dois canais produzirem contagens diferentes para esse source, os streams
+  daquele source realmente divergiram e **não** existe correspondência semântica
+  implícita para os eventos seguintes (ver §2.2);
 - a quantidade de spawns **não** é sincronizada artificialmente entre canais.
 
 Exemplo robusto (independente da ordem entre sources):
@@ -178,6 +183,47 @@ O namespace próprio (`DROPLET`) e o bit derivado em `child_index` isolam os
 filhos: um droplet nunca colide com o parent, com um filho de burst primário ou
 com um irmão, e nunca consome nem desloca o próximo `event_index` primário do
 tick.
+
+### 2.2 Same-source correspondence contract
+
+A identidade compartilhada é baseada em **proveniência lógica**, não em uma
+reconstrução da intenção musical dos dois canais:
+
+- a decisão compartilhada de um evento é uma função pura de
+  `(seed, tick, source, event_index, child_index, decision_kind)`;
+- sources diferentes permanecem isolados: a assimetria de um source não altera a
+  identidade de outro;
+- dentro de um mesmo source, os eventos mantêm a **ordem local determinística**
+  do scheduler. Se as contagens diferirem no mesmo tick, os streams daquele
+  source divergiram de fato e o engine **não** tenta emparelhar heuristicamente
+  os eventos posteriores.
+
+Exemplo da limitação proposital:
+
+```text
+L:
+DENSITY #0
+DENSITY extra
+DENSITY #2
+
+R:
+DENSITY #0
+DENSITY #1
+```
+
+O motor **não** assume que `L #2` corresponde semanticamente a `R #1`. Não há
+“ressincronização artificial” e nenhuma correspondência implícita é inferida
+quando a cardinalidade de um mesmo source diverge. Isso é um contrato de
+determinismo, não um bug: cada evento é identificado pela sua proveniência; a
+coerência parcial decide, evento a evento, se usa o valor compartilhado ou o
+stream local.
+
+```text
+Asymmetric events from independent scheduler sources cannot shift each other's
+shared identities. Events within the same source retain deterministic local
+ordering; if the two channels produce different counts for that source, no
+implicit semantic correspondence is assumed for subsequent events.
+```
 
 ## 3. Voicing do Sparkle
 
@@ -334,3 +380,38 @@ Offline/WASM.
   raro).
 - Sem novos parâmetros de UI, ajustes finos ficam nos constantes internos e no
   macro `MEMORY`/`SPARKLE`/`MOTION`.
+
+## 10. M2 FROZEN — contratos congelados
+
+**M2 — Musical Cloud Character: FROZEN.**
+
+A milestone M2 está formalmente congelada a partir da M2.4 (canonical scheduler
+event identity). Alterações futuras que toquem os contratos abaixo devem ser
+tratadas como nova milestone (M3+), não como ajuste de M2.
+
+Contratos congelados:
+
+- recent-weighted Memory distribution;
+- Sparkle weighted voicing;
+- quinta 12-TET (`2^(7/12)`);
+- fixed per-grain microdetune (constante por grão, nunca LFO);
+- context-conditioned reverse;
+- partial stereo coherence;
+- canonical scheduler provenance (`SharedSpawnId = (tick, source, event_index,
+  child_index)`);
+- same-source correspondence contract (§2.2 — sem emparelhamento heurístico);
+- pending identity preservation (identidade completa, incluindo `tick` de
+  origem, sem recálculo);
+- droplet-derived identity (namespace próprio e sem colisão);
+- Smart Start antes do guard clamp final;
+- stereo wet summing law `1/sqrt(2)`;
+- shared final limiter;
+- sample-rate invariance;
+- BPM/PPQ behavior;
+- voice stealing;
+- STRUM saturation handling.
+
+Referências de validação: `tests/dsp/m2_character_harness.c`,
+`tests/dsp/m2_coherence_guard_harness.c`, `tests/juce/wrapper_stereo_probe.cpp`,
+`tests/dsp/test_offline_wasm_parity.py`, `tests/performance` e a matriz de
+sample rate/block.
