@@ -283,6 +283,8 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
 
     engine->master_dry_gain = 1.0f;
     engine->master_wet_gain = 1.0f;
+    float init_amount = Clamp01(engine->config.freeze_amount);
+    engine->smoothed_freeze = (init_amount > 0.0f) ? init_amount : ((engine->config.freeze_enabled != 0) ? 1.0f : 0.0f);
     bubble_macro_map_default_values(engine->macro_values);
     bubble_macro_map_default_values(engine->macro_targets);
     engine->macro_dirty_mask = (1u << BUBBLES_MACRO_COUNT) - 1u;
@@ -410,12 +412,38 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
     if (engine == NULL || in_mono == NULL || out_left == NULL || out_right == NULL || num_samples <= 0) return;
     int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(engine->config.sample_rate);
     float block_peak = 0.0f;
-    bool freeze_write = (engine->config.freeze_enabled != 0) || (engine->config.freeze_amount >= 0.5f);
+    float sr = fmaxf(1.0f, engine->config.sample_rate);
+    float freeze_smooth_coef = 1.0f - expf(-1.0f / (sr * 0.020f));
+    float amount = Clamp01(engine->config.freeze_amount);
+    float freeze_target = (amount > 0.0f) ? amount : ((engine->config.freeze_enabled != 0) ? 1.0f : 0.0f);
+    bool discrete_freeze_lock = (engine->config.freeze_enabled != 0 && (amount == 0.0f || amount >= 0.999f));
+    if (discrete_freeze_lock) {
+        engine->smoothed_freeze = 1.0f;
+    }
 
     for (int i = 0; i < num_samples; i++) {
         if (i == 0) {
             CacheFinalLimiterBlockParams(engine);
         }
+
+        // Update continuous freeze state (M3)
+        float f_delta = freeze_target - engine->smoothed_freeze;
+        if (fabsf(f_delta) < 1.0e-5f) {
+            engine->smoothed_freeze = freeze_target;
+        } else {
+            engine->smoothed_freeze += f_delta * freeze_smooth_coef;
+        }
+        float f = engine->smoothed_freeze;
+
+        // Smoothstep write retention curve (M3)
+        // 0.00 -> retention 0.000, write_gain 1.000
+        // 0.25 -> retention 0.156, write_gain 0.844
+        // 0.50 -> retention 0.500, write_gain 0.500
+        // 0.75 -> retention 0.844, write_gain 0.156
+        // 1.00 -> retention 1.000, write_gain 0.000
+        float retention = f * f * (3.0f - 2.0f * f);
+        float write_gain = 1.0f - retention;
+        bool write_locked = discrete_freeze_lock || (f >= 0.999f);
 
         float dry_sample = in_mono[i];
 
@@ -425,11 +453,13 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
             block_peak = in_abs;
         }
 
-        // Clamp input to [-1.0f, 1.0f] before conversion. Freeze keeps the
-        // granular memory write head locked while voices continue processing.
+        // Clamp input to [-1.0f, 1.0f] before conversion. Continuous retention blends
+        // incoming live audio with retained memory, locking the head only at full freeze.
         float clamped_sample = fmaxf(-1.0f, fminf(1.0f, dry_sample));
-        if (!freeze_write) {
-            engine->delay_buffer[engine->write_ptr] = (int16_t)(clamped_sample * 32767.0f);
+        if (!write_locked) {
+            float old_sample = (float)engine->delay_buffer[engine->write_ptr] * (1.0f / 32767.0f);
+            float mixed = old_sample * retention + clamped_sample * write_gain;
+            engine->delay_buffer[engine->write_ptr] = (int16_t)(fmaxf(-1.0f, fminf(1.0f, mixed)) * 32767.0f);
         }
 
         // Zero audio busses
@@ -585,8 +615,8 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
             }
         }
 
-        // Advance write pointer unless freeze has locked the granular memory.
-        if (!freeze_write) {
+        // Advance write pointer unless memory write is locked (M3)
+        if (!write_locked) {
             engine->write_ptr = WrapIntIndex(engine->write_ptr + 1, buffer_size);
         }
 
@@ -676,6 +706,9 @@ static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_
             engine->engine_state = ENGINE_STATE_SUSTAIN_BODY;
         } else if (engine->env_follower_state > engine->config.tracking_thresh) {
             engine->engine_state = ENGINE_STATE_SPARSE_DECAY;
+        } else if (engine->smoothed_freeze > 0.05f) {
+            // Active freeze sustains the cloud across quiet input (M3)
+            engine->engine_state = ENGINE_STATE_SUSTAIN_BODY;
         } else {
             engine->engine_state = ENGINE_STATE_SILENCE;
         }
@@ -727,7 +760,7 @@ static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_
             break;
         case ENGINE_STATE_SILENCE:
         default:
-            engine->wet_presence_target = 0.32f;
+            engine->wet_presence_target = Lerp(0.32f, 0.90f, engine->smoothed_freeze);
             break;
     }
 
@@ -1364,10 +1397,8 @@ static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, 
     } else if (engine_state == ENGINE_STATE_SPARSE_DECAY) {
         deep_weight += 0.10f;
     }
-    bool frozen = (engine->config.freeze_enabled != 0) || (engine->config.freeze_amount >= 0.5f);
-    if (frozen) {
-        deep_weight += 0.18f;
-    }
+    float f = engine->smoothed_freeze;
+    deep_weight += 0.18f * f;
 
     if (recent_weight < 0.35f) recent_weight = 0.35f;
     if (deep_weight < 0.02f) deep_weight = 0.02f;
@@ -1412,10 +1443,9 @@ static float ResolveSpawnCoherence(SoundBubblesEngine_t* engine) {
         case ENGINE_STATE_SPARSE_DECAY: coherence = SPAWN_COHERENCE_SHORT * 0.5f; break;
         default: coherence = 0.5f; break;
     }
-    bool frozen = (engine->config.freeze_enabled != 0) || (engine->config.freeze_amount >= 0.5f);
-    if (frozen) {
-        coherence = fminf(coherence, 0.12f);
-    }
+    float f = engine->smoothed_freeze;
+    float target_coherence = fminf(coherence, 0.12f);
+    coherence = Lerp(coherence, target_coherence, f);
     return Clamp(coherence, 0.0f, 1.0f);
 }
 
@@ -1439,10 +1469,9 @@ static float ResolveContextReverseProbability(SoundBubblesEngine_t* engine, Bubb
     if (bubble_class == BUBBLE_CLASS_MICRO_ATTACK) {
         scale *= 0.6f;
     }
-    bool frozen = (engine->config.freeze_enabled != 0) || (engine->config.freeze_amount >= 0.5f);
-    if (frozen) {
-        scale = fmaxf(scale, REVERSE_SCALE_FREEZE);
-    }
+    float f = engine->smoothed_freeze;
+    float target_scale = fmaxf(scale, REVERSE_SCALE_FREEZE);
+    scale = Lerp(scale, target_scale, f);
     if (region_id == 2) {
         scale *= 1.25f;
     }
@@ -1452,18 +1481,15 @@ static float ResolveContextReverseProbability(SoundBubblesEngine_t* engine, Bubb
 // M2 fixed per-grain microdetune in cents, drawn at birth and held. Attack grains
 // stay nearly pure; sustain bodies thicken; freeze accepts the most ensemble.
 static float ResolveMicroDetuneCents(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class) {
-    bool frozen = (engine->config.freeze_enabled != 0) || (engine->config.freeze_amount >= 0.5f);
-    float max_cents;
-    if (frozen) {
-        max_cents = BUBBLES_MICRODETUNE_FREEZE_CENTS;
-    } else {
-        switch (bubble_class) {
-            case BUBBLE_CLASS_MICRO_ATTACK: max_cents = BUBBLES_MICRODETUNE_ATTACK_CENTS; break;
-            case BUBBLE_CLASS_SHORT_INTERMEDIATE: max_cents = BUBBLES_MICRODETUNE_SHORT_CENTS; break;
-            case BUBBLE_CLASS_SUSTAIN_BODY: max_cents = BUBBLES_MICRODETUNE_SUSTAIN_CENTS; break;
-            default: max_cents = BUBBLES_MICRODETUNE_SHORT_CENTS; break;
-        }
+    float base_max_cents;
+    switch (bubble_class) {
+        case BUBBLE_CLASS_MICRO_ATTACK: base_max_cents = BUBBLES_MICRODETUNE_ATTACK_CENTS; break;
+        case BUBBLE_CLASS_SHORT_INTERMEDIATE: base_max_cents = BUBBLES_MICRODETUNE_SHORT_CENTS; break;
+        case BUBBLE_CLASS_SUSTAIN_BODY: base_max_cents = BUBBLES_MICRODETUNE_SUSTAIN_CENTS; break;
+        default: base_max_cents = BUBBLES_MICRODETUNE_SHORT_CENTS; break;
     }
+    float f = engine->smoothed_freeze;
+    float max_cents = Lerp(base_max_cents, BUBBLES_MICRODETUNE_FREEZE_CENTS, f);
     // Envelope variation scales ensemble thickness between 60% and 100%.
     max_cents *= 0.6f + 0.4f * Clamp01(engine->config.envelope_variation);
     return (RandomFloat01(engine) * 2.0f - 1.0f) * max_cents;

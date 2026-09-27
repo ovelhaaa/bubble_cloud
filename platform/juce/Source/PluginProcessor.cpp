@@ -512,7 +512,7 @@ void BubbleCloudAudioProcessor::applyEffectiveFreeze()
         freezeActive = true;
     effectiveFreezeActive.store(freezeActive);
 
-    const float effectiveValue = freezeActive ? 1.0f : 0.0f;
+    const float effectiveValue = performanceOverride ? 1.0f : sceneValue;
 
     if (std::abs(effectiveValue - lastAppliedFreeze) >= 0.0001f) {
         engineWrapper.setParameter(BUBBLE_PARAM_FREEZE, effectiveValue);

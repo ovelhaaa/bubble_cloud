@@ -431,6 +431,9 @@ typedef struct {
     float master_dry_gain;
     float master_wet_gain;
 
+    // Continuous Freeze & Temporal Morphing state (M3)
+    float smoothed_freeze;
+
     // Product-facing macro state. Targets are written by bubble_engine_set_parameter();
     // current values are slewed at control-rate before being mapped to raw DSP fields.
     float macro_values[BUBBLES_MACRO_COUNT];
