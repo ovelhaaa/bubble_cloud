@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0-rc.2 — 2026-09-26
+
+- **M2.1 — Stereo coherence lockstep & microdetune guard fix.** Two M2 logic corrections with no public parameter, preset, UI or summing-law changes.
+- Shared coherence RNG: `SpawnRandomFloat01` now always consumes exactly two shared-stream draws per call (the `roll` and the candidate `shared_value`), independent of `coherence`. L/R `coherence_rng_state` can no longer desynchronise when the channels temporarily resolve to different phrase states, while the per-channel stream stays decorrelated. Fixed-seed determinism is preserved. Docs corrected: class and category/memory-tier decisions are only *partially* coherent; pan, fine read offset, pitch selection, microdetune and duration stay channel-local.
+- Microdetune vs guard: `Voice_SpawnInit` now resolves `pitch mode → attack jitter → fixed per-grain microdetune → final rate → projected_span → guard clamp`, so the guard always uses the exact playback rate the grain will use. The forward guard is based on the real relative travel (`rate - 1`) instead of the absolute rate, so a few cents of detune around `rate = 1.0` no longer shove the read offset into a distant region. A bounded float-drift margin keeps the clamp valid against the runtime `read_ptr_float` for the grain lifetime. Microdetune stays fixed for the whole grain and its class bounds (attack ±2, short ±4, sustain ±6, freeze ±8) are unchanged.
+- Tests: new white-box `tests/dsp/m2_coherence_guard_harness.c` (+ pytest runner) reproduces the L/R desynchronisation (fails on the M2 implementation), verifies shared-stream lockstep and reconvergence, and covers the guard with microdetune for unison/octave-up/reverse/freeze, long grains at 96 kHz, positive/negative detune, and a 44.1/48/88.2/96 kHz matrix. Existing M2 character harness made deterministic by isolating the SPARKLE=0 path from runtime motion shimmer.
+- Preserved: memory distribution, Sparkle weights, 12-TET fifth, reverse curves, `1/sqrt(2)` summing law, dry locality, shared limiter, BPM/PPQ, voice stealing, STRUM, presets/UI. No allocation, locks or I/O in the callback.
+
 ## 1.2.0-rc.1 — 2026-09-26
 
 - **M2 — Musical Cloud Character.** Internal musicality/depth pass with no new UI controls, no new effects and no public parameter changes.

@@ -1,6 +1,6 @@
 # M2 — Musical Cloud Character
 
-**Versão:** 1.0.0
+**Versão:** 1.1.0 (M2.1)
 **Última atualização:** 2026-09-26
 
 Este documento descreve a milestone **M2 — Musical Cloud Character**, que
@@ -59,11 +59,28 @@ A coerência de cada decisão de spawn depende apenas da fase da frase:
 | `SPARSE_DECAY` | 0.20 | cauda larga |
 | Freeze | ≤ 0.12 | campo bem aberto |
 
-`SpawnRandomFloat01(engine, coherence)` sorteia o roll no stream compartilhado e,
-com probabilidade `coherence`, também o valor. Assim os dois engines consomem o
-mesmo número de draws do stream compartilhado (lockstep quando o estado musical
-coincide) enquanto pan, microtiming, read offset e pitch continuam por canal.
-Requisito de determinismo preservado.
+`SpawnRandomFloat01(engine, coherence)` sorteia **sempre dois draws** do stream
+compartilhado: o `roll` e um valor candidato (`shared_value`). Com probabilidade
+`coherence` devolve o valor compartilhado; caso contrário devolve um draw do
+stream local do canal. Como o número de draws compartilhados por chamada é
+constante, `coherence_rng_state` de L/R **nunca perde lockstep** — mesmo que os
+dois canais fiquem momentaneamente em estados de frase diferentes (e, portanto,
+com `coherence` diferente), ou que um deles esteja em `ATTACK` e o outro em
+`SUSTAIN`/`DECAY`. A decisão de região/tier também é consumida para **todas** as
+classes (inclusive micro ataques, que sempre leem a região de ataque), de modo
+que escolhas de classe divergentes não desalinhem o stream. Os streams locais
+continuam decorrelacionados.
+
+A coerência é **estatística e controlada, não identidade total** entre engines:
+
+- **parcialmente coerentes** (usam o stream compartilhado com probabilidade
+  `coherence`): classe do bubble e decisões de categoria/região de memória
+  (`memory_tier`, banda temporal do read offset);
+- **canal-local** (sempre no stream do canal): `pan`, offset fino dentro da banda,
+  seleção de pitch (`SHIMMER`), microdetune, duração, jitter de ataque e reverse.
+
+Requisito de determinismo preservado: mesma seed + mesma entrada + mesma config
+→ mesmas decisões.
 
 Justificativa musical: transientes mais coerentes e “punchy” quando as duas
 entradas coincidem; sustain/decay/freeze abrem em um halo largo. A compatibilidade
@@ -105,10 +122,18 @@ constante durante toda a vida (nunca um LFO/chorus):
 | `SUSTAIN_BODY` | ±6 cents |
 | Freeze | ±8 cents |
 
-O valor é escalado por `envelope_variation` (60–100%) e aplicado ao
-`quantized_rate`/`rate` **depois** do clamp de guarda de offset, para que uma
-variação sub-cent não dispare o clamp de pitch-up e empurre a leitura para o
-fundo do buffer.
+O valor é escalado por `envelope_variation` (60–100%) e entra no
+`quantized_rate`/`rate` **antes** do clamp de guarda de offset (M2.1), de modo
+que o guard seja calculado com o rate final realmente usado pelo grain
+(`pitch mode → jitter → microdetune → rate final → projected_span → guard`).
+
+O guard de forward usa o **percurso relativo real** (`rate - 1`), não o rate
+absoluto, e o guard de reverse usa `1 + |rate|`. Assim um microdetune de poucos
+cents em torno de `rate = 1.0` só desloca a leitura pelos poucos samples que o
+grain de fato ganha sobre o write head, sem empurrar artificialmente o read
+offset para uma região distante. O clamp inclui ainda uma margem de deriva de
+ponto flutuante de `read_ptr_float` para a vida prevista do grain, garantindo que
+nenhum grain entre na guard zone cedo por causa do detune.
 
 Justificativa musical: espessura/ensemble natural sem chorus perceptível.
 
@@ -171,9 +196,15 @@ Destaques (M1 → M2, trecho de frase determinístico a 48 kHz):
 ## 8. CPU
 
 As mudanças ocorrem apenas no **spawn** (control-rate, ~30–80 eventos/s): uma
-mão de draws extras de RNG, `powf` por grain e seleção de tier. Nenhum custo
-novo no laço por amostra. O teste de orçamento (`tests/performance`) e o smoke
-de bloco continuam dentro do budget.
+mão de draws extras de RNG (M2.1 fixa em dois draws compartilhados por chamada),
+`powf` por grain e seleção de tier. Nenhum custo novo no laço por amostra. O
+teste de orçamento (`tests/performance`) e o smoke de bloco continuam dentro do
+budget.
+
+Regressões M2.1: `tests/dsp/m2_coherence_guard_harness.c` (lockstep L/R sob
+divergência temporária de estado + guard com microdetune), além do
+`m2_character_harness.c`, wrapper stereo probe e matriz 44.1/48/88.2/96 kHz ×
+32/64/127/256/512/2048.
 
 ## 9. Riscos remanescentes
 

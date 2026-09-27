@@ -60,6 +60,9 @@ const BubbleQualityProfileLimits_t BUBBLE_QUALITY_PROFILE_LIMITS[BUBBLE_QUALITY_
 #define DROPLET_OCCUPANCY_DISABLE 0.75f
 #define DROPLET_OCCUPANCY_REDUCE 0.50f
 #define SMART_START_ENERGY_RADIUS 3
+// Extra samples added to the predicted guard path so float truncation at the
+// interpolation edge cannot trip the runtime directional guard early (M2.1).
+#define BUBBLES_GUARD_PATH_MARGIN 2
 #define FINAL_LIMITER_DEFAULT_CEILING_DB -1.0f
 #define FINAL_LIMITER_DEFAULT_RELEASE_MS 50.0f
 #define BUBBLE_MOTION_FIXED_SEED 0xB06B1E5u
@@ -150,6 +153,7 @@ static bool Voice_QueuePendingSpawn(SoundBubblesEngine_t* engine, BubbleClass_t 
 static int32_t Voice_CountFadingVoices(const SoundBubblesEngine_t* engine);
 static int Voice_FlushPendingSpawns(SoundBubblesEngine_t* engine, int max_spawns);
 static bool Voice_RequestSpawn(SoundBubblesEngine_t* engine, BubbleClass_t b_class, int generation);
+static int32_t ClampSpawnOffsetForGuard(int32_t read_offset_samples, float rate, float duration_samples, int32_t buffer_size);
 static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleClass_t b_class, int generation);
 static float LookupWindow(float phase, WindowType_t type);
 static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state);
@@ -1083,6 +1087,56 @@ static bool Voice_RequestSpawn(SoundBubblesEngine_t* engine, BubbleClass_t b_cla
     return false;
 }
 
+// Worst-case accumulated single-precision rounding of `read_ptr_float` over the
+// grain life. `read_ptr_float` adds `rate` once per sample; each addition rounds
+// by at most half an ulp of a value below `buffer_size`. Bounding that drift keeps
+// the spawn clamp valid against the real float pointer, not just ideal math.
+static float GuardFloatDriftMargin(int32_t buffer_size, float duration_samples) {
+    const float half_ulp_bound = 0.5f * ((float)buffer_size + 4.0f) * 1.1920929e-7f; // ~2^-23
+    return duration_samples * half_ulp_bound;
+}
+
+// Clamp a spawn read offset so the whole predicted grain path stays clear of the
+// directional guard band. The forward protection is based on the relative
+// catch-up rate (rate - 1), not the absolute playback rate, so a tiny positive
+// microdetune around rate 1.0 only shifts the read by roughly the few samples it
+// actually gains on the write head instead of a full duration.
+static int32_t ClampSpawnOffsetForGuard(int32_t read_offset_samples, float rate, float duration_samples, int32_t buffer_size) {
+    const int32_t guard = BUBBLES_GUARD_ZONE_SAMPLES;
+    const int32_t max_guarded_offset = buffer_size - guard - 1;
+    if (read_offset_samples < guard) read_offset_samples = guard;
+    if (read_offset_samples > max_guarded_offset) read_offset_samples = max_guarded_offset;
+
+    // |read - write| changes per sample by: (rate - 1) forward pitch-up,
+    // (1 + |rate|) reverse. rate <= 1 forward never closes the gap.
+    float span_per_sample;
+    if (rate < 0.0f) {
+        span_per_sample = 1.0f + fabsf(rate);
+    } else if (rate > 1.0f) {
+        span_per_sample = rate - 1.0f;
+    } else {
+        span_per_sample = 0.0f;
+    }
+
+    float predicted_span = ceilf(duration_samples * span_per_sample
+                                 + GuardFloatDriftMargin(buffer_size, duration_samples));
+    if (!(predicted_span > 0.0f)) predicted_span = 0.0f;
+    predicted_span += (float)BUBBLES_GUARD_PATH_MARGIN;
+    if (predicted_span > (float)buffer_size) predicted_span = (float)buffer_size;
+    const int32_t projected_span = (int32_t)predicted_span;
+
+    if (rate < 0.0f) {
+        int32_t reverse_max = max_guarded_offset - projected_span;
+        if (reverse_max < guard) reverse_max = guard;
+        if (read_offset_samples > reverse_max) read_offset_samples = reverse_max;
+    } else if (rate > 1.0f) {
+        int32_t forward_min = guard + projected_span;
+        if (forward_min > max_guarded_offset) forward_min = max_guarded_offset;
+        if (read_offset_samples < forward_min) read_offset_samples = forward_min;
+    }
+    return read_offset_samples;
+}
+
 static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleClass_t b_class, int generation) {
     BubbleVoice_t* v = &engine->voices[voice_idx];
     BubbleClassConfig_t* class_cfg = &engine->config.class_configs[b_class];
@@ -1127,49 +1181,39 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
         float reverse_probability = ResolveContextReverseProbability(engine, b_class, region_choice.region_id);
         v->read_direction = (RandomFloat01(engine) < reverse_probability) ? 1u : 0u;
     }
-    v->rate = (v->read_direction != 0u) ? -v->quantized_rate : v->quantized_rate;
+    // Attack-only playback jitter is resolved before the fixed microdetune so it
+    // is already part of the pitch decision the guard path is based on.
     if (engine->config.attack_rate_jitter && b_class == BUBBLE_CLASS_MICRO_ATTACK) {
         float d = Clamp(engine->config.attack_rate_jitter_depth, 0.0f, 0.2f);
         float j = (RandomFloat01(engine) * 2.0f - 1.0f) * d;
         v->quantized_rate = Clamp(v->quantized_rate + j, 0.25f, 4.0f);
-        v->rate = (v->read_direction != 0u) ? -v->quantized_rate : v->quantized_rate;
     }
-
-    // Clamp spawn offsets so reverse and high-rate reads have a guard-banded
-    // path through the ring buffer for the expected voice duration. Forward
-    // voices are also kept far enough behind the write head for their pitch
-    // rate when possible. Runtime guards still handle pathological parameter
-    // updates and long frozen reads.
-    float span_rate = (v->rate < 0.0f) ? (1.0f + fabsf(v->rate)) : fabsf(v->rate);
-    int32_t projected_span = (int32_t)ceilf(duration_samples * span_rate);
-    if (projected_span < 0) projected_span = 0;
-    int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(engine->config.sample_rate);
-    int32_t max_guarded_offset = buffer_size - BUBBLES_GUARD_ZONE_SAMPLES - 1;
-    if (v->rate < 0.0f) {
-        int32_t reverse_max = max_guarded_offset - projected_span;
-        if (reverse_max < BUBBLES_GUARD_ZONE_SAMPLES) reverse_max = BUBBLES_GUARD_ZONE_SAMPLES;
-        if (read_offset_samples > reverse_max) read_offset_samples = reverse_max;
-    } else if (v->rate > 1.0f) {
-        int32_t forward_min = BUBBLES_GUARD_ZONE_SAMPLES + projected_span;
-        if (forward_min > max_guarded_offset) forward_min = max_guarded_offset;
-        if (read_offset_samples < forward_min) read_offset_samples = forward_min;
-    }
-
-    if (engine->config.smart_start_enable) {
-        int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(engine->config.sample_rate);
-        read_offset_samples = RefineReadOffsetSmartStart(engine, read_offset_samples, engine->config.smart_start_range, buffer_size);
-    }
-    v->read_ptr_float = (float)WrapIntIndex(engine->write_ptr - read_offset_samples, buffer_size);
 
     // M2: fixed per-grain microdetune decided once at birth and held for life.
-    // Applied after the offset guard so a sub-cent rate change can never trip the
-    // pitch-up forward clamp and shove the read deep into the buffer.
+    // Resolved before the guard so the guard path always reflects the exact
+    // playback rate the grain will use, microdetune included.
     v->microdetune_cents = ResolveMicroDetuneCents(engine, b_class);
     if (v->microdetune_cents != 0.0f) {
         float detune_ratio = powf(2.0f, v->microdetune_cents / 1200.0f);
         v->quantized_rate = Clamp(v->quantized_rate * detune_ratio, 0.25f, 4.0f);
-        v->rate = (v->read_direction != 0u) ? -v->quantized_rate : v->quantized_rate;
     }
+
+    // Final signed playback rate actually used by the grain.
+    v->rate = (v->read_direction != 0u) ? -v->quantized_rate : v->quantized_rate;
+
+    // Clamp spawn offsets so reverse and forward-pitch reads keep a guard-banded
+    // path through the ring buffer for the whole predicted grain lifetime. The
+    // clamp is derived from the real relative travel (rate - 1 forward, 1 + |rate|
+    // reverse) so a few cents of microdetune around rate 1.0 cannot shove the read
+    // into a distant region. Runtime guards still handle pathological parameter
+    // updates and long frozen reads.
+    int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(engine->config.sample_rate);
+    read_offset_samples = ClampSpawnOffsetForGuard(read_offset_samples, v->rate, duration_samples, buffer_size);
+
+    if (engine->config.smart_start_enable) {
+        read_offset_samples = RefineReadOffsetSmartStart(engine, read_offset_samples, engine->config.smart_start_range, buffer_size);
+    }
+    v->read_ptr_float = (float)WrapIntIndex(engine->write_ptr - read_offset_samples, buffer_size);
 
     float spread = (b_class == BUBBLE_CLASS_MICRO_ATTACK) ? engine->config.attack_pan_spread : engine->config.sustain_pan_spread;
     float pan = (RandomFloat01(engine) * 2.0f - 1.0f) * Clamp01(spread) * Clamp01(engine->config.stereo_width);
@@ -1221,6 +1265,13 @@ static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, 
     choice.memory_tier = BUBBLES_MEMORY_TIER_RECENT;
     choice.recent_bias = 0.60f;
 
+    // Consume the shared region/tier decision first, for every class. Micro
+    // attacks always read the attack region, but advancing the shared stream
+    // identically regardless of class keeps L/R `coherence_rng_state` in lockstep
+    // even when the two channels are in phrase states that pick different bubble
+    // classes during a temporary divergence.
+    float roll = SpawnRandomFloat01(engine, ResolveSpawnCoherence(engine));
+
     if (bubble_class == BUBBLE_CLASS_MICRO_ATTACK) {
         choice.region = &engine->config.attack_region;
         choice.region_id = 0;
@@ -1259,7 +1310,6 @@ static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, 
         if (recent_weight < 0.30f) recent_weight = 0.30f;
     }
 
-    float roll = SpawnRandomFloat01(engine, ResolveSpawnCoherence(engine));
     if (roll < recent_weight) {
         choice.region = &engine->config.body_region;
         choice.region_id = 1;
@@ -1502,13 +1552,17 @@ static float RandomCoherenceFloat01(SoundBubblesEngine_t* engine) {
 }
 
 // With probability `coherence` the value comes from the shared stream (same on
-// both channels); otherwise it is drawn from this channel's own stream. Both
-// engines consume the same number of coherence draws, so the shared stream stays
-// in lockstep as long as their musical state matches.
+// both channels); otherwise it is drawn from this channel's own stream. The
+// shared stream always advances by exactly two draws per call (the roll and the
+// candidate shared value), independent of `coherence` and of the branch taken.
+// That keeps L/R `coherence_rng_state` in lockstep even while their musical
+// states temporarily resolve to different coherence values; only the per-channel
+// stream decorrelates the result.
 static float SpawnRandomFloat01(SoundBubblesEngine_t* engine, float coherence) {
-    float roll = RandomCoherenceFloat01(engine);
+    const float roll = RandomCoherenceFloat01(engine);
+    const float shared_value = RandomCoherenceFloat01(engine);
     if (roll < coherence) {
-        return RandomCoherenceFloat01(engine);
+        return shared_value;
     }
     return RandomFloat01(engine);
 }

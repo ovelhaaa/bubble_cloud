@@ -237,9 +237,15 @@ static int test_sparkle_zero_has_no_random_pitch(void) {
     configure_sustain(&cfg, 0x0FACEu);
     cfg.pitch_mode = BUBBLE_PITCH_MODE_SHIMMER;
     cfg.shimmer_amount = 0.0f;
+    // Isolate the authored SPARKLE=0 pitch path: the default MOTION macro would
+    // otherwise inject a small runtime shimmer on top of the authored zero.
+    cfg.motion_depth = 0.0f;
     init_memory(delay, 192000);
     BubbleEngine_t engine;
     bubble_engine_init(&engine, delay, &cfg);
+    engine.motion_base_config.motion_depth = 0.0f;
+    engine.config.motion_depth = 0.0f;
+    engine.macro_dirty_mask = 0u;
     int buffer_size = (int)SoundBubbles_RequiredBufferSamples(cfg.sample_rate);
     run_and_capture(&engine, input, 4000, &log, buffer_size);
     CHECK(log.count > 50, "captured enough zero-Sparkle spawns");
