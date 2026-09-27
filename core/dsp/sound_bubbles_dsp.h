@@ -115,6 +115,34 @@ typedef enum {
     BUBBLE_BURST_MODE_REVERSE_SWELL = 4
 } BubbleBurstMode_t;
 
+// Canonical scheduler event sources (M2.4). Each real top-level spawn path owns
+// an independent per-tick event index, so an extra event in one source (an extra
+// burst, strum, immediate transient, ...) can never shift the shared identity of
+// a common event belonging to another source. The burst variant (SPRAY / SWARM /
+// REVERSE_SWELL / SINGLE) is the mode of the owning path invocation and is
+// addressed by `child_index` within that invocation.
+typedef enum {
+    BUBBLES_SPAWN_SOURCE_DENSITY = 0,  // free-running density accumulator path
+    BUBBLES_SPAWN_SOURCE_RHYTHM,       // tempo-synced rhythm-step path
+    BUBBLES_SPAWN_SOURCE_STRUM,        // strum pending path
+    BUBBLES_SPAWN_SOURCE_BURST,        // immediate transient burst path
+    BUBBLES_SPAWN_SOURCE_DROPLET,      // derived second-generation grain
+    BUBBLES_SPAWN_SOURCE_COUNT
+} BubbleSpawnSource_t;
+
+// Canonical shared stereo event identity (M2.4). Replaces the old per-channel
+// sequential `tick_spawn_ordinal`: `event_index` is a per-source index within the
+// scheduler tick, and `child_index` selects a grain inside a burst invocation or
+// a derived (droplet) generation. `tick` captures the logical event time so a
+// request that saturates the pool keeps its full identity when it is finally
+// materialized. The whole struct is passed by value (no allocation, no lock).
+typedef struct {
+    uint32_t tick;        // scheduler tick at the logical event origin
+    uint32_t source;      // BubbleSpawnSource_t
+    uint32_t event_index; // per-source event/invocation index within the tick
+    uint32_t child_index; // grain inside the burst / derived generation
+} SharedSpawnId_t;
+
 // --- Configuration Structs ---
 
 typedef struct {
@@ -259,10 +287,10 @@ typedef struct {
     uint8_t generation;
     uint8_t memory_tier;    // BUBBLES_MEMORY_TIER_* chosen at spawn (M2)
 
-    // Explicit logical spawn identity (M2.3), assigned by the scheduler and held
+    // Canonical logical spawn identity (M2.4), assigned by the scheduler and held
     // for observation/debugging. Shared stereo decisions of this grain were keyed
-    // by (spawn_ordinal, decision kind) at initialization time.
-    uint32_t spawn_ordinal;
+    // by this full provenance at initialization time.
+    SharedSpawnId_t spawn_id;
 
     // Fixed at spawn, constant for the whole grain lifetime (M2). Never an LFO.
     float microdetune_cents;
@@ -281,9 +309,10 @@ typedef struct {
 typedef struct {
     BubbleClass_t bubble_class;
     uint8_t generation;
-    // Explicit logical spawn identity, captured when the request was created and
-    // preserved until the voice is actually initialized (saturation queue).
-    uint32_t spawn_ordinal;
+    // Full canonical logical spawn identity, captured when the request was
+    // created and preserved verbatim until the voice is actually initialized
+    // (saturation queue). No field is ever recomputed on materialization.
+    SharedSpawnId_t spawn_id;
 } PendingSpawn_t;
 
 typedef struct {
@@ -378,19 +407,20 @@ typedef struct {
     int32_t fade_samples;
     int32_t block_counter;         // Triggers control ticks every 32 samples
     uint32_t rng_state;            // Internal deterministic per-channel PRNG state
-    // Stateless shared-event RNG (M2.2/M2.3). Shared stereo decisions are
-    // addressed by an explicit logical spawn identity
-    // (shared_event_seed, scheduler_tick, spawn_ordinal, decision kind) and hashed
-    // on demand, so a channel that executes more or fewer spawns cannot shift the
-    // shared decision of a later logical event. The scheduler owns the ordinal
-    // sequence: it assigns one explicit `tick_spawn_ordinal` per logical top-level
-    // spawn, while second-generation (droplet) spawns derive a stable child ordinal
-    // from their parent instead of consuming a new primary ordinal. No mutable
-    // shared stream state is kept; only the per-channel `rng_state` remains
-    // sequential.
+    // Stateless shared-event RNG (M2.2/M2.3/M2.4). Shared stereo decisions are
+    // addressed by a canonical logical event identity
+    // (shared_event_seed, tick, source, event_index, child_index, decision kind)
+    // and hashed on demand, so a channel that executes more or fewer spawns —
+    // even top-level extras inside the same tick — cannot shift the shared
+    // decision of a later common event. The scheduler owns one independent
+    // per-source event index per control tick, while second-generation (droplet)
+    // spawns derive a stable child identity from their parent's full provenance
+    // instead of consuming a new primary event index. No mutable shared stream
+    // state is kept; only the per-channel `rng_state` remains sequential.
     uint32_t shared_event_seed;    // Undecorrelated base seed for shared decisions
     uint32_t scheduler_tick;       // Monotonic control-tick counter (logical event time)
-    uint32_t tick_spawn_ordinal;   // Next explicit logical-spawn ordinal within the tick
+    // Per-source event index for the current tick, reset at every control tick.
+    uint32_t spawn_source_event_index[BUBBLES_SPAWN_SOURCE_COUNT];
     // Channel decorrelation mask, applied on seed (re)initialization so the
     // right channel keeps its own spatial stream across preset/seed changes.
     uint32_t channel_decorrelation;

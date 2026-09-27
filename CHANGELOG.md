@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0-rc.5 — 2026-09-27
+
+- **M2.4 — Canonical scheduler event identity.** Closes the last real-scheduler fragility of the M2 stereo coherence: shared identity is now derived from the logical provenance of the event, never from per-channel spawn execution order.
+- Root cause (M2.3): `Scheduler_NextSpawnOrdinal()` returned `engine->tick_spawn_ordinal++`, a top-level counter local to each channel. A real extra top-level spawn in one channel inside the same tick (e.g. L: A, extra STRUM, B vs R: A, B) shifted every later primary ordinal, so the common event B received a different shared identity on L and R. The M2.3 regression had masked this by modelling the extra as a derived child.
+- Canonical model: `SharedSpawnId = (tick, source, event_index, child_index)`. Each real scheduler path owns an independent per-tick `event_index` sequence (`DENSITY`, `RHYTHM`, `STRUM`, immediate `BURST`, derived `DROPLET`); the burst mode (SPRAY/SWARM/REVERSE_SWELL/SINGLE) is addressed by `child_index` inside the invocation. Shared decisions are a stateless hash of `(shared_event_seed, tick, source, event_index, child_index, decision_kind)`. There is no global counter consumed in order.
+- Order-independence: an extra top-level spawn of one source can no longer shift a common event of another source. L: `density A, strum extra, density B` vs R: `density A, density B` keeps `density B` aligned, and an extra burst likewise does not move later `density`/`rhythm`/`strum` events.
+- Pending queue: `PendingSpawn_t` now stores the full `SharedSpawnId` (including the origin `tick`). A saturated request is materialized later with no field recomputed, so its shared decision is identical to the immediate case.
+- Droplets: a child derives its identity from the parent's complete canonical provenance (`SpawnDerivedId`), lives in the `DROPLET` source namespace with a derived generation flag in `child_index`, and can never collide with the parent, a burst child or a sibling; it never consumes a primary event index.
+- Tests (`tests/dsp/m2_coherence_guard_harness.c`): a regression using the real top-level mechanism (not derived/droplet) that fails on M2.3 and passes now; plus (A) real same-tick top-level asymmetry, (B) cross-source asymmetry, (C) burst asymmetry, (D) pending full-identity preservation, (E) droplet derived identity, (F) a 3000-tick real `Scheduler_RunTick` stress with an observation hook, and the adapted M2.2/M2.3 suites.
+- Preserved: memory distribution, Sparkle weights, 12-TET fifth, microdetune ranges, reverse curves, Smart Start/guard, summing law `1/sqrt(2)`, shared limiter, dry locality, BPM/PPQ, voice stealing, presets/UI. Channel-local duration/pan/fine offset/Sparkle pitch/microdetune/attack jitter/reverse remain decorrelated. No allocation, locks or I/O in the callback; CPU unchanged.
+
 ## 1.2.0-rc.4 — 2026-09-27
 
 - **M2.3 — Explicit shared event identity.** Removes the last fragility of M2.2 stereo coherence without touching public parameters, presets, UI or the summing law.

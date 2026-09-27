@@ -89,10 +89,11 @@ publicados como telemetria final.
 
 A partir da M2, os dois engines **não são mais totalmente decorrelacionados**.
 Cada engine mantém um stream espacial próprio (`rng_state`, decorrelacionado por
-`channel_decorrelation`) e compartilha **decisões keyed por identidade explícita
-de spawn** (M2.3): o scheduler atribui um `spawnOrdinal` por spawn lógico e o
-valor compartilhado é um hash stateless de
-`(base seed, scheduler_tick, spawn_ordinal, decision kind)`. A coerência é
+`channel_decorrelation`) e compartilha **decisões keyed pela identidade canônica
+do evento de scheduler** (M2.4): cada caminho real de spawn top-level possui sua
+própria fonte e `event_index` por tick, e o valor compartilhado é um hash
+stateless de
+`(base seed, tick, source, event_index, child_index, decision kind)`. A coerência é
 **estatística e controlada, não identidade total**: a classe do bubble e as
 decisões de categoria/região de memória (`tier`, banda temporal do offset) usam o
 valor compartilhado com probabilidade `coherence`; `pan`, offset fino, seleção de
@@ -101,20 +102,26 @@ fração compartilhada é função da fase da frase: ataques quase alinhados;
 sustain/decay/freeze progressivamente independentes.
 
 M2.2 substituiu o stream compartilhado sequencial (`coherence_rng_state`) por
-decisões endereçáveis. M2.3 fechou a última fragilidade: em vez de um
-`tick_shared_ordinal++` implícito (que ainda podia divergir *dentro* do mesmo
-tick quando um canal executava um spawn extra entre dois eventos comuns), o
-scheduler passa a atribuir um `spawnOrdinal` **explícito** por spawn lógico, e
-droplets derivam uma identidade estável do parent
-(`BUBBLES_SPAWN_DERIVED_FLAG | (parentOrdinal << 8) | generation`) sem consumir
-nem deslocar os ordinais primários. O helper `SharedSpawnRandom` é puro: não
-incrementa contador e não depende da ordem em que os draws aconteceram.
+decisões endereçáveis. M2.3 introduziu uma identidade explícita, mas ainda baseada
+em um contador top-level local por canal (`tick_spawn_ordinal++`). M2.4 fechou a
+última fragilidade real: esse contador global foi eliminado e cada caminho do
+scheduler (`DENSITY`, `RHYTHM`, `STRUM`, burst imediato `BURST`, `DROPLET`) tem
+sua própria sequência de `event_index` por tick. A identidade canônica é
+`(tick, source, event_index, child_index)`; droplets derivam do parent completo.
+Com isso, um spawn top-level extra em um canal — mesmo dentro do mesmo tick — não
+desloca a identidade de um evento comum posterior de outro source. O helper
+`SharedSpawnRandom` é puro: não incrementa contador e não depende da ordem em que
+os draws aconteceram.
 
 ```text
-Shared decisions are keyed by explicit logical spawn identity,
-not by RNG consumption order.
-Asymmetric spawn counts therefore do not shift future shared decisions.
+Shared stereo identity is derived from canonical scheduler event provenance,
+not from local spawn execution order.
+Asymmetric top-level spawn counts therefore do not shift future shared decisions.
 ```
+
+A fila de saturados preserva o `SharedSpawnId` completo (incluindo o `tick` de
+origem) até a materialização; nenhum campo é recalculado e não há
+alocação/lock/contador global no callback.
 
 Isso torna a coerência robusta a envelopes L/R diferentes, densidades diferentes,
 preempção assimétrica e spawns extras no mesmo tick (situações normais em stereo

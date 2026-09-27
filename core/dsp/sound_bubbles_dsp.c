@@ -107,9 +107,9 @@ typedef struct {
 } ReadRegionChoice_t;
 
 // Logical decision kinds that take part in the shared stereo event stream (M2.2).
-// Combined with (scheduler_tick, spawn_ordinal), the kind keeps multiple
-// decisions in the same logical spawn from colliding and documents which musical
-// choice is being shared.
+// Combined with the canonical spawn provenance, the kind keeps multiple decisions
+// in the same logical spawn from colliding and documents which musical choice is
+// being shared.
 typedef enum {
     BUBBLES_SHARED_DECISION_CLASS = 0,
     BUBBLES_SHARED_DECISION_REGION_TIER = 1,
@@ -122,15 +122,16 @@ typedef enum {
 #define BUBBLES_SHARED_LANE_ROLL  0xA5A5A5A5u
 #define BUBBLES_SHARED_LANE_VALUE 0x5A5A5A5Au
 
-// Second-generation (droplet) spawn identity namespace (M2.3). Derived spawns set
-// the high bit so they can never collide with a primary scheduler ordinal, which
-// stays small. The parent ordinal and the child generation are folded into the
-// value, so a child is stable and parent-derived regardless of how many sibling
-// droplets either channel produced earlier in the same tick.
-#define BUBBLES_SPAWN_DERIVED_FLAG    0x80000000u
-#define BUBBLES_SPAWN_PARENT_SHIFT    8u
-#define BUBBLES_SPAWN_PARENT_MASK     0x007FFFFFu
-#define BUBBLES_SPAWN_GENERATION_MASK 0x000000FFu
+// Second-generation (droplet) child identity namespace (M2.4). Derived children
+// mark the high bit of `child_index` so they can never collide with a primary
+// burst child (which is a small, unflagged value). The parent's child_index and
+// the generation are folded in, so a child is stable and parent-derived
+// regardless of how many sibling droplets either channel produced earlier in the
+// same tick, and the parent's (source, event_index) provenance is inherited.
+#define BUBBLES_SPAWN_CHILD_DERIVED_FLAG    0x80000000u
+#define BUBBLES_SPAWN_CHILD_PARENT_SHIFT    8u
+#define BUBBLES_SPAWN_CHILD_PARENT_MASK     0x007FFFFFu
+#define BUBBLES_SPAWN_CHILD_GENERATION_MASK 0x000000FFu
 
 // --- Static Helper Prototypes ---
 typedef enum {
@@ -149,9 +150,10 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine,
 static void InitWindowLUTs(void);
 static uint32_t NextRandomU32(SoundBubblesEngine_t* engine);
 static float RandomFloat01(SoundBubblesEngine_t* engine);
-static float SharedSpawnRandom(SoundBubblesEngine_t* engine, float coherence, uint32_t spawn_ordinal, BubbleSharedDecisionKind_t kind);
-static uint32_t Scheduler_NextSpawnOrdinal(SoundBubblesEngine_t* engine);
-static uint32_t SpawnDerivedOrdinal(uint32_t parent_ordinal, uint32_t generation);
+static float SharedSpawnRandom(SoundBubblesEngine_t* engine, float coherence, SharedSpawnId_t spawn_id, BubbleSharedDecisionKind_t kind);
+static SharedSpawnId_t Scheduler_NextSpawnId(SoundBubblesEngine_t* engine, BubbleSpawnSource_t source);
+static SharedSpawnId_t SpawnDerivedId(SharedSpawnId_t parent_id, uint32_t generation);
+static void Scheduler_ResetSpawnIdentity(SoundBubblesEngine_t* engine);
 static float ResolveSpawnCoherence(SoundBubblesEngine_t* engine);
 static float ResolveContextReverseProbability(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, uint8_t region_id);
 static float ResolveMicroDetuneCents(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class);
@@ -168,22 +170,22 @@ static inline float Filter1Pole_ProcessHPF(Filter1Pole_t* f, float input);
 static float UpdateEnvelope(float prev_state, float input_peak, float attack_coef, float release_coef);
 static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_peak);
 static void Scheduler_SpawnImmediateBurst(SoundBubblesEngine_t* engine);
-static int Scheduler_SpawnBurstMode(SoundBubblesEngine_t* engine, int max_spawns);
-static BubbleClass_t Scheduler_SelectClassForState(SoundBubblesEngine_t* engine, uint32_t spawn_ordinal);
+static int Scheduler_SpawnBurstMode(SoundBubblesEngine_t* engine, BubbleSpawnSource_t source, int max_spawns);
+static BubbleClass_t Scheduler_SelectClassForState(SoundBubblesEngine_t* engine, SharedSpawnId_t spawn_id);
 static bool Scheduler_IsRhythmStepActive(const SoundBubblesEngine_t* engine, int32_t step_index);
 static float Scheduler_TicksPerRhythmStep(const SoundBubblesEngine_t* engine);
 static void Scheduler_RunTick(SoundBubblesEngine_t* engine);
 static int Voice_FindInactiveSlot(SoundBubblesEngine_t* engine);
 static int Voice_Allocate(SoundBubblesEngine_t* engine);
-static bool Voice_QueuePendingSpawn(SoundBubblesEngine_t* engine, BubbleClass_t b_class, int generation, uint32_t spawn_ordinal);
+static bool Voice_QueuePendingSpawn(SoundBubblesEngine_t* engine, BubbleClass_t b_class, int generation, SharedSpawnId_t spawn_id);
 static int32_t Voice_CountFadingVoices(const SoundBubblesEngine_t* engine);
 static int Voice_FlushPendingSpawns(SoundBubblesEngine_t* engine, int max_spawns);
-static bool Voice_RequestSpawn(SoundBubblesEngine_t* engine, BubbleClass_t b_class, int generation, uint32_t spawn_ordinal);
+static bool Voice_RequestSpawn(SoundBubblesEngine_t* engine, BubbleClass_t b_class, int generation, SharedSpawnId_t spawn_id);
 static int32_t ClampSpawnOffsetForGuard(int32_t read_offset_samples, float rate, float duration_samples, int32_t buffer_size);
-static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleClass_t b_class, int generation, uint32_t spawn_ordinal);
+static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleClass_t b_class, int generation, SharedSpawnId_t spawn_id);
 static float LookupWindow(float phase, WindowType_t type);
-static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state, uint32_t spawn_ordinal);
-static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadRegionConfig_t* region, float recent_bias, float coherence, uint32_t spawn_ordinal);
+static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state, SharedSpawnId_t spawn_id);
+static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadRegionConfig_t* region, float recent_bias, float coherence, SharedSpawnId_t spawn_id);
 static int32_t RefineReadOffsetSmartStart(const SoundBubblesEngine_t* engine, int32_t read_offset_samples, int32_t range, int32_t buffer_size);
 static float EnvelopeVariantGain(float phase, uint8_t variant, int family);
 static float SoftClip(float x, float amount);
@@ -255,7 +257,7 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     engine->write_ptr = 0;
     engine->block_counter = 0;
     engine->scheduler_tick = 0;
-    engine->tick_spawn_ordinal = 0;
+    Scheduler_ResetSpawnIdentity(engine);
     engine->engine_state = ENGINE_STATE_SILENCE;
 
     engine->env_follower_state = 0.0f;
@@ -592,7 +594,7 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
         if (++engine->block_counter >= BUBBLES_BLOCK_SIZE) {
             engine->block_counter = 0;
             engine->scheduler_tick++;
-            engine->tick_spawn_ordinal = 0;
+            Scheduler_ResetSpawnIdentity(engine);
             engine->metrics_tick_spawn_count = 0;
             UpdateStateAndDensity(engine, block_peak);
             Scheduler_RunTick(engine);
@@ -809,16 +811,16 @@ static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_
 }
 
 static void Scheduler_SpawnImmediateBurst(SoundBubblesEngine_t* engine) {
-    (void)Scheduler_SpawnBurstMode(engine, engine->active_voice_limit);
+    (void)Scheduler_SpawnBurstMode(engine, BUBBLES_SPAWN_SOURCE_BURST, engine->active_voice_limit);
 }
 
-static BubbleClass_t Scheduler_SelectClassForState(SoundBubblesEngine_t* engine, uint32_t spawn_ordinal) {
+static BubbleClass_t Scheduler_SelectClassForState(SoundBubblesEngine_t* engine, SharedSpawnId_t spawn_id) {
     // Class is an "important event": on attacks it is drawn from the shared
     // event stream so both stereo channels pick the same bubble type, while
     // during sustain/decay the channels become independent and the field opens.
-    // The decision is keyed by the explicit logical spawn identity, so an extra
-    // spawn in one channel cannot shift the class of a later common spawn.
-    float r = SharedSpawnRandom(engine, ResolveSpawnCoherence(engine), spawn_ordinal, BUBBLES_SHARED_DECISION_CLASS);
+    // The decision is keyed by the canonical logical spawn provenance, so an
+    // extra spawn in one channel cannot shift the class of a later common spawn.
+    float r = SharedSpawnRandom(engine, ResolveSpawnCoherence(engine), spawn_id, BUBBLES_SHARED_DECISION_CLASS);
     switch (engine->engine_state) {
         case ENGINE_STATE_TRANSIENT_BURST:
             return BUBBLE_CLASS_MICRO_ATTACK;
@@ -833,7 +835,7 @@ static BubbleClass_t Scheduler_SelectClassForState(SoundBubblesEngine_t* engine,
     }
 }
 
-static int Scheduler_SpawnBurstMode(SoundBubblesEngine_t* engine, int max_spawns) {
+static int Scheduler_SpawnBurstMode(SoundBubblesEngine_t* engine, BubbleSpawnSource_t source, int max_spawns) {
     int burst_count = engine->config.burst_immediate_count;
     if (burst_count < 1) burst_count = 1;
     if (burst_count > engine->active_voice_limit) burst_count = engine->active_voice_limit;
@@ -842,14 +844,19 @@ static int Scheduler_SpawnBurstMode(SoundBubblesEngine_t* engine, int max_spawns
     int spawned = 0;
     switch (engine->config.burst_mode) {
         case BUBBLE_BURST_MODE_SPRAY:
+        {
+            // One canonical event index per invocation; child_index selects the
+            // grain inside the burst. The class draw and every read decision in
+            // Voice_SpawnInit reuse this exact provenance.
+            SharedSpawnId_t base = Scheduler_NextSpawnId(engine, source);
             for (int i = 0; i < burst_count; i++) {
-                // Each top-level spawn owns one explicit ordinal; the class draw
-                // and the read decisions inside Voice_SpawnInit all reuse it.
-                uint32_t ord = Scheduler_NextSpawnOrdinal(engine);
-                BubbleClass_t c = (i == 0) ? BUBBLE_CLASS_MICRO_ATTACK : Scheduler_SelectClassForState(engine, ord);
-                if (Voice_RequestSpawn(engine, c, 0, ord)) { engine->metrics_tick_spawn_count++; spawned++; }
+                SharedSpawnId_t id = base;
+                id.child_index = (uint32_t)i;
+                BubbleClass_t c = (i == 0) ? BUBBLE_CLASS_MICRO_ATTACK : Scheduler_SelectClassForState(engine, id);
+                if (Voice_RequestSpawn(engine, c, 0, id)) { engine->metrics_tick_spawn_count++; spawned++; }
             }
             break;
+        }
         case BUBBLE_BURST_MODE_STRUM:
             if (engine->strum_pending_count < burst_count) engine->strum_pending_count = burst_count;
             break;
@@ -859,25 +866,31 @@ static int Scheduler_SpawnBurstMode(SoundBubblesEngine_t* engine, int max_spawns
             if (swarm_count < 4) swarm_count = 4;
             if (swarm_count > max_spawns) swarm_count = max_spawns;
             if (swarm_count > engine->active_voice_limit) swarm_count = engine->active_voice_limit;
+            SharedSpawnId_t base = Scheduler_NextSpawnId(engine, source);
             for (int i = 0; i < swarm_count; i++) {
-                uint32_t ord = Scheduler_NextSpawnOrdinal(engine);
-                if (Voice_RequestSpawn(engine, Scheduler_SelectClassForState(engine, ord), 0, ord)) { engine->metrics_tick_spawn_count++; spawned++; }
+                SharedSpawnId_t id = base;
+                id.child_index = (uint32_t)i;
+                if (Voice_RequestSpawn(engine, Scheduler_SelectClassForState(engine, id), 0, id)) { engine->metrics_tick_spawn_count++; spawned++; }
             }
             break;
         }
         case BUBBLE_BURST_MODE_REVERSE_SWELL:
+        {
             engine->force_reverse_spawns += burst_count;
+            SharedSpawnId_t base = Scheduler_NextSpawnId(engine, source);
             for (int i = 0; i < burst_count; i++) {
-                uint32_t ord = Scheduler_NextSpawnOrdinal(engine);
+                SharedSpawnId_t id = base;
+                id.child_index = (uint32_t)i;
                 BubbleClass_t c = (i == 0) ? BUBBLE_CLASS_SHORT_INTERMEDIATE : BUBBLE_CLASS_SUSTAIN_BODY;
-                if (Voice_RequestSpawn(engine, c, 0, ord)) { engine->metrics_tick_spawn_count++; spawned++; }
+                if (Voice_RequestSpawn(engine, c, 0, id)) { engine->metrics_tick_spawn_count++; spawned++; }
             }
             break;
+        }
         case BUBBLE_BURST_MODE_SINGLE:
         default:
         {
-            uint32_t ord = Scheduler_NextSpawnOrdinal(engine);
-            if (Voice_RequestSpawn(engine, Scheduler_SelectClassForState(engine, ord), 0, ord)) { engine->metrics_tick_spawn_count++; spawned++; }
+            SharedSpawnId_t id = Scheduler_NextSpawnId(engine, source);
+            if (Voice_RequestSpawn(engine, Scheduler_SelectClassForState(engine, id), 0, id)) { engine->metrics_tick_spawn_count++; spawned++; }
             break;
         }
     }
@@ -923,8 +936,8 @@ static void Scheduler_RunTick(SoundBubblesEngine_t* engine) {
         int inactive_idx = Voice_FindInactiveSlot(engine);
         bool can_place = (inactive_idx >= 0) || (engine->pending_spawn_count < BUBBLES_PENDING_SPAWN_CAPACITY);
         if (can_place) {
-            uint32_t ord = Scheduler_NextSpawnOrdinal(engine);
-            if (Voice_RequestSpawn(engine, c, 0, ord)) { engine->metrics_tick_spawn_count++; spawns_this_tick++; }
+            SharedSpawnId_t id = Scheduler_NextSpawnId(engine, BUBBLES_SPAWN_SOURCE_STRUM);
+            if (Voice_RequestSpawn(engine, c, 0, id)) { engine->metrics_tick_spawn_count++; spawns_this_tick++; }
             engine->strum_pending_count--;
             engine->strum_step_index++;
         }
@@ -940,7 +953,7 @@ static void Scheduler_RunTick(SoundBubblesEngine_t* engine) {
         engine->rhythm_step_accumulator += 1.0f / ticks_per_step;
         while (engine->rhythm_step_accumulator >= 1.0f) {
             if (Scheduler_IsRhythmStepActive(engine, engine->rhythm_step_index) && spawns_this_tick < SCHED_MAX_SPAWNS_PER_TICK) {
-                spawns_this_tick += Scheduler_SpawnBurstMode(engine, SCHED_MAX_SPAWNS_PER_TICK - spawns_this_tick);
+                spawns_this_tick += Scheduler_SpawnBurstMode(engine, BUBBLES_SPAWN_SOURCE_RHYTHM, SCHED_MAX_SPAWNS_PER_TICK - spawns_this_tick);
             }
             engine->rhythm_step_index++;
             engine->rhythm_step_accumulator -= 1.0f;
@@ -952,7 +965,7 @@ static void Scheduler_RunTick(SoundBubblesEngine_t* engine) {
     engine->spawn_accumulator += spawns_per_tick;
 
     while (engine->spawn_accumulator >= 1.0f && spawns_this_tick < SCHED_MAX_SPAWNS_PER_TICK) {
-        int spawned = Scheduler_SpawnBurstMode(engine, SCHED_MAX_SPAWNS_PER_TICK - spawns_this_tick);
+        int spawned = Scheduler_SpawnBurstMode(engine, BUBBLES_SPAWN_SOURCE_DENSITY, SCHED_MAX_SPAWNS_PER_TICK - spawns_this_tick);
         engine->spawn_accumulator -= 1.0f;
         spawns_this_tick += spawned;
         if (spawned <= 0 && engine->config.burst_mode != BUBBLE_BURST_MODE_STRUM) {
@@ -1056,7 +1069,7 @@ static int Voice_Allocate(SoundBubblesEngine_t* engine) {
     return -1;
 }
 
-static bool Voice_QueuePendingSpawn(SoundBubblesEngine_t* engine, BubbleClass_t b_class, int generation, uint32_t spawn_ordinal) {
+static bool Voice_QueuePendingSpawn(SoundBubblesEngine_t* engine, BubbleClass_t b_class, int generation, SharedSpawnId_t spawn_id) {
     if (engine->pending_spawn_count >= BUBBLES_PENDING_SPAWN_CAPACITY) {
         return false;
     }
@@ -1064,9 +1077,10 @@ static bool Voice_QueuePendingSpawn(SoundBubblesEngine_t* engine, BubbleClass_t 
     int tail = (engine->pending_spawn_head + engine->pending_spawn_count) % BUBBLES_PENDING_SPAWN_CAPACITY;
     engine->pending_spawns[tail].bubble_class = b_class;
     engine->pending_spawns[tail].generation = (uint8_t)((generation <= 0) ? 0 : 1);
-    // Preserve the explicit identity captured when the request was made; it is
-    // never recomputed when the saturated request finally becomes a voice.
-    engine->pending_spawns[tail].spawn_ordinal = spawn_ordinal;
+    // Preserve the full canonical identity captured when the request was made; no
+    // field (including the origin tick) is recomputed when the saturated request
+    // finally becomes a voice.
+    engine->pending_spawns[tail].spawn_id = spawn_id;
     engine->pending_spawn_count++;
     return true;
 }
@@ -1096,7 +1110,7 @@ static int Voice_FlushPendingSpawns(SoundBubblesEngine_t* engine, int max_spawns
         engine->pending_spawn_head = (engine->pending_spawn_head + 1) % BUBBLES_PENDING_SPAWN_CAPACITY;
         engine->pending_spawn_count--;
 
-        Voice_SpawnInit(engine, voice_idx, request.bubble_class, request.generation, request.spawn_ordinal);
+        Voice_SpawnInit(engine, voice_idx, request.bubble_class, request.generation, request.spawn_id);
         engine->metrics_tick_spawn_count++;
         spawned_count++;
     }
@@ -1108,10 +1122,10 @@ static int Voice_FlushPendingSpawns(SoundBubblesEngine_t* engine, int max_spawns
     return spawned_count;
 }
 
-static bool Voice_RequestSpawn(SoundBubblesEngine_t* engine, BubbleClass_t b_class, int generation, uint32_t spawn_ordinal) {
+static bool Voice_RequestSpawn(SoundBubblesEngine_t* engine, BubbleClass_t b_class, int generation, SharedSpawnId_t spawn_id) {
     int inactive_idx = Voice_FindInactiveSlot(engine);
     if (inactive_idx >= 0) {
-        Voice_SpawnInit(engine, inactive_idx, b_class, generation, spawn_ordinal);
+        Voice_SpawnInit(engine, inactive_idx, b_class, generation, spawn_id);
         return true;
     }
 
@@ -1128,7 +1142,7 @@ static bool Voice_RequestSpawn(SoundBubblesEngine_t* engine, BubbleClass_t b_cla
         (void)Voice_Allocate(engine);
     }
 
-    Voice_QueuePendingSpawn(engine, b_class, generation, spawn_ordinal);
+    Voice_QueuePendingSpawn(engine, b_class, generation, spawn_id);
     return false;
 }
 
@@ -1182,14 +1196,14 @@ static int32_t ClampSpawnOffsetForGuard(int32_t read_offset_samples, float rate,
     return read_offset_samples;
 }
 
-static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleClass_t b_class, int generation, uint32_t spawn_ordinal) {
+static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleClass_t b_class, int generation, SharedSpawnId_t spawn_id) {
     BubbleVoice_t* v = &engine->voices[voice_idx];
     BubbleClassConfig_t* class_cfg = &engine->config.class_configs[b_class];
 
     v->state = VOICE_STATE_PLAYING;
     v->bubble_class = b_class;
     v->generation = (uint8_t)((generation <= 0) ? 0 : 1);
-    v->spawn_ordinal = spawn_ordinal;
+    v->spawn_id = spawn_id;
     v->phase = 0.0f;
     v->amp = 1.0f;
     v->quantized_rate = ResolvePitchModeRate(engine);
@@ -1214,9 +1228,9 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     }
     v->phase_inc = 1.0f / duration_samples;
 
-    ReadRegionChoice_t region_choice = ResolveReadRegionChoice(engine, b_class, engine->engine_state, spawn_ordinal);
+    ReadRegionChoice_t region_choice = ResolveReadRegionChoice(engine, b_class, engine->engine_state, spawn_id);
     v->memory_tier = region_choice.memory_tier;
-    int32_t read_offset_samples = ChooseReadOffsetSamples(engine, region_choice.region, region_choice.recent_bias, coherence, spawn_ordinal);
+    int32_t read_offset_samples = ChooseReadOffsetSamples(engine, region_choice.region, region_choice.recent_bias, coherence, spawn_id);
 
     // Context-conditioned reverse (M2): rare on attacks, opening through sustain,
     // decay and freeze so the cloud can unfurl backwards after the event.
@@ -1299,10 +1313,11 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
             }
             if (RandomFloat01(engine) < prob) {
                 // Second-generation grain: its shared identity derives from the
-                // parent's explicit ordinal plus its generation, so an extra
-                // droplet never consumes or shifts a primary scheduler ordinal.
-                uint32_t child_ordinal = SpawnDerivedOrdinal(spawn_ordinal, 1u);
-                if (Voice_RequestSpawn(engine, BUBBLE_CLASS_SHORT_INTERMEDIATE, 1, child_ordinal)) {
+                // parent's *full* canonical provenance plus its generation, so an
+                // extra droplet never consumes or shifts a primary event index and
+                // can never collide with the parent or a sibling.
+                SharedSpawnId_t child_id = SpawnDerivedId(spawn_id, 1u);
+                if (Voice_RequestSpawn(engine, BUBBLE_CLASS_SHORT_INTERMEDIATE, 1, child_id)) {
                     engine->metrics_tick_spawn_count++;
                 }
             }
@@ -1310,7 +1325,7 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     }
 }
 
-static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state, uint32_t spawn_ordinal) {
+static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state, SharedSpawnId_t spawn_id) {
     // Deterministic map from "what bubble" + "what phrase phase" => temporal memory slice.
     // Attack-oriented contexts read from attack/body. Tail-oriented contexts read from memory.
     // M2 annotates the slice with a temporal tier/recent bias; ChooseReadOffsetSamples then
@@ -1324,7 +1339,7 @@ static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, 
     // shared decision regardless of class keeps L/R aligned on the same logical
     // event even when the two channels are in phrase states that pick different
     // bubble classes during a temporary divergence.
-    float roll = SharedSpawnRandom(engine, ResolveSpawnCoherence(engine), spawn_ordinal, BUBBLES_SHARED_DECISION_REGION_TIER);
+    float roll = SharedSpawnRandom(engine, ResolveSpawnCoherence(engine), spawn_id, BUBBLES_SHARED_DECISION_REGION_TIER);
 
     if (bubble_class == BUBBLE_CLASS_MICRO_ATTACK) {
         choice.region = &engine->config.attack_region;
@@ -1454,7 +1469,7 @@ static float ResolveMicroDetuneCents(SoundBubblesEngine_t* engine, BubbleClass_t
     return (RandomFloat01(engine) * 2.0f - 1.0f) * max_cents;
 }
 
-static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadRegionConfig_t* region, float recent_bias, float coherence, uint32_t spawn_ordinal) {
+static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadRegionConfig_t* region, float recent_bias, float coherence, SharedSpawnId_t spawn_id) {
     // Clamp and normalize range so presets stay ring-buffer safe.
     const int32_t min_safe = BUBBLES_GUARD_ZONE_SAMPLES;
     int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(engine->config.sample_rate);
@@ -1493,7 +1508,7 @@ static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadR
 
     float band_lo;
     float band_hi;
-    float tier_roll = SharedSpawnRandom(engine, coherence, spawn_ordinal, BUBBLES_SHARED_DECISION_OFFSET_BAND);
+    float tier_roll = SharedSpawnRandom(engine, coherence, spawn_id, BUBBLES_SHARED_DECISION_OFFSET_BAND);
     if (tier_roll < w_recent) {
         band_lo = 0.0f;
         band_hi = 1.0f / 3.0f;
@@ -1600,49 +1615,100 @@ static uint32_t SharedEventMix32(uint32_t x) {
     return x;
 }
 
-static float SharedEventUnit(uint32_t seed, uint32_t tick, uint32_t ordinal, uint32_t kind, uint32_t lane) {
+// Hash the full canonical event provenance into a unit value. The event index is
+// split from the child index so a burst invocation and its grains, or a parent
+// and its droplet, never alias. `lane` separates the share roll from the
+// candidate value for the same (event, kind).
+static float SharedEventUnit(uint32_t seed, SharedSpawnId_t id, uint32_t kind, uint32_t lane) {
     const float kInv24Bit = 1.0f / 16777216.0f; // 2^24
     uint32_t h = SharedEventMix32(seed ^ 0x9E3779B9u);
-    h ^= SharedEventMix32(tick + 0x85EBCA6Bu);
-    h += SharedEventMix32(ordinal + 0xC2B2AE35u);
-    h ^= SharedEventMix32(kind + 0x27D4EB2Fu);
-    h += SharedEventMix32(lane + 0x165667B1u);
+    h ^= SharedEventMix32(id.tick + 0x85EBCA6Bu);
+    h += SharedEventMix32(id.source + 0xC2B2AE35u);
+    h ^= SharedEventMix32(id.event_index + 0x27D4EB2Fu);
+    h += SharedEventMix32(id.child_index + 0x165667B1u);
+    h ^= SharedEventMix32(kind + 0xD6E8FEB8u);
+    h += SharedEventMix32(lane + 0x9E3779B1u);
     return (float)(SharedEventMix32(h) >> 8) * kInv24Bit;
 }
 
-// Reserve the next explicit logical-spawn ordinal for the current control tick.
-// The scheduler calls this exactly once per top-level spawn; the ordinal is then
-// carried through the voice request and the saturation queue unchanged.
-static uint32_t Scheduler_NextSpawnOrdinal(SoundBubblesEngine_t* engine) {
-    return engine->tick_spawn_ordinal++;
+// Reset the per-source event indices at the control-tick boundary.
+static void Scheduler_ResetSpawnIdentity(SoundBubblesEngine_t* engine) {
+    for (int i = 0; i < BUBBLES_SPAWN_SOURCE_COUNT; i++) {
+        engine->spawn_source_event_index[i] = 0u;
+    }
 }
 
-// Derive a stable identity for a second-generation (droplet) spawn from its
-// parent's explicit ordinal and its generation. Derived ordinals live in their
-// own namespace (high bit set) so they never collide with a primary ordinal and
-// never shift the ordinal of any later common spawn in the same tick.
-static uint32_t SpawnDerivedOrdinal(uint32_t parent_ordinal, uint32_t generation) {
-    return BUBBLES_SPAWN_DERIVED_FLAG
-         | ((parent_ordinal & BUBBLES_SPAWN_PARENT_MASK) << BUBBLES_SPAWN_PARENT_SHIFT)
-         | (generation & BUBBLES_SPAWN_GENERATION_MASK);
+// Reserve the next canonical event identity for a given source in the current
+// control tick. Each source owns an independent index sequence, so an extra
+// top-level spawn of one source can never shift the identity of a common event
+// of another source. The returned identity is carried through the voice request
+// and the saturation queue unchanged.
+static SharedSpawnId_t Scheduler_NextSpawnId(SoundBubblesEngine_t* engine, BubbleSpawnSource_t source) {
+    SharedSpawnId_t id;
+    uint32_t s = (uint32_t)source;
+    if (s >= (uint32_t)BUBBLES_SPAWN_SOURCE_COUNT) s = 0u;
+    id.tick = engine->scheduler_tick;
+    id.source = s;
+    id.event_index = engine->spawn_source_event_index[s]++;
+    id.child_index = 0u;
+    return id;
 }
+
+// Derive a stable identity for a second-generation (droplet) grain from its
+// parent's full canonical provenance and its generation. The child lives in its
+// own DROPLET source namespace and folds the parent's source and event index into
+// its event index, so no two parents (even across sources) can alias. The derived
+// generation lives in its own child-index namespace (high bit set) so the child
+// can never collide with the parent, with a primary burst child, or with a
+// sibling droplet, and it never consumes or shifts a primary event index.
+static SharedSpawnId_t SpawnDerivedId(SharedSpawnId_t parent_id, uint32_t generation) {
+    SharedSpawnId_t child_id;
+    child_id.tick = parent_id.tick;
+    child_id.source = (uint32_t)BUBBLES_SPAWN_SOURCE_DROPLET;
+    child_id.event_index = parent_id.event_index * (uint32_t)BUBBLES_SPAWN_SOURCE_COUNT + parent_id.source;
+    child_id.child_index = BUBBLES_SPAWN_CHILD_DERIVED_FLAG
+        | ((parent_id.child_index & BUBBLES_SPAWN_CHILD_PARENT_MASK) << BUBBLES_SPAWN_CHILD_PARENT_SHIFT)
+        | (generation & BUBBLES_SPAWN_CHILD_GENERATION_MASK);
+    return child_id;
+}
+
+// Optional white-box observation hook for the M2 regression harness. Compiled
+// out entirely in production builds (no state, no branch), so it cannot affect
+// the audio callback or the deterministic sequence.
+#if defined(BUBBLES_M2_SHARED_TRACE)
+typedef void (*BubbleSharedTraceFn)(void* user, const SoundBubblesEngine_t* engine,
+                                    SharedSpawnId_t id, uint32_t kind,
+                                    int shared_branch, float value);
+static BubbleSharedTraceFn g_bubble_shared_trace_fn = NULL;
+static void* g_bubble_shared_trace_user = NULL;
+static void BubblesTest_SetSharedTrace(BubbleSharedTraceFn fn, void* user) {
+    g_bubble_shared_trace_fn = fn;
+    g_bubble_shared_trace_user = user;
+}
+#endif
 
 // With probability `coherence` the value comes from the event-addressable shared
 // decision; otherwise it is drawn from this channel's own sequential stream.
-// Both the share roll and the candidate shared value derive from the same
-// (seed, scheduler_tick, spawn_ordinal, kind) identity. The helper is pure with
-// respect to the event identity: it never advances a counter and never depends on
-// how many shared decisions either channel consumed before it, so an extra spawn
-// cannot shift the shared value of a later logical spawn. The per-channel stream
-// still decorrelates the channel-local fallback (pan, fine offset, pitch, detune,
-// duration, reverse).
-static float SharedSpawnRandom(SoundBubblesEngine_t* engine, float coherence, uint32_t spawn_ordinal, BubbleSharedDecisionKind_t kind) {
+// Both the share roll and the candidate shared value derive from the same full
+// canonical event provenance (seed, tick, source, event_index, child_index,
+// kind). The helper is pure with respect to the event identity: it never advances
+// a counter and never depends on how many shared decisions either channel
+// consumed before it, so an extra spawn cannot shift the shared value of a later
+// logical event. The per-channel stream still decorrelates the channel-local
+// fallback (pan, fine offset, pitch, detune, duration, reverse).
+static float SharedSpawnRandom(SoundBubblesEngine_t* engine, float coherence, SharedSpawnId_t spawn_id, BubbleSharedDecisionKind_t kind) {
     const uint32_t k = (uint32_t)kind;
-    const float roll = SharedEventUnit(engine->shared_event_seed, engine->scheduler_tick, spawn_ordinal, k, BUBBLES_SHARED_LANE_ROLL);
-    if (roll < coherence) {
-        return SharedEventUnit(engine->shared_event_seed, engine->scheduler_tick, spawn_ordinal, k, BUBBLES_SHARED_LANE_VALUE);
+    const float roll = SharedEventUnit(engine->shared_event_seed, spawn_id, k, BUBBLES_SHARED_LANE_ROLL);
+    const int shared_branch = (roll < coherence) ? 1 : 0;
+    const float value = shared_branch
+        ? SharedEventUnit(engine->shared_event_seed, spawn_id, k, BUBBLES_SHARED_LANE_VALUE)
+        : RandomFloat01(engine);
+#if defined(BUBBLES_M2_SHARED_TRACE)
+    if (g_bubble_shared_trace_fn != NULL) {
+        g_bubble_shared_trace_fn(g_bubble_shared_trace_user, engine, spawn_id, k, shared_branch, value);
     }
-    return RandomFloat01(engine);
+#endif
+    return value;
 }
 
 static inline float Clamp01(float x) {
