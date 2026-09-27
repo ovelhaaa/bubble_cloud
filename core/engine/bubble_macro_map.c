@@ -200,14 +200,12 @@ void bubble_macro_map_resolve(const float macro_values[BUBBLES_MACRO_COUNT],
     const float bloom = MacroValue(macro_values, BUBBLE_PARAM_BLOOM);
     const float motion = MacroValue(macro_values, BUBBLE_PARAM_MOTION);
     const float texture = MacroValue(macro_values, BUBBLE_PARAM_TEXTURE);
-    const float freeze = MacroValue(macro_values, BUBBLE_PARAM_FREEZE);
     const float sparkle = MacroValue(macro_values, BUBBLE_PARAM_SPARKLE);
     const float warmth = MacroValue(macro_values, BUBBLE_PARAM_WARMTH);
 
     out_config->sustain_diffusion_enable = bloom > 0.08f ? 1 : 0;
     out_config->attack_rate_jitter = motion > 0.05f ? 1 : 0;
     out_config->droplet_enable = texture > 0.10f ? 1 : 0;
-    out_config->freeze_enabled = freeze >= 0.5f ? 1 : 0;
     // Fixed harmonic modes are authored overrides. Preserve them while other
     // macros move; unison remains the macro-controlled mode that can bloom
     // into probabilistic shimmer through Sparkle.

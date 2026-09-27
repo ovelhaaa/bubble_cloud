@@ -106,10 +106,11 @@ static int test_freeze_stops_memory_writes_and_macro_reaches_freeze(void) {
     CHECK(engine.write_ptr == frozen_ptr, "freeze keeps write pointer stationary");
     CHECK(delay[frozen_ptr] == before, "freeze leaves delay memory untouched at the locked write head");
 
-    bubble_engine_reset(&engine);
+    init_engine(&engine, delay, &config);
     CHECK(bubble_engine_set_parameter(&engine, BUBBLE_PARAM_FREEZE, 1.0f), "set product freeze macro");
-    process_constant(&engine, 0.0f, BUBBLES_BLOCK_SIZE * 6);
-    CHECK(engine.config.freeze_enabled == 1, "freeze macro slews into the raw freeze-enabled DSP state");
+    process_constant(&engine, 0.0f, BUBBLES_BLOCK_SIZE * 32);
+    CHECK(engine.config.freeze_amount >= 0.99f, "freeze macro slews into the freeze-amount DSP state");
+    CHECK(engine.config.freeze_enabled == 0, "macro continuous freeze never writes freeze_enabled");
     return 0;
 }
 

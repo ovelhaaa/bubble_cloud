@@ -385,32 +385,137 @@ int main()
         require(rhythmTelemetry.rhythmStep >= 0 && rhythmTelemetry.rhythmStep < 16,
                 "telemetry rhythm playhead is outside the 16-step pattern");
 
+        // -------------------------------------------------------------------
+        // M3.1: Capture/Hold performance override & scene automation
+        // -------------------------------------------------------------------
+        setParameter(processor, "FREEZE", 0.42f);
+        processSilence(processor, noMidi);
+        require(std::abs(processor.getEffectiveFreeze() - 0.42f) < 0.001f,
+                "initial scene freeze target must be 0.42");
+        require(!processor.isFreezeActive(), "override initially inactive");
+
+        // captureHeld = true -> target effectively 1.0
         processor.setCaptureHeld(true);
         processSilence(processor, noMidi);
         require(processor.isFreezeActive(), "held Capture did not engage Freeze");
+        require(std::abs(processor.getEffectiveFreeze() - 1.0f) < 0.001f,
+                "held Capture must force effective freeze to 1.0");
+        require(processor.getTelemetrySnapshot().frozen,
+                "telemetry snapshot.frozen must reflect performance override");
+
+        // scene changes to 0.70 while held -> effective freeze continues at 1.0
+        setParameter(processor, "FREEZE", 0.70f);
+        processSilence(processor, noMidi);
+        require(std::abs(processor.getEffectiveFreeze() - 1.0f) < 0.001f,
+                "effective freeze must remain 1.0 while scene changes during hold");
+
+        // captureHeld = false -> returns smoothly to 0.70 (not old 0.42!)
         processor.setCaptureHeld(false);
         processSilence(processor, noMidi);
-        require(!processor.isFreezeActive(), "releasing Capture did not restore the scene Freeze value");
+        require(!processor.isFreezeActive(), "releasing Capture did not restore Freeze state");
+        require(std::abs(processor.getEffectiveFreeze() - 0.70f) < 0.001f,
+                "releasing Capture must restore updated scene freeze value 0.70");
+        require(!processor.getTelemetrySnapshot().frozen,
+                "telemetry snapshot.frozen must clear when override released");
 
-        setParameter(processor, "FREEZE_MIDI_MODE", 1.0f);
+        // -------------------------------------------------------------------
+        // M3.1: Real JUCE MIDI Momentary Mode Validation
+        // -------------------------------------------------------------------
+        setParameter(processor, "FREEZE", 0.30f);
+        setParameter(processor, "FREEZE_MIDI_MODE", 1.0f); // Momentary
         setParameter(processor, "FREEZE_MIDI_NOTE", 60.0f);
+        processSilence(processor, noMidi);
+        require(std::abs(processor.getEffectiveFreeze() - 0.30f) < 0.001f,
+                "scene freeze must be 0.30 before Note On");
+        require(!processor.isFreezeActive(), "override initially inactive");
+
         juce::MidiBuffer noteOn;
         noteOn.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)100), 0);
         processSilence(processor, noteOn);
         require(processor.isFreezeActive(), "momentary MIDI note-on did not engage Freeze");
+        require(std::abs(processor.getEffectiveFreeze() - 1.0f) < 0.001f,
+                "momentary MIDI note-on did not set effective freeze to 1.0");
+        require(processor.getTelemetrySnapshot().frozen,
+                "telemetry snapshot.frozen must be true on momentary Note On");
+
+        // Momentary Note Off: returns to 0.30
         juce::MidiBuffer noteOff;
         noteOff.addEvent(juce::MidiMessage::noteOff(1, 60), 0);
         processSilence(processor, noteOff);
         require(!processor.isFreezeActive(), "momentary MIDI note-off did not release Freeze");
+        require(std::abs(processor.getEffectiveFreeze() - 0.30f) < 0.001f,
+                "momentary MIDI note-off did not return effective freeze to 0.30");
+        require(!processor.getTelemetrySnapshot().frozen,
+                "telemetry snapshot.frozen must clear on momentary Note Off");
 
-        setParameter(processor, "FREEZE_MIDI_MODE", 0.0f);
+        // Return transition audio probe to verify DSP smoothing without clicks
+        juce::AudioBuffer<float> returnBuffer(2, 256);
+        returnBuffer.clear();
+        processor.processBlock(returnBuffer, noMidi);
+        float maxReturnDelta = 0.0f;
+        for (int ch = 0; ch < 2; ++ch) {
+            const float* chData = returnBuffer.getReadPointer(ch);
+            for (int i = 1; i < 256; ++i) {
+                float d = std::abs(chData[i] - chData[i - 1]);
+                if (d > maxReturnDelta) maxReturnDelta = d;
+            }
+        }
+        require(maxReturnDelta < 0.35f, "DSP smoothing on unfreeze return must be click-free");
+
+        // -------------------------------------------------------------------
+        // M3.1: Real JUCE MIDI Latch Mode Validation
+        // -------------------------------------------------------------------
+        setParameter(processor, "FREEZE", 0.30f);
+        setParameter(processor, "FREEZE_MIDI_MODE", 0.0f); // Latch
+        processSilence(processor, noMidi);
+        require(std::abs(processor.getEffectiveFreeze() - 0.30f) < 0.001f,
+                "scene freeze must be 0.30 before latch Note On");
+
+        // Note On #1 -> override ON -> 1.0
         processSilence(processor, noteOn);
         require(processor.isFreezeActive(), "latch MIDI note-on did not engage Freeze");
+        require(std::abs(processor.getEffectiveFreeze() - 1.0f) < 0.001f,
+                "latch MIDI note-on did not set effective freeze to 1.0");
+
+        // Note Off -> continues ON -> 1.0
         processSilence(processor, noteOff);
         require(processor.isFreezeActive(), "latch MIDI note-off unexpectedly released Freeze");
+        require(std::abs(processor.getEffectiveFreeze() - 1.0f) < 0.001f,
+                "latch MIDI note-off must maintain effective freeze at 1.0");
+
+        // Note On #2 -> override OFF -> returns to 0.30
         processSilence(processor, noteOn);
         require(!processor.isFreezeActive(), "second latch MIDI note-on did not release Freeze");
+        require(std::abs(processor.getEffectiveFreeze() - 0.30f) < 0.001f,
+                "second latch MIDI note-on did not return effective freeze to 0.30");
 
+        // -------------------------------------------------------------------
+        // M3.1: Coexistence MIDI override + Scene Automation
+        // -------------------------------------------------------------------
+        setParameter(processor, "FREEZE", 0.30f);
+        setParameter(processor, "FREEZE_MIDI_MODE", 1.0f); // Momentary
+        processSilence(processor, noMidi);
+
+        // Note On -> 1.0
+        processSilence(processor, noteOn);
+        require(std::abs(processor.getEffectiveFreeze() - 1.0f) < 0.001f,
+                "override must force 1.0");
+
+        // During override, scene automation changes FREEZE: 0.30 -> 0.65
+        setParameter(processor, "FREEZE", 0.65f);
+        processSilence(processor, noMidi);
+        require(std::abs(processor.getEffectiveFreeze() - 1.0f) < 0.001f,
+                "effective freeze must remain 1.0 during override while scene changes");
+
+        // Releasing override (Note Off) -> must return to 0.65, not old 0.30
+        processSilence(processor, noteOff);
+        require(std::abs(processor.getEffectiveFreeze() - 0.65f) < 0.001f,
+                "releasing override must return to 0.65, not old 0.30");
+        require(!processor.isFreezeActive(), "override released");
+
+        // -------------------------------------------------------------------
+        // M3.1: Scene Morphing & Continuous Freeze Telemetry (No 0.5 Threshold)
+        // -------------------------------------------------------------------
         setParameter(processor, "MORPH", 0.0f);
         setParameter(processor, "DENSITY", 0.2f);
         setParameter(processor, "MIX", 0.2f);
@@ -434,22 +539,34 @@ int main()
                 "Mix morph is not following its constant-power curve");
         require(processor.getMorphedParameterValue("RHYTHM_DIVISION") == 3.0f,
                 "discrete morph did not switch to scene B above the upper threshold");
-        require(processor.isFreezeActive(),
-                "Freeze morph did not engage above the upper threshold");
+        require(!processor.isFreezeActive(),
+                "continuous Freeze morph must not activate discrete performance override");
+        require(std::abs(processor.getEffectiveFreeze() - processor.getMorphedParameterValue("FREEZE")) < 0.01f,
+                "effective freeze must track morphed continuous scene value");
+        require(!processor.getTelemetrySnapshot().frozen,
+                "telemetry snapshot.frozen must not trigger on continuous morph >= 0.5");
 
         setParameter(processor, "MORPH", 0.50f);
         processSilence(processor, noMidi);
         require(processor.getMorphedParameterValue("RHYTHM_DIVISION") == 3.0f,
                 "discrete morph chattered inside its hysteresis band");
-        require(processor.isFreezeActive(),
-                "Freeze chattered inside its hysteresis band");
+        require(!processor.isFreezeActive(),
+                "continuous Freeze morph at 0.50 must not activate discrete override");
+        require(std::abs(processor.getEffectiveFreeze() - 0.50f) < 0.01f,
+                "effective freeze at morph 0.50 must be exactly 0.50");
+        require(!processor.getTelemetrySnapshot().frozen,
+                "telemetry snapshot.frozen must remain false at morph 0.50");
 
         setParameter(processor, "MORPH", 0.44f);
         processSilence(processor, noMidi);
         require(processor.getMorphedParameterValue("RHYTHM_DIVISION") == 0.0f,
                 "discrete morph did not return to scene A below the lower threshold");
         require(!processor.isFreezeActive(),
-                "Freeze did not release below the lower hysteresis threshold");
+                "continuous Freeze morph at 0.44 must not activate discrete override");
+        require(std::abs(processor.getEffectiveFreeze() - processor.getMorphedParameterValue("FREEZE")) < 0.01f,
+                "effective freeze must track morphed continuous scene value below 0.5");
+        require(!processor.getTelemetrySnapshot().frozen,
+                "telemetry snapshot.frozen must remain false below 0.5");
 
         setParameter(processor, "MORPH", 0.35f);
         processSilence(processor, noMidi);

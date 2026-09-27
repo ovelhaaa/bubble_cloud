@@ -291,7 +291,7 @@ void BubbleCloudEngineWrapper::publishVoiceTelemetry() noexcept
     const int nextStep = engineL.rhythm_step_index & 15;
     telemetryRhythmStep.store(tempoSync ? ((nextStep + 15) & 15) : -1, std::memory_order_relaxed);
     telemetryTempoSync.store(tempoSync ? 1 : 0, std::memory_order_relaxed);
-    const bool frozen = engineL.config.freeze_enabled != 0 || engineL.config.freeze_amount >= 0.5f;
+    const bool frozen = engineL.config.freeze_enabled != 0;
     telemetryFrozen.store(frozen ? 1 : 0, std::memory_order_relaxed);
 }
 

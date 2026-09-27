@@ -42,6 +42,7 @@ public:
     bool isFreezeActive() const noexcept;
     BubbleCloudTelemetry getTelemetrySnapshot() noexcept;
     float getMorphedParameterValue(const juce::String& parameterID) const;
+    float getEffectiveFreeze() const noexcept;
 
 #if defined(BUBBLES_BUILD_PROCESSOR_TESTS)
     // Test-only observation of the host transport fallback state. Compiled out

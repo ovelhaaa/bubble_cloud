@@ -503,14 +503,7 @@ void BubbleCloudAudioProcessor::applyEffectiveFreeze()
 {
     const float sceneValue = juce::jlimit(0.0f, 1.0f, sceneFreezeValue.load());
     const bool performanceOverride = captureHeld.load() || midiFreezeActive.load();
-    bool freezeActive = effectiveFreezeActive.load();
-    if (performanceOverride)
-        freezeActive = true;
-    else if (freezeActive && sceneValue <= 0.45f)
-        freezeActive = false;
-    else if (!freezeActive && sceneValue >= 0.55f)
-        freezeActive = true;
-    effectiveFreezeActive.store(freezeActive);
+    effectiveFreezeActive.store(performanceOverride);
 
     const float effectiveValue = performanceOverride ? 1.0f : sceneValue;
 
@@ -518,6 +511,11 @@ void BubbleCloudAudioProcessor::applyEffectiveFreeze()
         engineWrapper.setParameter(BUBBLE_PARAM_FREEZE, effectiveValue);
         lastAppliedFreeze = effectiveValue;
     }
+}
+
+float BubbleCloudAudioProcessor::getEffectiveFreeze() const noexcept
+{
+    return lastAppliedFreeze >= 0.0f ? lastAppliedFreeze : sceneFreezeValue.load();
 }
 
 void BubbleCloudAudioProcessor::getStateInformation(juce::MemoryBlock& destData)

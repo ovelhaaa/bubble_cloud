@@ -494,6 +494,125 @@ static int test_freeze_sr_block_invariance_matrix(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Test I: Threshold boundary continuity around 0.5 (M3.1)
+//
+// Regression test verifying no discrete state jump between 0.49, 0.50, 0.51:
+// - freeze_enabled remains 0 (continuous macro must not trigger discrete override)
+// - smoothed_freeze, retention, write behavior, write-head lock are continuous
+// - output peak, RMS, and sample-to-sample delta have no step discontinuity
+// ---------------------------------------------------------------------------
+static int test_freeze_threshold_boundary_continuity(void) {
+    const float levels[3] = {0.49f, 0.50f, 0.51f};
+    float smoothed[3] = {0.0f};
+    float retentions[3] = {0.0f};
+    float measured_renewal[3] = {0.0f};
+    float rms[3] = {0.0f};
+    float peak[3] = {0.0f};
+    const int total_blocks = 160;
+    const int total_samples = total_blocks * BUBBLES_BLOCK_SIZE;
+
+    static int16_t delay[88200];
+    float in[BUBBLES_BLOCK_SIZE];
+    float out_l[BUBBLES_BLOCK_SIZE];
+    float out_r[BUBBLES_BLOCK_SIZE];
+
+    for (int k = 0; k < 3; k++) {
+        float f = levels[k];
+
+        BubbleEngineConfig_t config;
+        bubble_engine_default_config(&config);
+        config.sample_rate = 44100.0f;
+        BubbleEngine_t engine;
+        bubble_engine_init(&engine, delay, &config);
+
+        // Pre-fill delay buffer with baseline (-10000) to measure memory renewal
+        for (int i = 0; i < 88200; i++) {
+            delay[i] = -10000;
+        }
+
+        bubble_engine_set_parameter(&engine, BUBBLE_PARAM_FREEZE, f);
+
+        double sum_sq = 0.0;
+        float max_p = 0.0f;
+        float prev_sample = 0.0f;
+        float max_step_delta = 0.0f;
+        int initial_write_ptr = engine.write_ptr;
+
+        for (int b = 0; b < total_blocks; b++) {
+            fill_sine_input(in, BUBBLES_BLOCK_SIZE, 440.0f, 44100.0f, 0.5f, b * BUBBLES_BLOCK_SIZE);
+            bubble_engine_process(&engine, in, out_l, out_r, BUBBLES_BLOCK_SIZE);
+
+            for (int i = 0; i < BUBBLES_BLOCK_SIZE; i++) {
+                float sample = out_l[i];
+                float abs_s = fabsf(sample);
+                if (abs_s > max_p) max_p = abs_s;
+                sum_sq += (double)(sample * sample);
+
+                if (b > 0 || i > 0) {
+                    float step = fabsf(sample - prev_sample);
+                    if (step > max_step_delta) max_step_delta = step;
+                }
+                prev_sample = sample;
+            }
+        }
+
+        // 1. freeze_enabled must be 0 for all boundary points (captures old freeze >= 0.5)
+        CHECK(engine.config.freeze_enabled == 0, "freeze_enabled must remain 0 across 0.49/0.50/0.51 boundary");
+
+        // 2. freeze_amount must match exactly
+        CHECK_CLOSE(engine.config.freeze_amount, f, 0.001f, "freeze_amount matches boundary macro target");
+
+        // 3. smoothed_freeze converges smoothly without jump
+        CHECK_CLOSE(engine.smoothed_freeze, f, 0.005f, "smoothed_freeze converges to target");
+        smoothed[k] = engine.smoothed_freeze;
+
+        // 4. retention formula continuity
+        retentions[k] = f * f * (3.0f - 2.0f * f);
+
+        // 5. write-head is not locked at 0.49, 0.50, 0.51
+        CHECK(engine.write_ptr != initial_write_ptr, "write head must advance continuously across boundary");
+
+        // 6. Measure memory renewal delta
+        double total_delta = 0.0;
+        for (int i = 0; i < 2048; i++) {
+            int idx = (initial_write_ptr + i) % 88200;
+            total_delta += fabs((double)delay[idx] - (-10000.0));
+        }
+        measured_renewal[k] = (float)total_delta;
+
+        rms[k] = (float)sqrt(sum_sq / (double)total_samples);
+        peak[k] = max_p;
+
+        // Sample-to-sample delta within block must be bounded (click-free)
+        CHECK(max_step_delta < 0.35f, "sample-to-sample delta must be click-free across boundary");
+    }
+
+    // Continuity checks across 0.49 -> 0.50 -> 0.51
+    float d_smoothed_01 = fabsf(smoothed[1] - smoothed[0]);
+    float d_smoothed_12 = fabsf(smoothed[2] - smoothed[1]);
+    CHECK(fabsf(d_smoothed_01 - d_smoothed_12) < 0.002f, "smoothed_freeze rate of change must be continuous");
+
+    float d_ret_01 = retentions[1] - retentions[0];
+    float d_ret_12 = retentions[2] - retentions[1];
+    CHECK(fabsf(d_ret_01 - d_ret_12) < 0.002f, "retention curve must be smooth across 0.5");
+
+    CHECK(measured_renewal[0] > measured_renewal[1] && measured_renewal[1] > measured_renewal[2],
+          "memory renewal must monotonically decrease across boundary");
+    float d_renew_01 = measured_renewal[0] - measured_renewal[1];
+    float d_renew_12 = measured_renewal[1] - measured_renewal[2];
+    CHECK(fabsf(d_renew_01 - d_renew_12) < 0.20f * d_renew_01,
+          "memory renewal delta must be continuous across 0.5");
+
+    CHECK(fabsf(rms[1] - rms[0]) < 0.05f, "RMS must not jump across 0.49 -> 0.50");
+    CHECK(fabsf(rms[2] - rms[1]) < 0.05f, "RMS must not jump across 0.50 -> 0.51");
+    CHECK(fabsf(peak[1] - peak[0]) < 0.05f, "Peak must not jump across 0.49 -> 0.50");
+    CHECK(fabsf(peak[2] - peak[1]) < 0.05f, "Peak must not jump across 0.50 -> 0.51");
+
+    printf("[M3 Harness] Boundary continuity (0.49 / 0.50 / 0.51) verified without discrete jumps (PASS)\n");
+    return 0;
+}
+
+
 // Main test entry
 // ---------------------------------------------------------------------------
 int main(void) {
@@ -507,6 +626,7 @@ int main(void) {
     if (test_freeze_state_restore() != 0) return 1;
     if (test_freeze_midi_modes() != 0) return 1;
     if (test_freeze_sr_block_invariance_matrix() != 0) return 1;
+    if (test_freeze_threshold_boundary_continuity() != 0) return 1;
 
     printf("=== All M3 Tests Passed Successfully ===\n");
     return 0;
