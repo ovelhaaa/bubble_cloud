@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.0-rc.3 — 2026-09-27
+
+- **M2.2 — Guard finalization & robust stereo coherence.** Two M2.1 edge cases closed without touching public parameters, presets, UI or the summing law.
+- Smart Start vs guard: `Voice_SpawnInit` now runs `RefineReadOffsetSmartStart` **before** `ClampSpawnOffsetForGuard`, so the offset that reaches `read_ptr_float` is always protected. Previously Smart Start could move a safe offset back inside the forbidden band for the grain's real (microdetuned, jittered) rate. Regression added (fails on the M2.1 order).
+- Shared stereo decisions are now **event-addressable instead of stream-ordered**. The shared value of a logical event is a stateless hash of `(base seed, scheduler_tick, tick_shared_ordinal, decision kind)`, so a channel that executes more or fewer spawns can no longer shift the shared decision of a later event. Asymmetric L/R envelopes, density and preemption are therefore safe; only the per-channel `rng_state` stays sequential and decorrelated.
+- Removed the mutable `coherence_rng_state` shared stream and its lockstep assumption. Shared decision kinds are `class`, `region_tier` and `offset_band`; pan, fine read offset, pitch (Sparkle), microdetune, duration, attack jitter and reverse remain channel-local. This preserves stereo width and independence.
+- Tests: `tests/dsp/m2_coherence_guard_harness.c` now covers (A) coherence-value divergence, (B) unequal spawn counts reconverging, (C) long asymmetric stereo divergence, (D) event-identity determinism, (E) channel decorrelation, plus the Smart Start guard regression and the existing guard/microdetune matrix across 44.1/48/88.2/96 kHz.
+- Determinism note: because the shared draw sequence changed from a sequential stream to event hashing, the exact deterministic spawn sequence of M2.1 changes (distributions and musical character are preserved, not bit-exactness). This is intentional: the old sequence was fragile under asymmetric spawn counts. No allocation, locks or I/O in the callback.
+
 ## 1.2.0-rc.2 — 2026-09-26
 
 - **M2.1 — Stereo coherence lockstep & microdetune guard fix.** Two M2 logic corrections with no public parameter, preset, UI or summing-law changes.

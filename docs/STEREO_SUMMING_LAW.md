@@ -89,21 +89,30 @@ publicados como telemetria final.
 
 A partir da M2, os dois engines **não são mais totalmente decorrelacionados**.
 Cada engine mantém um stream espacial próprio (`rng_state`, decorrelacionado por
-`channel_decorrelation`) e compartilha um stream de eventos
-(`coherence_rng_state`). A coerência é **estatística e controlada, não identidade
-total**: a classe do bubble e as decisões de categoria/região de memória (`tier`,
-banda temporal do offset) usam o stream compartilhado com probabilidade
-`coherence`; `pan`, offset fino, seleção de pitch, microdetune, duração, jitter de
-ataque e reverse permanecem canal-local. A fração compartilhada é função da fase
-da frase: ataques quase alinhados; sustain/decay/freeze progressivamente
-independentes.
+`channel_decorrelation`) e compartilha **decisões event-addressable**: o valor
+compartilhado de um evento lógico é um hash stateless de
+`(base seed, scheduler_tick, tick_shared_ordinal, decision kind)`. A coerência é
+**estatística e controlada, não identidade total**: a classe do bubble e as
+decisões de categoria/região de memória (`tier`, banda temporal do offset) usam o
+valor compartilhado com probabilidade `coherence`; `pan`, offset fino, seleção de
+pitch, microdetune, duração, jitter de ataque e reverse permanecem canal-local. A
+fração compartilhada é função da fase da frase: ataques quase alinhados;
+sustain/decay/freeze progressivamente independentes.
 
-M2.1: `SpawnRandomFloat01` consome sempre dois draws do stream compartilhado por
-chamada (o `roll` e o valor candidato), independentemente de `coherence`, e a
-decisão de região/tier é consumida para todas as classes. Isso mantém
-`coherence_rng_state` de L/R em lockstep mesmo quando os canais estão
-momentaneamente em estados de frase diferentes (inclusive com classes de bubble
-distintas), sem forçar identidade entre os campos espaciais.
+M2.2: substituiu-se o stream compartilhado sequencial (`coherence_rng_state`) por
+decisões endereçáveis por evento. Como não há estado compartilhado mutável, a
+contagem de spawns de um canal não desloca as decisões compartilhadas de eventos
+seguintes:
+
+```text
+Shared stereo decisions are event-addressable rather than stream-order-dependent.
+Asymmetric spawn counts therefore do not shift future shared decisions.
+```
+
+Isso torna a coerência robusta a envelopes L/R diferentes, densidades diferentes
+e preempção assimétrica (situações normais em stereo real). A sequência
+determinística exata muda em relação à M2.1; distribuições e caráter musical são
+preservados.
 
 A lei de soma `1/sqrt(2)` permanece inalterada e continua conservando a energia
 wet total quando os campos são decorrelacionados. Com coerência parcial, uma

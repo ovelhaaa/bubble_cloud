@@ -1,7 +1,7 @@
 # M2 — Musical Cloud Character
 
-**Versão:** 1.1.0 (M2.1)
-**Última atualização:** 2026-09-26
+**Versão:** 1.2.0 (M2.2)
+**Última atualização:** 2026-09-27
 
 Este documento descreve a milestone **M2 — Musical Cloud Character**, que
 aprofunda a musicalidade, a profundidade temporal e a identidade sonora do
@@ -42,12 +42,15 @@ de tocar, mas fantasmas ocasionais de material antigo trazem profundidade.
 Antes: as duas engines L/R usavam RNG totalmente decorrelacionado (o seed do
 canal direito era XORado), produzindo um campo estéreo largo mas caótico.
 
-Agora o motor tem **dois streams**:
+Agora o motor tem **dois mecanismos de aleatoriedade**:
 
-- `rng_state`: stream por canal, decorrelacionado pela máscara
+- `rng_state`: stream **por canal**, sequencial, decorrelacionado pela máscara
   `channel_decorrelation` (aplicada em `SoundBubbles_SetRngSeed`, persistindo
   entre trocas de preset/seed).
-- `coherence_rng_state`: stream **compartilhado**, mesmo seed nos dois canais.
+- Decisões compartilhadas **event-addressable** (M2.2): não existe mais um
+  stream compartilhado mutável. O valor compartilhado de um evento lógico é um
+  hash stateless de `(shared_event_seed, scheduler_tick, tick_shared_ordinal,
+  decision_kind)`, calculado sob demanda e idêntico nos dois canais.
 
 A coerência de cada decisão de spawn depende apenas da fase da frase:
 
@@ -59,28 +62,42 @@ A coerência de cada decisão de spawn depende apenas da fase da frase:
 | `SPARSE_DECAY` | 0.20 | cauda larga |
 | Freeze | ≤ 0.12 | campo bem aberto |
 
-`SpawnRandomFloat01(engine, coherence)` sorteia **sempre dois draws** do stream
-compartilhado: o `roll` e um valor candidato (`shared_value`). Com probabilidade
-`coherence` devolve o valor compartilhado; caso contrário devolve um draw do
-stream local do canal. Como o número de draws compartilhados por chamada é
-constante, `coherence_rng_state` de L/R **nunca perde lockstep** — mesmo que os
-dois canais fiquem momentaneamente em estados de frase diferentes (e, portanto,
-com `coherence` diferente), ou que um deles esteja em `ATTACK` e o outro em
-`SUSTAIN`/`DECAY`. A decisão de região/tier também é consumida para **todas** as
-classes (inclusive micro ataques, que sempre leem a região de ataque), de modo
-que escolhas de classe divergentes não desalinhem o stream. Os streams locais
-continuam decorrelacionados.
+`SpawnRandomFloat01(engine, coherence, kind)` deriva o `roll` e o valor
+candidato compartilhado da **mesma identidade de evento** (o `roll` e o valor
+usam lanes distintas do hash). Com probabilidade `coherence` devolve o valor
+compartilhado; caso contrário devolve um draw do stream local do canal.
+
+Porque a decisão compartilhada é endereçada por evento e **não por ordem de
+stream**, ela não depende de quantos spawns o outro canal executou antes. O
+`tick_shared_ordinal` reinicia a cada control tick e a identidade inclui o
+`scheduler_tick` (contador monotônico de ticks, idêntico nos dois canais), então
+é impossível colidir dois spawns no mesmo tick e a contagem assimétrica de
+spawns não desloca decisões futuras:
+
+```text
+Shared stereo decisions are event-addressable rather than stream-order-dependent.
+Asymmetric spawn counts therefore do not shift future shared decisions.
+```
+
+A decisão de região/tier é consumida para **todas** as classes (inclusive micro
+ataques, que sempre leem a região de ataque), de modo que escolhas de classe
+divergentes não afetam a identidade compartilhada de eventos seguintes. O
+`kind` documenta a decisão (`class`, `region_tier`, `offset_band`).
 
 A coerência é **estatística e controlada, não identidade total** entre engines:
 
-- **parcialmente coerentes** (usam o stream compartilhado com probabilidade
+- **parcialmente coerentes** (usam o valor compartilhado com probabilidade
   `coherence`): classe do bubble e decisões de categoria/região de memória
   (`memory_tier`, banda temporal do read offset);
-- **canal-local** (sempre no stream do canal): `pan`, offset fino dentro da banda,
-  seleção de pitch (`SHIMMER`), microdetune, duração, jitter de ataque e reverse.
+- **canal-local** (sempre no stream sequencial do canal): `pan`, offset fino
+  dentro da banda, seleção de pitch (`SHIMMER`), microdetune, duração, jitter de
+  ataque e reverse.
 
 Requisito de determinismo preservado: mesma seed + mesma entrada + mesma config
-→ mesmas decisões.
+→ mesmas decisões. A sequência determinística exata difere da M2.1 porque o
+sorteio compartilhado deixou de ser um stream sequencial; **distribuições e
+caráter musical** são preservados, não a sequência bit-exata (a antiga era
+frágil sob contagem assimétrica de spawns).
 
 Justificativa musical: transientes mais coerentes e “punchy” quando as duas
 entradas coincidem; sustain/decay/freeze abrem em um halo largo. A compatibilidade
@@ -124,8 +141,18 @@ constante durante toda a vida (nunca um LFO/chorus):
 
 O valor é escalado por `envelope_variation` (60–100%) e entra no
 `quantized_rate`/`rate` **antes** do clamp de guarda de offset (M2.1), de modo
-que o guard seja calculado com o rate final realmente usado pelo grain
-(`pitch mode → jitter → microdetune → rate final → projected_span → guard`).
+que o guard seja calculado com o rate final realmente usado pelo grain. A ordem
+final do spawn é:
+
+```text
+pitch mode → attack jitter → microdetune → rate final
+→ Smart Start → projected_span → guard clamp → read_ptr_float
+```
+
+M2.2: Smart Start (`RefineReadOffsetSmartStart`) roda **antes** do
+`ClampSpawnOffsetForGuard`, então o offset que efetivamente chega a
+`read_ptr_float` é sempre o resultado do clamp (não pode ser deslocado para
+dentro da banda proibida depois da proteção).
 
 O guard de forward usa o **percurso relativo real** (`rate - 1`), não o rate
 absoluto, e o guard de reverse usa `1 + |rate|`. Assim um microdetune de poucos
@@ -195,16 +222,19 @@ Destaques (M1 → M2, trecho de frase determinístico a 48 kHz):
 
 ## 8. CPU
 
-As mudanças ocorrem apenas no **spawn** (control-rate, ~30–80 eventos/s): uma
-mão de draws extras de RNG (M2.1 fixa em dois draws compartilhados por chamada),
-`powf` por grain e seleção de tier. Nenhum custo novo no laço por amostra. O
-teste de orçamento (`tests/performance`) e o smoke de bloco continuam dentro do
-budget.
+As mudanças ocorrem apenas no **spawn** (control-rate, ~30–80 eventos/s): o
+hash stateless por decisão compartilhada (poucos xorshift/multiply, sem
+alocação, lock ou estado global), `powf` por grain e seleção de tier. Nenhum
+custo novo no laço por amostra. O teste de orçamento (`tests/performance`) e o
+smoke de bloco continuam dentro do budget.
 
-Regressões M2.1: `tests/dsp/m2_coherence_guard_harness.c` (lockstep L/R sob
-divergência temporária de estado + guard com microdetune), além do
-`m2_character_harness.c`, wrapper stereo probe e matriz 44.1/48/88.2/96 kHz ×
-32/64/127/256/512/2048.
+Regressões M2.2: `tests/dsp/m2_coherence_guard_harness.c` cobre (A) divergência
+de `coherence` entre canais, (B) contagem desigual de spawns reconvergindo,
+(C) divergência estéreo longa e assimétrica, (D) determinismo por identidade de
+evento, (E) decorrelação das decisões locais e a regressão de Smart Start vs
+guard, além do guard com microdetune na matriz 44.1/48/88.2/96 kHz. Somam-se o
+`m2_character_harness.c`, o wrapper stereo probe e a matriz de sample
+rate/block.
 
 ## 9. Riscos remanescentes
 

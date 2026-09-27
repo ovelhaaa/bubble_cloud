@@ -106,6 +106,22 @@ typedef struct {
     float recent_bias;     // 0..1, higher = prefer the recent edge of the region
 } ReadRegionChoice_t;
 
+// Logical decision kinds that take part in the shared stereo event stream (M2.2).
+// Combined with (scheduler_tick, tick_shared_ordinal), the kind keeps multiple
+// decisions in the same control tick from colliding and documents which musical
+// choice is being shared.
+typedef enum {
+    BUBBLES_SHARED_DECISION_CLASS = 0,
+    BUBBLES_SHARED_DECISION_REGION_TIER = 1,
+    BUBBLES_SHARED_DECISION_OFFSET_BAND = 2,
+    BUBBLES_SHARED_DECISION_COUNT = 3
+} BubbleSharedDecisionKind_t;
+
+// Hash lanes that split the share roll from the candidate shared value so the
+// two are independent draws of the same event identity.
+#define BUBBLES_SHARED_LANE_ROLL  0xA5A5A5A5u
+#define BUBBLES_SHARED_LANE_VALUE 0x5A5A5A5Au
+
 // --- Static Helper Prototypes ---
 typedef enum {
     BUBBLES_OUTPUT_FULL = 0,    // dry + wet + final limiter to out_left/out_right
@@ -123,9 +139,7 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine,
 static void InitWindowLUTs(void);
 static uint32_t NextRandomU32(SoundBubblesEngine_t* engine);
 static float RandomFloat01(SoundBubblesEngine_t* engine);
-static uint32_t NextCoherenceU32(SoundBubblesEngine_t* engine);
-static float RandomCoherenceFloat01(SoundBubblesEngine_t* engine);
-static float SpawnRandomFloat01(SoundBubblesEngine_t* engine, float coherence);
+static float SpawnRandomFloat01(SoundBubblesEngine_t* engine, float coherence, BubbleSharedDecisionKind_t kind);
 static float ResolveSpawnCoherence(SoundBubblesEngine_t* engine);
 static float ResolveContextReverseProbability(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, uint8_t region_id);
 static float ResolveMicroDetuneCents(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class);
@@ -228,6 +242,8 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
 
     engine->write_ptr = 0;
     engine->block_counter = 0;
+    engine->scheduler_tick = 0;
+    engine->tick_shared_ordinal = 0;
     engine->engine_state = ENGINE_STATE_SILENCE;
 
     engine->env_follower_state = 0.0f;
@@ -348,10 +364,11 @@ void SoundBubbles_ResetMotionPhase(SoundBubblesEngine_t* engine) {
 void SoundBubbles_SetRngSeed(SoundBubblesEngine_t* engine, uint32_t seed) {
     engine->config.rng_seed = seed;
     uint32_t base = (seed == 0u) ? RNG_STATE_FALLBACK : seed;
-    // The per-channel stream is deliberately decorrelated; the shared coherence
-    // stream stays identical between L/R engines so events remain aligned.
+    // The per-channel stream is deliberately decorrelated; shared decisions are
+    // stateless and derive from this undecorrelated base seed, so both engines
+    // agree on the shared value of the same logical event.
     engine->rng_state = base ^ engine->channel_decorrelation;
-    engine->coherence_rng_state = (base == 0u) ? RNG_STATE_FALLBACK : base;
+    engine->shared_event_seed = base;
 }
 
 void SoundBubbles_SetChannelDecorrelation(SoundBubblesEngine_t* engine, uint32_t decorrelation_mask) {
@@ -562,6 +579,8 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
         // Execute Control-Rate Tick
         if (++engine->block_counter >= BUBBLES_BLOCK_SIZE) {
             engine->block_counter = 0;
+            engine->scheduler_tick++;
+            engine->tick_shared_ordinal = 0;
             engine->metrics_tick_spawn_count = 0;
             UpdateStateAndDensity(engine, block_peak);
             Scheduler_RunTick(engine);
@@ -783,9 +802,9 @@ static void Scheduler_SpawnImmediateBurst(SoundBubblesEngine_t* engine) {
 
 static BubbleClass_t Scheduler_SelectClassForState(SoundBubblesEngine_t* engine) {
     // Class is an "important event": on attacks it is drawn from the shared
-    // coherence stream so both stereo channels pick the same bubble type, while
+    // event stream so both stereo channels pick the same bubble type, while
     // during sustain/decay the channels become independent and the field opens.
-    float r = SpawnRandomFloat01(engine, ResolveSpawnCoherence(engine));
+    float r = SpawnRandomFloat01(engine, ResolveSpawnCoherence(engine), BUBBLES_SHARED_DECISION_CLASS);
     switch (engine->engine_state) {
         case ENGINE_STATE_TRANSIENT_BURST:
             return BUBBLE_CLASS_MICRO_ATTACK;
@@ -1208,11 +1227,15 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     // into a distant region. Runtime guards still handle pathological parameter
     // updates and long frozen reads.
     int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(engine->config.sample_rate);
-    read_offset_samples = ClampSpawnOffsetForGuard(read_offset_samples, v->rate, duration_samples, buffer_size);
 
+    // M2.2: Smart Start proposes a musically smoother nearby offset *before* the
+    // guard clamp, so the clamp always runs on the final candidate. This prevents
+    // Smart Start from shifting a safe offset back inside the forbidden band for
+    // the grain's real (microdetuned, jittered) rate.
     if (engine->config.smart_start_enable) {
         read_offset_samples = RefineReadOffsetSmartStart(engine, read_offset_samples, engine->config.smart_start_range, buffer_size);
     }
+    read_offset_samples = ClampSpawnOffsetForGuard(read_offset_samples, v->rate, duration_samples, buffer_size);
     v->read_ptr_float = (float)WrapIntIndex(engine->write_ptr - read_offset_samples, buffer_size);
 
     float spread = (b_class == BUBBLE_CLASS_MICRO_ATTACK) ? engine->config.attack_pan_spread : engine->config.sustain_pan_spread;
@@ -1266,11 +1289,11 @@ static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, 
     choice.recent_bias = 0.60f;
 
     // Consume the shared region/tier decision first, for every class. Micro
-    // attacks always read the attack region, but advancing the shared stream
-    // identically regardless of class keeps L/R `coherence_rng_state` in lockstep
-    // even when the two channels are in phrase states that pick different bubble
-    // classes during a temporary divergence.
-    float roll = SpawnRandomFloat01(engine, ResolveSpawnCoherence(engine));
+    // attacks always read the attack region, but consuming the event-addressable
+    // shared decision regardless of class keeps L/R aligned on the same logical
+    // event even when the two channels are in phrase states that pick different
+    // bubble classes during a temporary divergence.
+    float roll = SpawnRandomFloat01(engine, ResolveSpawnCoherence(engine), BUBBLES_SHARED_DECISION_REGION_TIER);
 
     if (bubble_class == BUBBLE_CLASS_MICRO_ATTACK) {
         choice.region = &engine->config.attack_region;
@@ -1439,7 +1462,7 @@ static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadR
 
     float band_lo;
     float band_hi;
-    float tier_roll = SpawnRandomFloat01(engine, coherence);
+    float tier_roll = SpawnRandomFloat01(engine, coherence, BUBBLES_SHARED_DECISION_OFFSET_BAND);
     if (tier_roll < w_recent) {
         band_lo = 0.0f;
         band_hi = 1.0f / 3.0f;
@@ -1532,37 +1555,43 @@ static float RandomFloat01(SoundBubblesEngine_t* engine) {
     return (float)(rnd >> 8) * kInv24Bit;
 }
 
-// Shared event stream (M2). Advanced identically by both stereo engines when
-// their musical state matches, keeping class/duration/memory-tier events
-// time-aligned without forcing the whole engine to be mono.
-static uint32_t NextCoherenceU32(SoundBubblesEngine_t* engine) {
-    uint32_t x = engine->coherence_rng_state;
-    if (x == 0u) x = RNG_STATE_FALLBACK;
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    engine->coherence_rng_state = x;
+// Stateless shared-event hash (M2.2). A cheap 32-bit integer mix (xorshift plus
+// odd multipliers) turns the logical event identity into an independent unit
+// value. It is O(1), allocation-free and lock-free, and uses no mutable shared
+// stream state, so the number of spawns either channel executed earlier cannot
+// shift the shared decision of a later logical event.
+static uint32_t SharedEventMix32(uint32_t x) {
+    x ^= x >> 16;
+    x *= 0x7FEB352Du;
+    x ^= x >> 15;
+    x *= 0x846CA68Bu;
+    x ^= x >> 16;
     return x;
 }
 
-static float RandomCoherenceFloat01(SoundBubblesEngine_t* engine) {
+static float SharedEventUnit(uint32_t seed, uint32_t tick, uint32_t ordinal, uint32_t kind, uint32_t lane) {
     const float kInv24Bit = 1.0f / 16777216.0f; // 2^24
-    uint32_t rnd = NextCoherenceU32(engine);
-    return (float)(rnd >> 8) * kInv24Bit;
+    uint32_t h = SharedEventMix32(seed ^ 0x9E3779B9u);
+    h ^= SharedEventMix32(tick + 0x85EBCA6Bu);
+    h += SharedEventMix32(ordinal + 0xC2B2AE35u);
+    h ^= SharedEventMix32(kind + 0x27D4EB2Fu);
+    h += SharedEventMix32(lane + 0x165667B1u);
+    return (float)(SharedEventMix32(h) >> 8) * kInv24Bit;
 }
 
-// With probability `coherence` the value comes from the shared stream (same on
-// both channels); otherwise it is drawn from this channel's own stream. The
-// shared stream always advances by exactly two draws per call (the roll and the
-// candidate shared value), independent of `coherence` and of the branch taken.
-// That keeps L/R `coherence_rng_state` in lockstep even while their musical
-// states temporarily resolve to different coherence values; only the per-channel
-// stream decorrelates the result.
-static float SpawnRandomFloat01(SoundBubblesEngine_t* engine, float coherence) {
-    const float roll = RandomCoherenceFloat01(engine);
-    const float shared_value = RandomCoherenceFloat01(engine);
+// With probability `coherence` the value comes from the event-addressable shared
+// decision; otherwise it is drawn from this channel's own sequential stream.
+// Both the share roll and the candidate shared value derive from the same
+// (seed, scheduler_tick, tick_shared_ordinal, kind) identity, so a logical event
+// yields the same shared value regardless of how many shared decisions either
+// channel consumed before it. The per-channel stream still decorrelates the
+// channel-local fallback (pan, fine offset, pitch, detune, duration, reverse).
+static float SpawnRandomFloat01(SoundBubblesEngine_t* engine, float coherence, BubbleSharedDecisionKind_t kind) {
+    const uint32_t ordinal = engine->tick_shared_ordinal++;
+    const uint32_t k = (uint32_t)kind;
+    const float roll = SharedEventUnit(engine->shared_event_seed, engine->scheduler_tick, ordinal, k, BUBBLES_SHARED_LANE_ROLL);
     if (roll < coherence) {
-        return shared_value;
+        return SharedEventUnit(engine->shared_event_seed, engine->scheduler_tick, ordinal, k, BUBBLES_SHARED_LANE_VALUE);
     }
     return RandomFloat01(engine);
 }

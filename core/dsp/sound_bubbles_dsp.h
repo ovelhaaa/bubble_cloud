@@ -369,11 +369,15 @@ typedef struct {
     // Preemption fade length resolved from BUBBLES_FADE_MS at config.sample_rate.
     int32_t fade_samples;
     int32_t block_counter;         // Triggers control ticks every 32 samples
-    uint32_t rng_state;            // Internal deterministic PRNG state
-    // Shared event stream (M2 stereo coherence). Both channels seed the same,
-    // so important events (class, memory tier, offset band) stay time-aligned
-    // while the per-channel rng_state still decorrelates pan/offset/pitch.
-    uint32_t coherence_rng_state;
+    uint32_t rng_state;            // Internal deterministic per-channel PRNG state
+    // Stateless shared-event RNG (M2.2). Shared stereo decisions are addressed by
+    // (shared_event_seed, scheduler_tick, tick_shared_ordinal, decision kind) and
+    // hashed on demand, so a channel that executes more or fewer spawns cannot
+    // shift the shared decision of a later logical event. No mutable shared
+    // stream state is kept; only the per-channel `rng_state` remains sequential.
+    uint32_t shared_event_seed;    // Undecorrelated base seed for shared decisions
+    uint32_t scheduler_tick;       // Monotonic control-tick counter (logical event time)
+    uint32_t tick_shared_ordinal;  // Shared-decision ordinal within the current tick
     // Channel decorrelation mask, applied on seed (re)initialization so the
     // right channel keeps its own spatial stream across preset/seed changes.
     uint32_t channel_decorrelation;
@@ -433,8 +437,9 @@ float SoundBubbles_MotionHashToBipolar(uint32_t state);
 SOUND_BUBBLES_DEPRECATED void SoundBubbles_SetRngSeed(SoundBubblesEngine_t* engine, uint32_t seed);
 
 // M2 stereo coherence: set a per-channel decorrelation mask applied on top of the
-// shared config seed. The coherence stream ignores this mask, so event-level
-// decisions align between the L/R engines while spatial decisions stay distinct.
+// shared config seed. Shared event-addressable decisions ignore this mask, so
+// event-level decisions align between the L/R engines while the sequential
+// per-channel stream keeps spatial decisions distinct.
 SOUND_BUBBLES_DEPRECATED void SoundBubbles_SetChannelDecorrelation(SoundBubblesEngine_t* engine, uint32_t decorrelation_mask);
 
 // Audio Processing: Processes num_samples. DSP core owns final dry/wet output policy.
