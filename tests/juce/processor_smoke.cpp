@@ -398,6 +398,197 @@ namespace
         std::cout << "interpolation path: WEB hermite_samples=" << hermiteUltra
                   << ", MCU linear_samples=" << linearPlus << '\n';
     }
+
+    // M3.2C: QUALITY_PROFILE is an instance-global preference, not a scene
+    // parameter. Morph, Scene A/B capture and scene-endpoint edits must never
+    // change it, while a fresh instance, a factory preset, a manual change and a
+    // DAW state restore must all reach the shared DSP core.
+    void testQualityProfileIsGlobalNotSceneMorph()
+    {
+        const auto currentQuality = [](BubbleCloudAudioProcessor& p) {
+            const auto* q = p.treeState.getRawParameterValue("QUALITY_PROFILE");
+            return q != nullptr ? q->load() : -1.0f;
+        };
+        const auto render = [](BubbleCloudAudioProcessor& p) {
+            juce::MidiBuffer noMidi;
+            juce::AudioBuffer<float> buffer(2, 128);
+            for (int block = 0; block < 16; ++block) {
+                buffer.clear();
+                for (int i = 0; i < buffer.getNumSamples(); ++i)
+                    buffer.setSample(0, i, 0.25f);
+                p.processBlock(buffer, noMidi);
+            }
+        };
+
+        BubbleCloudAudioProcessor processor;
+        processor.setRateAndBufferSizeDetails(48000.0, 128);
+        processor.prepareToPlay(48000.0, 128);
+
+        // A. Fresh instance must be Ultra / Hermite / 32 voices.
+        require(std::abs(currentQuality(processor) - 3.0f) < 0.001f,
+                "fresh VST instance must default to Ultra quality");
+        render(processor);
+        require(processor.getEngineInterpolationMode() == 1,
+                "fresh VST instance did not run the Hermite path");
+        require(processor.getEngineActiveVoiceLimit() == 32,
+                "fresh VST instance did not resolve the 32-voice Ultra limit");
+
+        // Build two contrasting scenes, then morph 0 -> 1 -> 0 and prove quality
+        // is untouched by scene capture or morphing.
+        setParameter(processor, "MORPH", 0.0f);
+        setParameter(processor, "DENSITY", 0.2f);
+        setParameter(processor, "MIX", 0.2f);
+        processor.captureScene(0);
+        setParameter(processor, "MORPH", 1.0f);
+        setParameter(processor, "DENSITY", 0.8f);
+        setParameter(processor, "MIX", 0.8f);
+        processor.captureScene(1);
+        setParameter(processor, "MORPH", 0.56f);
+        render(processor);
+        setParameter(processor, "MORPH", 1.0f);
+        render(processor);
+        setParameter(processor, "MORPH", 0.0f);
+        render(processor);
+        require(std::abs(currentQuality(processor) - 3.0f) < 0.001f,
+                "morphing scenes changed the global quality profile");
+        require(processor.getEngineInterpolationMode() == 1,
+                "morphing scenes left the Hermite interpolator");
+        require(processor.getEngineActiveVoiceLimit() == 32,
+                "morphing scenes changed the Ultra voice limit");
+
+        // B. A manual lower tier must survive scene capture and morphing.
+        setParameter(processor, "QUALITY_PROFILE", 1.0f); // Balanced / MCU_PLUS
+        render(processor);
+        require(std::abs(currentQuality(processor) - 1.0f) < 0.001f,
+                "manual Balanced quality did not stick");
+        require(processor.getEngineInterpolationMode() == 0,
+                "Balanced quality did not select the linear interpolator");
+        require(processor.getEngineActiveVoiceLimit() == 16,
+                "Balanced quality did not resolve the 16-voice limit");
+        processor.captureScene(0);
+        processor.captureScene(1);
+        setParameter(processor, "MORPH", 1.0f);
+        render(processor);
+        setParameter(processor, "MORPH", 0.0f);
+        render(processor);
+        require(std::abs(currentQuality(processor) - 1.0f) < 0.001f,
+                "scene capture changed a manually chosen lower quality tier");
+        require(processor.getEngineInterpolationMode() == 0,
+                "scene capture reset the Balanced linear path");
+        require(processor.getEngineActiveVoiceLimit() == 16,
+                "scene capture reset the Balanced voice limit");
+
+        // C. A DAW state restore must round-trip the user's choice (Studio).
+        setParameter(processor, "QUALITY_PROFILE", 2.0f); // Studio / WEB_STANDARD
+        render(processor);
+        juce::MemoryBlock state;
+        processor.getStateInformation(state);
+
+        BubbleCloudAudioProcessor restored;
+        restored.setRateAndBufferSizeDetails(48000.0, 128);
+        restored.prepareToPlay(48000.0, 128);
+        restored.setStateInformation(state.getData(), (int)state.getSize());
+        render(restored);
+        require(std::abs(currentQuality(restored) - 2.0f) < 0.001f,
+                "state restore did not restore the Studio quality profile");
+        require(restored.getEngineInterpolationMode() == 1,
+                "restored Studio quality did not run Hermite");
+        require(restored.getEngineActiveVoiceLimit() == 24,
+                "restored Studio quality did not resolve the 24-voice limit");
+
+        // D. Selecting a factory preset must land on Ultra / Hermite.
+        {
+            std::unique_ptr<juce::AudioProcessorEditor> editor(restored.createEditor());
+            require(editor != nullptr, "quality test could not create an editor");
+            juce::ComboBox* presetBox = nullptr;
+            for (int i = 0; i < editor->getNumChildComponents(); ++i) {
+                auto* candidate = dynamic_cast<juce::ComboBox*>(editor->getChildComponent(i));
+                if (candidate != nullptr && candidate->getNumItems() == 20) {
+                    presetBox = candidate;
+                    break;
+                }
+            }
+            require(presetBox != nullptr, "quality test could not find the factory preset selector");
+            presetBox->setSelectedItemIndex(7, juce::sendNotificationSync);
+            render(restored);
+            require(std::abs(currentQuality(restored) - 3.0f) < 0.001f,
+                    "loading a factory preset did not select Ultra quality");
+            require(restored.getEngineInterpolationMode() == 1,
+                    "loading a factory preset did not run the Hermite path");
+            require(restored.getEngineActiveVoiceLimit() == 32,
+                    "loading a factory preset did not resolve the Ultra voice limit");
+        }
+
+        std::cout << "quality global: fresh/preset/morph/restore verified\n";
+    }
+
+    // M3.2C: an old state that still stores QUALITY_PROFILE inside
+    // PERFORMANCE_SCENES must restore every real parameter and safely ignore the
+    // legacy quality slot, while the global APVTS quality survives untouched.
+    void testLegacySceneStateIgnoresQualitySlot()
+    {
+        const auto readMorphed = [](BubbleCloudAudioProcessor& p, const char* id) {
+            return p.getMorphedParameterValue(id);
+        };
+
+        BubbleCloudAudioProcessor source;
+        source.setRateAndBufferSizeDetails(48000.0, 128);
+        source.prepareToPlay(48000.0, 128);
+        setParameter(source, "QUALITY_PROFILE", 2.0f); // Studio, must survive legacy slot
+        setParameter(source, "MORPH", 0.0f);
+        juce::MidiBuffer noMidi;
+        {
+            juce::AudioBuffer<float> buffer(2, 128);
+            buffer.clear();
+            source.processBlock(buffer, noMidi);
+        }
+        juce::MemoryBlock newState;
+        source.getStateInformation(newState);
+
+        // Rewrite PERFORMANCE_SCENES using the historical 19-slot layout:
+        // slot 12 = legacy QUALITY_PROFILE, slot 14 = RHYTHM_DIVISION.
+        std::unique_ptr<juce::XmlElement> xml(juce::AudioProcessor::getXmlFromBinary(
+            newState.getData(), (int)newState.getSize()));
+        require(xml != nullptr, "legacy test could not parse the saved state");
+        auto tree = juce::ValueTree::fromXml(*xml);
+        if (const auto previous = tree.getChildWithName("PERFORMANCE_SCENES"); previous.isValid())
+            tree.removeChild(previous, nullptr);
+        juce::ValueTree legacyScenes("PERFORMANCE_SCENES");
+        legacyScenes.setProperty("version", 1, nullptr);
+        for (int slot = 0; slot <= 18; ++slot) {
+            legacyScenes.setProperty("a" + juce::String(slot), 0.0f, nullptr);
+            legacyScenes.setProperty("b" + juce::String(slot), 0.0f, nullptr);
+        }
+        legacyScenes.setProperty("a12", 1.0f, nullptr); // legacy quality -> ignored
+        legacyScenes.setProperty("b12", 1.0f, nullptr);
+        legacyScenes.setProperty("a14", 3.0f, nullptr); // old RHYTHM_DIVISION slot
+        legacyScenes.setProperty("b14", 3.0f, nullptr);
+        tree.addChild(legacyScenes, -1, nullptr);
+
+        std::unique_ptr<juce::XmlElement> legacyXml(tree.createXml());
+        juce::MemoryBlock legacyState;
+        juce::AudioProcessor::copyXmlToBinary(*legacyXml, legacyState);
+
+        BubbleCloudAudioProcessor restored;
+        restored.setRateAndBufferSizeDetails(48000.0, 128);
+        restored.prepareToPlay(48000.0, 128);
+        restored.setStateInformation(legacyState.getData(), (int)legacyState.getSize());
+        setParameter(restored, "MORPH", 0.0f);
+        {
+            juce::AudioBuffer<float> buffer(2, 128);
+            buffer.clear();
+            restored.processBlock(buffer, noMidi);
+        }
+
+        const auto* quality = restored.treeState.getRawParameterValue("QUALITY_PROFILE");
+        require(quality != nullptr && std::abs(quality->load() - 2.0f) < 0.001f,
+                "legacy scene restore overwrote the global quality preference");
+        require(std::abs(readMorphed(restored, "RHYTHM_DIVISION") - 3.0f) < 0.001f,
+                "legacy 19-slot scene state did not restore a shifted real parameter");
+        require(std::isnan(readMorphed(restored, "QUALITY_PROFILE")),
+                "QUALITY_PROFILE must not be a morphed scene parameter");
+        std::cout << "quality global: legacy 19-slot state ignored the quality slot\n";
+    }
 }
 
 int main()
@@ -416,6 +607,8 @@ int main()
         testSpaceMacroChangesStereoWidth();
         testHostTempoFallbackSurvivesMissingBpm();
         testQualityProfileSelectsInterpolationPath();
+        testQualityProfileIsGlobalNotSceneMorph();
+        testLegacySceneStateIgnoresQualitySlot();
 
         // Left-only probe with spatial settings: the left channel must carry
         // output and telemetry must publish left-engine voices. The wet bus may

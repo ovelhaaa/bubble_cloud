@@ -402,6 +402,11 @@ void BubbleCloudEngineWrapper::getInterpolationCallCounts(unsigned long long& li
     linearSamples = (unsigned long long)(linearL + linearR);
     hermiteSamples = (unsigned long long)(hermiteL + hermiteR);
 }
+
+int BubbleCloudEngineWrapper::getActiveVoiceLimit() const noexcept
+{
+    return engineL.active_voice_limit;
+}
 #endif
 
 EngineConfig_t BubbleCloudEngineWrapper::getConfig() const

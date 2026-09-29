@@ -335,3 +335,70 @@ def test_quality_profile_drives_shared_hermite_interpolator_through_juce() -> No
     assert "getEngineInterpolationCallCounts" in smoke
     assert "WEB_STANDARD did not execute the Hermite path" in smoke
     assert "MCU_SAFE did not execute the linear path" in smoke
+
+
+def test_quality_profile_is_global_preference_not_scene_morph() -> None:
+    """M3.2C: QUALITY_PROFILE must be an instance-global preference, never a
+    scene-morph parameter, while legacy 19-slot scene states still restore."""
+    processor = PLUGIN_PROCESSOR.read_text(encoding="utf-8")
+    processor_header = PLUGIN_PROCESSOR_HEADER.read_text(encoding="utf-8")
+    smoke = PROCESSOR_SMOKE.read_text(encoding="utf-8")
+
+    scene_list = re.search(r"sceneParameterIds \{\{(?P<body>.*?)\}\}", processor, re.DOTALL)
+    assert scene_list is not None, "sceneParameterIds not found"
+    assert '"QUALITY_PROFILE"' not in scene_list.group("body"), (
+        "QUALITY_PROFILE must not participate in Scene A/B morphing"
+    )
+
+    # Global preference application exists and runs from the audio callback, and
+    # never via the scene-endpoint callback (which would reintroduce scene morph).
+    assert "applyGlobalPreferences" in processor
+    assert "applyGlobalPreferences();" in processor
+    callback = re.search(
+        r"void BubbleCloudAudioProcessor::parameterChanged\(.*?\n\}", processor, re.DOTALL
+    )
+    assert callback is not None
+    assert "applyGlobalPreferences" not in callback.group(0)
+    assert "forwardParameterToEngine" not in callback.group(0)
+
+    # The active scene list drops quality but the persisted slot layout keeps the
+    # historical 19-slot order so old states restore every real parameter.
+    assert "scenePersistenceSlots" in processor
+    assert "sceneParameterCount = 18" in processor_header
+
+    # The smoke test must verify fresh/preset/morph/restore behaviour.
+    assert "testQualityProfileIsGlobalNotSceneMorph" in smoke
+    assert "getEngineActiveVoiceLimit" in smoke
+
+
+def test_spawn_onset_jitter_is_deterministic_and_scoped() -> None:
+    """M3.2C: intra-tick onset jitter is a dedicated deterministic hash of the
+    canonical spawn identity, with RHYTHM/STRUM kept sample-exact and no use of
+    the host block size as the jitter window."""
+    dsp = (REPO_ROOT / "core" / "dsp" / "sound_bubbles_dsp.c").read_text(encoding="utf-8")
+    dsp_header = (REPO_ROOT / "core" / "dsp" / "sound_bubbles_dsp.h").read_text(encoding="utf-8")
+
+    assert "BUBBLES_SHARED_KIND_ONSET" in dsp
+    assert "BUBBLES_SHARED_LANE_ONSET" in dsp
+    assert "ResolveOnsetDelaySamples" in dsp
+    assert "VOICE_STATE_PENDING_ONSET" in dsp_header
+    assert "onset_delay_samples" in dsp_header
+
+    onset_fn = re.search(
+        r"static uint32_t ResolveOnsetDelaySamples\(SoundBubblesEngine_t\* engine, "
+        r"SharedSpawnId_t spawn_id\) \{(?P<body>.*?)\n\}",
+        dsp,
+        re.DOTALL,
+    )
+    assert onset_fn is not None
+    body = onset_fn.group("body")
+    assert "BUBBLES_SPAWN_SOURCE_RHYTHM" in body and "BUBBLES_SPAWN_SOURCE_STRUM" in body
+    assert "BUBBLES_BLOCK_SIZE" in body
+    # The jitter window must be the internal DSP tick, never the host block size.
+    assert "num_samples" not in body
+
+    # The new harness must exist and be wired to the pytest wrapper.
+    harness = REPO_ROOT / "tests" / "dsp" / "m3_2c_spawn_jitter_harness.c"
+    wrapper = REPO_ROOT / "tests" / "dsp" / "test_m3_2c_spawn_jitter.py"
+    assert harness.is_file()
+    assert wrapper.is_file()

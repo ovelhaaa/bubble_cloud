@@ -149,6 +149,14 @@ typedef enum {
 #define BUBBLES_SHARED_LANE_ROLL  0xA5A5A5A5u
 #define BUBBLES_SHARED_LANE_VALUE 0x5A5A5A5Au
 
+// M3.2C intra-tick onset jitter. The onset delay lives in its own hash
+// namespace ("kind") and lane so it can never alias the shared class / region /
+// offset draws of the same canonical event, and it never advances the
+// per-channel sequential stream (pitch RNG, microdetune, reverse, pan, memory
+// tier and spawn count are therefore bit-identical to the pre-M3.2C baseline).
+#define BUBBLES_SHARED_KIND_ONSET 0x4F4E5345u   // 'ONSE'
+#define BUBBLES_SHARED_LANE_ONSET 0x3C6EF372u
+
 // Second-generation (droplet) child identity namespace (M2.4). Derived children
 // mark the high bit of `child_index` so they can never collide with a primary
 // burst child (which is a small, unflagged value). The parent's child_index and
@@ -166,6 +174,21 @@ typedef enum {
     BUBBLES_OUTPUT_SPATIAL = 1  // wet to out_left/out_right, dry to out_dry
 } BubbleOutputMode_t;
 
+// Optional white-box observation hook for the M3.2C spawn-jitter regression.
+// Compiled out entirely in production builds; it records the deterministic onset
+// delay chosen for each materialized spawn so a harness can compare the trace
+// against the canonical identity. Never affects the audio path.
+#if defined(BUBBLES_M3_ONSET_TRACE)
+typedef void (*BubbleOnsetTraceFn)(void* user, const SoundBubblesEngine_t* engine,
+                                   SharedSpawnId_t id, uint32_t onset_delay_samples);
+static BubbleOnsetTraceFn g_bubble_onset_trace_fn = NULL;
+static void* g_bubble_onset_trace_user = NULL;
+static void BubblesTest_SetOnsetTrace(BubbleOnsetTraceFn fn, void* user) {
+    g_bubble_onset_trace_fn = fn;
+    g_bubble_onset_trace_user = user;
+}
+#endif
+
 static int32_t ResolveFadeSamples(float sample_rate);
 static void ProcessBlockInternal(SoundBubblesEngine_t* engine,
                                  const float* in_mono,
@@ -180,6 +203,7 @@ static float RandomFloat01(SoundBubblesEngine_t* engine);
 static float SharedSpawnRandom(SoundBubblesEngine_t* engine, float coherence, SharedSpawnId_t spawn_id, BubbleSharedDecisionKind_t kind);
 static SharedSpawnId_t Scheduler_NextSpawnId(SoundBubblesEngine_t* engine, BubbleSpawnSource_t source);
 static SharedSpawnId_t SpawnDerivedId(SharedSpawnId_t parent_id, uint32_t generation);
+static uint32_t ResolveOnsetDelaySamples(SoundBubblesEngine_t* engine, SharedSpawnId_t spawn_id);
 static void Scheduler_ResetSpawnIdentity(SoundBubblesEngine_t* engine);
 static float ResolveSpawnCoherence(SoundBubblesEngine_t* engine);
 static float ResolveContextReverseProbability(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, uint8_t region_id);
@@ -294,6 +318,7 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
 
     engine->write_ptr = 0;
     engine->block_counter = 0;
+    engine->block_peak_accum = 0.0f;
     engine->scheduler_tick = 0;
     Scheduler_ResetSpawnIdentity(engine);
     engine->engine_state = ENGINE_STATE_SILENCE;
@@ -460,7 +485,6 @@ void SoundBubbles_ProcessBlockSpatial(SoundBubblesEngine_t* engine, const float*
 static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_mono, float* out_left, float* out_right, float* out_dry, int num_samples, BubbleOutputMode_t output_mode) {
     if (engine == NULL || in_mono == NULL || out_left == NULL || out_right == NULL || num_samples <= 0) return;
     int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(engine->config.sample_rate);
-    float block_peak = 0.0f;
     float sr = fmaxf(1.0f, engine->config.sample_rate);
     float freeze_smooth_coef = 1.0f - expf(-1.0f / (sr * 0.020f));
     float amount = Clamp01(engine->config.freeze_amount);
@@ -498,8 +522,8 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
 
         // Track peak for control block envelope
         float in_abs = fabsf(dry_sample);
-        if (in_abs > block_peak) {
-            block_peak = in_abs;
+        if (in_abs > engine->block_peak_accum) {
+            engine->block_peak_accum = in_abs;
         }
 
         // Clamp input to [-1.0f, 1.0f] before conversion. Continuous retention blends
@@ -523,6 +547,22 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
             BubbleVoice_t* v = &engine->voices[v_idx];
             if (v->state == VOICE_STATE_INACTIVE) continue;
             if (v_idx >= engine->active_voice_limit && v->state != VOICE_STATE_PREEMPT_FADING) continue;
+
+            // M3.2C: a pending grain is allocated but contributes nothing until
+            // its deterministic intra-tick onset arrives. While waiting, neither
+            // phase nor read pointer advances and no audio is generated, so it is
+            // not yet "started" for any age-dependent logic. At the onset sample
+            // the read pointer is re-derived from the current write head, which
+            // guarantees the guard stays valid even though the head advanced
+            // during the delay (deterministic write-head compensation).
+            if (v->state == VOICE_STATE_PENDING_ONSET) {
+                if (v->onset_delay_samples > 0) {
+                    v->onset_delay_samples--;
+                    continue;
+                }
+                v->state = VOICE_STATE_PLAYING;
+                v->read_ptr_float = (float)WrapIntIndex(engine->write_ptr - v->spawn_read_offset, buffer_size);
+            }
 
             // Handle preemption and forced release fading
             if (v->state == VOICE_STATE_PREEMPT_FADING) {
@@ -675,7 +715,7 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
             engine->scheduler_tick++;
             Scheduler_ResetSpawnIdentity(engine);
             engine->metrics_tick_spawn_count = 0;
-            UpdateStateAndDensity(engine, block_peak);
+            UpdateStateAndDensity(engine, engine->block_peak_accum);
             UpdateSustainBusTone(engine);
             Scheduler_RunTick(engine);
 
@@ -696,7 +736,7 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
                 engine->metrics_callback(&engine->metrics_last_block, engine->metrics_user_data);
             }
 
-            block_peak = 0.0f;
+            engine->block_peak_accum = 0.0f;
         }
     }
 }
@@ -1361,6 +1401,9 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     }
     read_offset_samples = ClampSpawnOffsetForGuard(read_offset_samples, v->rate, duration_samples, buffer_size);
     v->read_ptr_float = (float)WrapIntIndex(engine->write_ptr - read_offset_samples, buffer_size);
+    // M3.2C: remember the guard-clamped offset so a delayed grain can re-derive
+    // its read pointer against the write head that exists at its real onset.
+    v->spawn_read_offset = read_offset_samples;
 
     float spread = (b_class == BUBBLE_CLASS_MICRO_ATTACK) ? engine->config.attack_pan_spread : engine->config.sustain_pan_spread;
     float pan = (RandomFloat01(engine) * 2.0f - 1.0f) * Clamp01(spread) * Clamp01(engine->config.stereo_width);
@@ -1405,6 +1448,26 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
                 }
             }
         }
+    }
+
+    // M3.2C: every musical decision above was already made at allocation time,
+    // so the intra-tick onset delay only defers the *audible start*. A grain with
+    // a non-zero delay is allocated but held silent in PENDING_ONSET; the render
+    // loop re-derives its read pointer from the then-current write head when the
+    // delay expires. RHYTHM and STRUM keep a zero delay (see
+    // ResolveOnsetDelaySamples) so tempo grids and strum patterns stay exact.
+    uint32_t onset_delay = ResolveOnsetDelaySamples(engine, spawn_id);
+#if defined(BUBBLES_M3_ONSET_TRACE)
+    if (g_bubble_onset_trace_fn != NULL) {
+        g_bubble_onset_trace_fn(g_bubble_onset_trace_user, engine, spawn_id, onset_delay);
+    }
+#endif
+    if (onset_delay > 0u) {
+        v->state = VOICE_STATE_PENDING_ONSET;
+        v->onset_delay_samples = (int16_t)onset_delay;
+    } else {
+        v->state = VOICE_STATE_PLAYING;
+        v->onset_delay_samples = 0;
     }
 }
 
@@ -1705,6 +1768,45 @@ static float SharedEventUnit(uint32_t seed, SharedSpawnId_t id, uint32_t kind, u
     h ^= SharedEventMix32(kind + 0xD6E8FEB8u);
     h += SharedEventMix32(lane + 0x9E3779B1u);
     return (float)(SharedEventMix32(h) >> 8) * kInv24Bit;
+}
+
+// M3.2C intra-tick onset delay. The scheduler decides spawns at control rate, so
+// without this every grain chosen on the same control tick would begin on the
+// same sample (machine-gun / quantised timing). This derives a deterministic
+// sub-tick onset from the canonical SharedSpawnId through a dedicated hash
+// namespace and spreads it across the following BUBBLES_BLOCK_SIZE-sample window.
+//
+// Properties:
+//  - Pure function of (shared_event_seed, tick, source, event_index,
+//    child_index). It does not touch the per-channel sequential RNG, so pitch,
+//    microdetune, reverse, pan, memory tier and spawn count are unchanged.
+//  - Stereo-coherent: both channel engines share the same undecorrelated
+//    shared_event_seed, so the same canonical event gets the same delay on L and
+//    R; attacks never become a stereo flam.
+//  - RHYTHM and STRUM return 0, keeping tempo grids and strum patterns
+//    sample-exact. DENSITY, BURST and DROPLET (derived child identity) jitter.
+//  - Block-size independent: the window is the internal DSP tick, never the
+//    host `num_samples`.
+//  - Sample-rate dependent by design: the tick is fixed in samples, so the
+//    spread is ~0.73 ms at 44.1 kHz and ~0.33 ms at 96 kHz. That is intentional
+//    (breaking sub-ms simultaneity only); multi-ms jitter is out of scope.
+static uint32_t ResolveOnsetDelaySamples(SoundBubblesEngine_t* engine, SharedSpawnId_t spawn_id) {
+    if (spawn_id.source == (uint32_t)BUBBLES_SPAWN_SOURCE_RHYTHM
+        || spawn_id.source == (uint32_t)BUBBLES_SPAWN_SOURCE_STRUM) {
+        return 0u;
+    }
+    // A request materialized from the saturation queue on a later tick has
+    // already missed its scheduled onset, so it must start immediately rather
+    // than wait a full tick again. Same-tick spawns always see tick equality.
+    if (spawn_id.tick != engine->scheduler_tick) {
+        return 0u;
+    }
+    float unit = SharedEventUnit(engine->shared_event_seed, spawn_id,
+                                 BUBBLES_SHARED_KIND_ONSET, BUBBLES_SHARED_LANE_ONSET);
+    uint32_t span = (uint32_t)BUBBLES_BLOCK_SIZE;
+    uint32_t delay = (uint32_t)(unit * (float)span);
+    if (delay >= span) delay = span - 1u;
+    return delay;
 }
 
 // Reset the per-source event indices at the control-tick boundary.

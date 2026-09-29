@@ -68,6 +68,9 @@ public:
     // Compiled out of production builds.
     void getInterpolationCallCounts(unsigned long long& linearSamples,
                                     unsigned long long& hermiteSamples) const noexcept;
+
+    // M3.2C: per-engine voice limit resolved from the global quality profile.
+    int getActiveVoiceLimit() const noexcept;
 #endif
 
     // Explicit stereo wet summing law.

@@ -38,7 +38,10 @@ namespace
         "FREEZE_MIDI_NOTE",
     };
 
-    constexpr std::array<const char*, 19> sceneParameterIds {{
+    // M3.2C: QUALITY_PROFILE is intentionally absent. Quality is an instance
+    // global preference and must never move with MORPH, Scene A/B capture or
+    // scene-endpoint edits.
+    constexpr std::array<const char*, 18> sceneParameterIds {{
         "DENSITY",
         "BLOOM",
         "MOTION",
@@ -51,13 +54,21 @@ namespace
         "SPARKLE",
         "WARMTH",
         "MIX",
-        "QUALITY_PROFILE",
         "TEMPO_SYNC",
         "RHYTHM_DIVISION",
         "BURST_MODE",
         "RHYTHM_PATTERN",
         "PITCH_MODE_OVERRIDE",
         "MOTION_SHAPE",
+    }};
+
+    // Persisted scene slot for each active scene parameter. The historical layout
+    // (pre-M3.2C) was 19 slots with QUALITY_PROFILE at slot 12; we keep those
+    // slots so a state saved by an older build restores every real parameter
+    // unchanged. Slot 12 is reserved/ignored on restore (legacy quality entry).
+    constexpr std::array<int, 18> scenePersistenceSlots {{
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+        13, 14, 15, 16, 17, 18,
     }};
 
     int findSceneParameterIndex(const juce::String& parameterID)
@@ -243,6 +254,7 @@ void BubbleCloudAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     captureHeld.store(false);
     effectiveFreezeActive.store(false);
     lastAppliedFreeze = -1.0f;
+    lastAppliedQuality = -1.0f;
     sceneApplicationDirty.store(true);
 #if defined(BUBBLES_BUILD_PROCESSOR_TESTS)
     transportSyncRhythmPhaseCalls = 0;
@@ -307,6 +319,7 @@ void BubbleCloudAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
 
     handlePerformanceMidi(midiMessages);
     applySceneMorph();
+    applyGlobalPreferences();
     applyEffectiveFreeze();
     updateHostTransport(buffer.getNumSamples());
     engineWrapper.process(inLeft, inRight, outLeft, outRight, buffer.getNumSamples());
@@ -522,16 +535,40 @@ float BubbleCloudAudioProcessor::getEffectiveFreeze() const noexcept
     return lastAppliedFreeze >= 0.0f ? lastAppliedFreeze : sceneFreezeValue.load();
 }
 
+void BubbleCloudAudioProcessor::applyGlobalPreferences()
+{
+    // QUALITY_PROFILE is a global instance preference (M3.2C). It is read from
+    // the value tree here rather than through the scene endpoints, so morph,
+    // scene capture and scene-endpoint edits can never change it. A fresh
+    // instance (default Ultra), a factory preset, a manual user choice and a DAW
+    // state restore all flow through this single path into the shared DSP core.
+    if (const auto* quality = treeState.getRawParameterValue("QUALITY_PROFILE")) {
+        const float value = (float)juce::roundToInt(juce::jlimit(0.0f, 3.0f, quality->load()));
+        if (std::abs(value - lastAppliedQuality) >= 0.0001f) {
+            forwardParameterToEngine("QUALITY_PROFILE", value);
+            lastAppliedQuality = value;
+        }
+    }
+}
+
 void BubbleCloudAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
     auto state = treeState.copyState();
     if (const auto previousScenes = state.getChildWithName("PERFORMANCE_SCENES"); previousScenes.isValid())
         state.removeChild(previousScenes, nullptr);
     juce::ValueTree scenes("PERFORMANCE_SCENES");
-    scenes.setProperty("version", 1, nullptr);
+    scenes.setProperty("version", 2, nullptr);
     for (std::size_t i = 0; i < sceneParameterCount; ++i) {
-        scenes.setProperty("a" + juce::String((int)i), sceneA[i].load(), nullptr);
-        scenes.setProperty("b" + juce::String((int)i), sceneB[i].load(), nullptr);
+        const int slot = scenePersistenceSlots[i];
+        scenes.setProperty("a" + juce::String(slot), sceneA[i].load(), nullptr);
+        scenes.setProperty("b" + juce::String(slot), sceneB[i].load(), nullptr);
+    }
+    // Legacy slot 12 (QUALITY_PROFILE in old builds) stays populated with the
+    // current global quality so a new state still round-trips through an older
+    // build. New builds never read or apply it.
+    if (const auto* quality = treeState.getRawParameterValue("QUALITY_PROFILE")) {
+        scenes.setProperty("a12", quality->load(), nullptr);
+        scenes.setProperty("b12", quality->load(), nullptr);
     }
     state.addChild(scenes, -1, nullptr);
     std::unique_ptr<juce::XmlElement> xml (state.createXml());
@@ -557,8 +594,12 @@ void BubbleCloudAudioProcessor::setStateInformation(const void* data, int sizeIn
     const auto scenes = restoredState.getChildWithName("PERFORMANCE_SCENES");
     if (scenes.isValid()) {
         for (std::size_t i = 0; i < sceneParameterCount; ++i) {
-            const auto aName = "a" + juce::String((int)i);
-            const auto bName = "b" + juce::String((int)i);
+            // Read the historical slot layout. Any legacy slot 12
+            // (QUALITY_PROFILE) is simply never addressed here, so old states
+            // restore safely and the scene can no longer carry quality.
+            const int slot = scenePersistenceSlots[i];
+            const auto aName = "a" + juce::String(slot);
+            const auto bName = "b" + juce::String(slot);
             if (scenes.hasProperty(aName))
                 sceneA[i].store((float)scenes[aName]);
             if (scenes.hasProperty(bName))
@@ -671,5 +712,10 @@ void BubbleCloudAudioProcessor::getEngineInterpolationCallCounts(unsigned long l
                                                                  unsigned long long& hermiteSamples) const noexcept
 {
     engineWrapper.getInterpolationCallCounts(linearSamples, hermiteSamples);
+}
+
+int BubbleCloudAudioProcessor::getEngineActiveVoiceLimit() const noexcept
+{
+    return engineWrapper.getActiveVoiceLimit();
 }
 #endif

@@ -51,11 +51,18 @@ static void init_memory(int16_t* delay, int samples) {
     memset(delay, 0, (size_t)samples * sizeof(delay[0]));
 }
 
+// M3.2C: a freshly materialized spawn may still be waiting for its intra-tick
+// onset (PENDING_ONSET) but already carries every spawn-time decision (class,
+// reverse, rate, microdetune, offset, region). Both states are "fresh" here.
+static int is_fresh_spawn(const BubbleVoice_t* voice) {
+    return (voice->state == VOICE_STATE_PLAYING || voice->state == VOICE_STATE_PENDING_ONSET)
+        && voice->phase == 0.0f;
+}
+
 static void record_if_fresh(BubbleEngine_t* engine, SpawnLog* log, int buffer_size, int expect_state) {
     for (int v = 0; v < engine->active_voice_limit; v++) {
         BubbleVoice_t* voice = &engine->voices[v];
-        if (voice->state != VOICE_STATE_PLAYING) continue;
-        if (voice->phase != 0.0f) continue; // only just-spawned voices
+        if (!is_fresh_spawn(voice)) continue;
         if (log->count >= (int)(sizeof(log->records) / sizeof(log->records[0]))) return;
         SpawnRecord* rec = &log->records[log->count++];
         rec->bubble_class = (int)voice->bubble_class;
@@ -297,7 +304,7 @@ static int test_microdetune_is_bounded_fixed_and_reproducible(void) {
     for (int t = 0; t < 20000 && target == NULL; t++) {
         bubble_engine_process(&engine, input, left, right, BUBBLES_BLOCK_SIZE);
         for (int v = 0; v < engine.active_voice_limit; v++) {
-            if (engine.voices[v].state == VOICE_STATE_PLAYING && engine.voices[v].phase == 0.0f) {
+            if (is_fresh_spawn(&engine.voices[v])) {
                 target = &engine.voices[v];
                 break;
             }
@@ -309,6 +316,8 @@ static int test_microdetune_is_bounded_fixed_and_reproducible(void) {
     int observed = 0;
     for (int i = 0; i < 100; i++) {
         bubble_engine_process(&engine, input, left, right, BUBBLES_BLOCK_SIZE);
+        // Allow a pending-onset grain to reach its real start before comparing.
+        if (target->state == VOICE_STATE_PENDING_ONSET) continue;
         if (target->state != VOICE_STATE_PLAYING) break;
         CHECK_CLOSE(target->microdetune_cents, cents_at_birth, 1.0e-6f, "microdetune is constant during the grain lifetime");
         CHECK_CLOSE(target->rate, rate_at_birth, 1.0e-6f, "microdetuned playback rate is constant during the grain lifetime");
@@ -382,7 +391,7 @@ static int test_reverse_is_context_conditioned(void) {
         int attack_like = state_is_attack_like((int)engine.engine_state);
         for (int v = 0; v < engine.active_voice_limit; v++) {
             BubbleVoice_t* voice = &engine.voices[v];
-            if (voice->state != VOICE_STATE_PLAYING || voice->phase != 0.0f) continue;
+            if (!is_fresh_spawn(voice)) continue;
             if (attack_like) {
                 attack_spawns++;
                 if (voice->read_direction != 0u) attack_reverse++;

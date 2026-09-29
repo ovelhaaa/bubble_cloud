@@ -76,7 +76,8 @@ typedef enum {
 typedef enum {
     VOICE_STATE_INACTIVE = 0,
     VOICE_STATE_PLAYING,
-    VOICE_STATE_PREEMPT_FADING        // Reused for: stolen voices, and write-head-guard forced release
+    VOICE_STATE_PREEMPT_FADING,       // Reused for: stolen voices, and write-head-guard forced release
+    VOICE_STATE_PENDING_ONSET         // Allocated, but silent until its intra-tick onset (M3.2C)
 } VoiceState_t;
 
 typedef enum {
@@ -306,6 +307,17 @@ typedef struct {
     // Fixed at spawn, constant for the whole grain lifetime (M2). Never an LFO.
     float microdetune_cents;
 
+    // M3.2C intra-tick spawn jitter. A grain whose scheduler event received a
+    // deterministic onset delay is allocated on the tick but stays silent in
+    // VOICE_STATE_PENDING_ONSET until `onset_delay_samples` reaches zero. During
+    // the wait neither phase nor read pointer advances and no audio is produced.
+    // `spawn_read_offset` is the guard-clamped distance behind the write head
+    // chosen at spawn; at onset the read pointer is re-derived from the *current*
+    // write head, so a write head that advanced during the delay cannot violate
+    // the guard.
+    int16_t onset_delay_samples; // remaining samples before a pending grain starts
+    int32_t spawn_read_offset;   // read offset behind write head, re-applied at onset
+
     // Preemption tracking
     int32_t fade_counter; // Counts down from BUBBLES_FADE_SAMPLES
 } BubbleVoice_t;
@@ -435,6 +447,11 @@ typedef struct {
     // Preemption fade length resolved from BUBBLES_FADE_MS at config.sample_rate.
     int32_t fade_samples;
     int32_t block_counter;         // Triggers control ticks every 32 samples
+    // M3.2C: envelope peak accumulated across host-process calls so a control
+    // tick sees the same 32-sample window regardless of how the host splits its
+    // blocks. Without this, a tick straddling two host blocks would only see the
+    // trailing fragment and block-size independence would break.
+    float block_peak_accum;
     uint32_t rng_state;            // Internal deterministic per-channel PRNG state
     // Stateless shared-event RNG (M2.2/M2.3/M2.4). Shared stereo decisions are
     // addressed by a canonical logical event identity

@@ -123,9 +123,15 @@ static void ValidateEngineState(SoundBubblesEngine_t* e) {
     assert(e->pending_spawn_head >= 0 && e->pending_spawn_head < BUBBLES_PENDING_SPAWN_CAPACITY);
 
     for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
-        assert(e->voices[i].state >= VOICE_STATE_INACTIVE && e->voices[i].state <= VOICE_STATE_PREEMPT_FADING);
+        assert(e->voices[i].state >= VOICE_STATE_INACTIVE && e->voices[i].state <= VOICE_STATE_PENDING_ONSET);
         if (e->voices[i].state == VOICE_STATE_PREEMPT_FADING) {
             assert(e->voices[i].fade_counter >= 0 && e->voices[i].fade_counter <= BUBBLES_FADE_SAMPLES);
+        }
+        if (e->voices[i].state == VOICE_STATE_PENDING_ONSET) {
+            // M3.2C: an allocated but not-yet-started grain must hold a bounded
+            // intra-tick countdown and never leave phase/read pointer advanced.
+            assert(e->voices[i].onset_delay_samples >= 0 && e->voices[i].onset_delay_samples < BUBBLES_BLOCK_SIZE);
+            assert(e->voices[i].phase == 0.0f);
         }
     }
 }
@@ -405,7 +411,12 @@ static void RunPendingSpawnBudgetTest(void) {
 
     assert(engine.metrics_last_block.spawn_count == SCHED_MAX_SPAWNS_PER_TICK);
     assert(engine.pending_spawn_count == BUBBLES_PENDING_SPAWN_CAPACITY - SCHED_MAX_SPAWNS_PER_TICK);
-    assert(CountVoicesInState(&engine, VOICE_STATE_PLAYING) == SCHED_MAX_SPAWNS_PER_TICK);
+    // M3.2C: flushed spawns may still be waiting for their intra-tick onset, so
+    // a materialized spawn is PLAYING or PENDING_ONSET, not necessarily already
+    // producing audio.
+    assert(CountVoicesInState(&engine, VOICE_STATE_PLAYING)
+               + CountVoicesInState(&engine, VOICE_STATE_PENDING_ONSET)
+           == SCHED_MAX_SPAWNS_PER_TICK);
     printf("  Flushed pending spawns: %d, remaining pending: %d\n",
            engine.metrics_last_block.spawn_count, engine.pending_spawn_count);
 }

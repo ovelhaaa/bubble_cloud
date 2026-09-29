@@ -62,6 +62,10 @@ public:
     int getEngineInterpolationMode() const noexcept;
     void getEngineInterpolationCallCounts(unsigned long long& linearSamples,
                                           unsigned long long& hermiteSamples) const noexcept;
+
+    // M3.2C: observe the voice limit actually resolved by the global quality
+    // preference in the shared DSP core (per engine, not the summed stereo bus).
+    int getEngineActiveVoiceLimit() const noexcept;
 #endif
 
     juce::AudioProcessorValueTreeState treeState;
@@ -77,7 +81,18 @@ private:
     void forwardParameterToEngine(const juce::String& parameterID, float value);
     void applyEffectiveFreeze();
 
-    static constexpr std::size_t sceneParameterCount = 19;
+    // M3.2C: QUALITY_PROFILE is an instance-global preference, deliberately kept
+    // out of the scene morph. This re-applies it to the shared DSP core from the
+    // value tree every block so a fresh instance, a factory preset, a manual
+    // change and a DAW state restore are all honoured.
+    void applyGlobalPreferences();
+
+    // QUALITY_PROFILE no longer participates in Scene A/B (M3.2C), so the active
+    // scene list is 18 parameters. The persisted PERFORMANCE_SCENES slot layout is
+    // kept identical to the historical 19-slot order (slot 12 reserved for the
+    // legacy quality entry) via scenePersistenceSlots so old states still restore
+    // every real parameter and the legacy quality slot is ignored on read.
+    static constexpr std::size_t sceneParameterCount = 18;
     
     BubbleCloudEngineWrapper engineWrapper;
     double expectedNextPpq = 0.0;
@@ -96,6 +111,7 @@ private:
     std::atomic<bool> sceneApplicationDirty { true };
     std::atomic<bool> midiFreezeActive { false };
     float lastAppliedFreeze = -1.0f;
+    float lastAppliedQuality = -1.0f;
 
 #if defined(BUBBLES_BUILD_PROCESSOR_TESTS)
     int transportSyncRhythmPhaseCalls = 0;
