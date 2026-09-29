@@ -23,7 +23,9 @@ from __future__ import annotations
 import argparse
 import cmath
 import csv
+import datetime as _datetime
 import math
+import platform as _platform
 import shutil
 import struct
 import subprocess
@@ -259,6 +261,43 @@ def min_limiter_gain(metrics_csv: Path) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Provenance
+# ---------------------------------------------------------------------------
+def resolve_git_sha(ref: str) -> str:
+    """Resolve a symbolic git ref to its full 40-character object id."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", f"{ref}^{{commit}}"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit(
+            f"Could not resolve baseline ref {ref!r}: {result.stderr.strip()}"
+        )
+    return result.stdout.strip()
+
+
+def working_tree_dirty() -> bool:
+    result = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    )
+    return bool(result.stdout.strip())
+
+
+def describe_environment() -> str:
+    compiler = shutil.which("gcc") or shutil.which("clang") or shutil.which("cc") or "none"
+    compiler_id = "none"
+    if compiler:
+        version = subprocess.run([compiler, "--version"], capture_output=True, text=True)
+        compiler_id = version.stdout.splitlines()[0].strip() if version.stdout else compiler
+    return (
+        f"python={_platform.python_version()} "
+        f"platform={_platform.platform()} "
+        f"compiler={compiler_id}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Build + render
 # ---------------------------------------------------------------------------
 def build_renderer(tree: Path, output: Path) -> Path:
@@ -296,10 +335,31 @@ def delta(base: float, cand: float) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline-ref", default="HEAD", help="git ref for the pre-M3.2A baseline")
+    parser.add_argument(
+        "--baseline-ref", default="HEAD^",
+        help="git ref for the pre-M3.2A baseline (default: HEAD^, the commit before the "
+             "current tip; once M3.2A is committed, HEAD would collapse onto the candidate)",
+    )
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="where reports and renders are written")
     parser.add_argument("--guitar", default=str(DEFAULT_GUITAR), help="plucked guitar fixture")
     args = parser.parse_args()
+
+    # Provenance: resolve both sides to full SHAs before touching the filesystem.
+    # After M3.2A is committed, a default of HEAD would make baseline and candidate
+    # the same tree, silently turning the A/B into a null comparison.
+    baseline_sha = resolve_git_sha(args.baseline_ref)
+    candidate_sha = resolve_git_sha("HEAD")
+    if baseline_sha == candidate_sha:
+        print(
+            "Baseline and candidate resolve to the same commit.\n"
+            "Choose an explicit --baseline-ref.",
+            file=sys.stderr,
+        )
+        return 2
+
+    generated_at = _datetime.datetime.now(_datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    environment = describe_environment()
+    candidate_dirty = working_tree_dirty()
 
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -325,7 +385,7 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as tmp:
         worktree = Path(tmp) / "baseline"
-        subprocess.run(["git", "worktree", "add", "--detach", str(worktree), args.baseline_ref],
+        subprocess.run(["git", "worktree", "add", "--detach", str(worktree), baseline_sha],
                        cwd=REPO_ROOT, check=True, capture_output=True)
         try:
             baseline_binary = build_renderer(worktree, output_dir / "render_baseline")
@@ -365,15 +425,30 @@ def main() -> int:
                 "baseline": _fmt(base),
                 "candidate": _fmt(cand),
                 "delta": delta(base, cand),
+                "baseline_ref": args.baseline_ref,
+                "baseline_sha": baseline_sha,
+                "candidate_sha": candidate_sha,
+                "candidate_worktree_dirty": str(candidate_dirty).lower(),
+                "generated_at_utc": generated_at,
+                "environment": environment,
             })
 
+    fieldnames = [
+        "material", "metric", "baseline", "candidate", "delta",
+        "baseline_ref", "baseline_sha", "candidate_sha",
+        "candidate_worktree_dirty", "generated_at_utc", "environment",
+    ]
     report = output_dir / "m3_2a_tonal_rebalance.csv"
     with report.open("w", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=["material", "metric", "baseline", "candidate", "delta"])
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 
-    print(f"baseline ref: {args.baseline_ref}")
+    print(f"baseline ref requested: {args.baseline_ref}")
+    print(f"baseline SHA:           {baseline_sha}")
+    print(f"candidate SHA:          {candidate_sha} (worktree dirty: {candidate_dirty})")
+    print(f"generated at (UTC):     {generated_at}")
+    print(f"environment:            {environment}")
     print(f"report: {report}")
     print(f"{'material':10} {'metric':14} {'baseline':>12} {'candidate':>12} {'delta':>12}")
     for row in rows:
