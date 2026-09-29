@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """M3.2A tonal bus rebalance A/B qualification.
 
-Renders the same test material through a baseline tree (default: HEAD, i.e. the
-pre-M3.2A cutoffs) and the current working tree with the offline renderer, using
-the same preset, seed and input, then reports objective perceptual metrics:
+This is a historical milestone qualification, not a generic diff against the
+current parent commit. It renders the same test material through the frozen
+pre-M3.2A baseline tree (default: the last commit before the M3.2A rebalance was
+merged, see ``M3_2A_BASELINE_SHA``) and the current working tree with the offline
+renderer, using the same preset, seed and input, then reports objective
+perceptual metrics:
 
     RMS, peak, spectral centroid, limiter gain reduction,
     band energies (80-250, 250-800, 800-2k, 2-5k, 5-10k Hz),
@@ -37,6 +40,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "build_check" / "m3_2a_tonal"
 DEFAULT_GUITAR = REPO_ROOT / "tests" / "fixtures" / "audio" / "farran_ez-soft-indie-guitar-sample-456142.wav"
 PRESET = "core/presets/factory/neutral.json"
+
+# Frozen historical baseline: the last commit before the M3.2A tonal bus
+# rebalance (M3.1). It is pinned by SHA on purpose so later commits (M3.2A.1,
+# M3.2B, ...) cannot silently move the baseline onto a tree that already carries
+# the rebalance. ``HEAD^`` / ``HEAD~N`` / a dynamic merge-base would only work
+# until the next milestone commit and are deliberately not used.
+M3_2A_BASELINE_SHA = "3b34b4d9718586cdd42060f5ea3e313a2ac9e8e5"
 
 C_SOURCES = [
     "platform/offline/sound_bubbles_render.c",
@@ -333,20 +343,26 @@ def delta(base: float, cand: float) -> str:
     return f"{cand - base:+.4f}"
 
 
-def main() -> int:
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--baseline-ref", default="HEAD^",
-        help="git ref for the pre-M3.2A baseline (default: HEAD^, the commit before the "
-             "current tip; once M3.2A is committed, HEAD would collapse onto the candidate)",
+        "--baseline-ref", default=M3_2A_BASELINE_SHA,
+        help="git ref for the pre-M3.2A baseline. Default: the frozen historical "
+             "baseline, the last commit before the M3.2A tonal rebalance "
+             f"({M3_2A_BASELINE_SHA}). Override explicitly for ad-hoc comparisons.",
     )
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="where reports and renders are written")
     parser.add_argument("--guitar", default=str(DEFAULT_GUITAR), help="plucked guitar fixture")
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    args = build_arg_parser().parse_args()
 
     # Provenance: resolve both sides to full SHAs before touching the filesystem.
-    # After M3.2A is committed, a default of HEAD would make baseline and candidate
-    # the same tree, silently turning the A/B into a null comparison.
+    # The default is a pinned pre-M3.2A SHA, but an explicit override can still
+    # collapse onto the candidate, in which case the A/B would be a null
+    # comparison; abort instead of silently rendering it.
     baseline_sha = resolve_git_sha(args.baseline_ref)
     candidate_sha = resolve_git_sha("HEAD")
     if baseline_sha == candidate_sha:
