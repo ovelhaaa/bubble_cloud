@@ -116,6 +116,13 @@ const BubbleQualityProfileLimits_t BUBBLE_QUALITY_PROFILE_LIMITS[BUBBLE_QUALITY_
 #define REVERSE_SCALE_SILENCE   0.80f
 #define REVERSE_SCALE_FREEZE    2.10f
 
+// --- M4A Auto-Hold & Phrase Anchor Tail Architecture ---
+#define BUBBLES_AUTO_HOLD_ATTACK_SECONDS       0.080f
+#define BUBBLES_AUTO_HOLD_BASE_RELEASE_SECONDS 2.200f
+#define BUBBLES_AUTO_HOLD_MAX_RETENTION        0.965f
+#define BUBBLES_AUTO_HOLD_THRESHOLD            0.015f
+#define BUBBLES_ANCHOR_MAX_MIX                 0.600f
+
 #if !defined(BUBBLES_QUALITY_ESP32_SAFE) && !defined(BUBBLES_QUALITY_WASM_FULL)
 #define BUBBLES_QUALITY_STANDARD 1
 #endif
@@ -291,9 +298,26 @@ static void ApplyQualityTierDefaults(EngineConfig_t* cfg);
 static int32_t ClampActiveVoiceLimit(int32_t requested_limit);
 static int32_t ResolveProfileVoiceLimit(BubbleQualityProfile profile);
 static void DeactivateVoicesAboveActiveLimit(SoundBubblesEngine_t* engine);
-static inline float Clamp01(float x);
-static inline float Clamp(float x, float lo, float hi);
-static inline float Lerp(float a, float b, float t);
+static inline float Clamp(float x, float lo, float hi) {
+    return fmaxf(lo, fminf(hi, x));
+}
+
+static inline float Clamp01(float x) {
+    return Clamp(x, 0.0f, 1.0f);
+}
+
+static inline float Lerp(float a, float b, float t) {
+    return a + (b - a) * t;
+}
+
+static void UpdateAutoHoldCoeffs(SoundBubblesEngine_t* engine) {
+    float sr = fmaxf(1.0f, engine->config.sample_rate);
+    float memory_val = Clamp01(engine->config.memory_mix);
+    float release_sec = BUBBLES_AUTO_HOLD_BASE_RELEASE_SECONDS + 1.2f * memory_val;
+    engine->auto_hold_attack_coef = 1.0f - expf(-1.0f / (sr * BUBBLES_AUTO_HOLD_ATTACK_SECONDS));
+    engine->auto_hold_release_coef = 1.0f - expf(-1.0f / (sr * release_sec));
+}
+
 static int32_t CountActiveVoices(const SoundBubblesEngine_t* engine);
 static void MotionResetLfo(BubbleMotionLfoState_t* lfo, uint32_t seed);
 
@@ -348,6 +372,14 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     engine->master_wet_gain = 1.0f;
     float init_amount = Clamp01(engine->config.freeze_amount);
     engine->smoothed_freeze = (init_amount > 0.0f) ? init_amount : ((engine->config.freeze_enabled != 0) ? 1.0f : 0.0f);
+    engine->auto_hold_amount = 0.0f;
+    engine->auto_hold_target = 0.0f;
+    engine->recent_phrase_active = 0;
+    engine->phrase_anchor_write_ptr = 0;
+    engine->phrase_anchor_valid = false;
+    engine->phrase_anchor_age = 0;
+    engine->anchor_mix = 0.0f;
+    UpdateAutoHoldCoeffs(engine);
     bubble_macro_map_default_values(engine->macro_values);
     bubble_macro_map_default_values(engine->macro_targets);
     engine->macro_dirty_mask = (1u << BUBBLES_MACRO_COUNT) - 1u;
@@ -426,6 +458,7 @@ void SoundBubbles_UpdateConfig(SoundBubblesEngine_t* engine, const EngineConfig_
     engine->interpolation_mode = ResolveInterpolationMode(engine->config.quality_profile);
     engine->fade_samples = ResolveFadeSamples(engine->config.sample_rate);
     DeactivateVoicesAboveActiveLimit(engine);
+    UpdateAutoHoldCoeffs(engine);
     if (rng_seed_changed) {
         SoundBubbles_SetRngSeed(engine, engine->config.rng_seed);
     }
@@ -438,6 +471,7 @@ void SoundBubbles_UpdateRuntimeConfig(SoundBubblesEngine_t* engine, const Engine
     engine->interpolation_mode = ResolveInterpolationMode(engine->config.quality_profile);
     engine->fade_samples = ResolveFadeSamples(engine->config.sample_rate);
     DeactivateVoicesAboveActiveLimit(engine);
+    UpdateAutoHoldCoeffs(engine);
 }
 
 void SoundBubbles_ResetMotionPhase(SoundBubblesEngine_t* engine) {
@@ -508,14 +542,26 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
         }
         float f = engine->smoothed_freeze;
 
-        // Smoothstep write retention curve (M3)
-        // 0.00 -> retention 0.000, write_gain 1.000
-        // 0.25 -> retention 0.156, write_gain 0.844
-        // 0.50 -> retention 0.500, write_gain 0.500
-        // 0.75 -> retention 0.844, write_gain 0.156
-        // 1.00 -> retention 1.000, write_gain 0.000
-        float retention = f * f * (3.0f - 2.0f * f);
-        float write_gain = 1.0f - retention;
+        // Update Auto-Hold continuous envelope (M4A)
+        float h_delta = engine->auto_hold_target - engine->auto_hold_amount;
+        if (fabsf(h_delta) < 1.0e-6f) {
+            engine->auto_hold_amount = engine->auto_hold_target;
+        } else {
+            float h_coef = (h_delta > 0.0f) ? engine->auto_hold_attack_coef : engine->auto_hold_release_coef;
+            engine->auto_hold_amount += h_delta * h_coef;
+        }
+        float h = engine->auto_hold_amount;
+
+        // Smoothstep write retention curves (M3 & M4A)
+        float manual_retention = f * f * (3.0f - 2.0f * f);
+        float auto_curve = h * h * (3.0f - 2.0f * h);
+        float auto_retention = auto_curve * BUBBLES_AUTO_HOLD_MAX_RETENTION;
+
+        // Composed monotonic retention (Section 5)
+        float effective_retention = 1.0f - (1.0f - manual_retention) * (1.0f - auto_retention);
+        if (effective_retention > 1.0f) effective_retention = 1.0f;
+        if (effective_retention < 0.0f) effective_retention = 0.0f;
+        float write_gain = 1.0f - effective_retention;
         bool write_locked = discrete_freeze_lock || (f >= 0.999f);
 
         float dry_sample = in_mono[i];
@@ -531,7 +577,7 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
         float clamped_sample = fmaxf(-1.0f, fminf(1.0f, dry_sample));
         if (!write_locked) {
             float old_sample = (float)engine->delay_buffer[engine->write_ptr] * (1.0f / 32767.0f);
-            float mixed = old_sample * retention + clamped_sample * write_gain;
+            float mixed = old_sample * effective_retention + clamped_sample * write_gain;
             engine->delay_buffer[engine->write_ptr] = (int16_t)(fmaxf(-1.0f, fminf(1.0f, mixed)) * 32767.0f);
         }
 
@@ -768,6 +814,7 @@ float SoundBubbles_ApplyFinalLimiter(SoundBubblesEngine_t* engine, float* out_le
 
 static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_peak) {
     float prev_env = engine->env_follower_state;
+    EngineState_t prev_state = engine->engine_state;
 
     // Update envelope
     engine->env_follower_state = UpdateEnvelope(prev_env, block_abs_peak, ENV_ATTACK_COEF, ENV_RELEASE_COEF);
@@ -786,23 +833,105 @@ static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_
         engine->bloom_timer_ticks = PRESENCE_BLOOM_TICKS;
         Scheduler_SpawnImmediateBurst(engine);
 
+        // M4A: Capture phrase anchor on transient onset
+        engine->phrase_anchor_write_ptr = engine->write_ptr;
+        engine->phrase_anchor_valid = true;
+        engine->phrase_anchor_age = 0;
+        engine->recent_phrase_active = 1;
+        engine->auto_hold_target = 0.0f;
+
     } else if (engine->burst_timer_ticks > 0) {
         engine->burst_timer_ticks--;
         if (engine->engine_state == ENGINE_STATE_TRANSIENT_BURST && engine->burst_timer_ticks < (engine->config.burst_duration_ticks - 2)) {
             engine->engine_state = ENGINE_STATE_ATTACK_ONGOING;
         }
+        engine->recent_phrase_active = 1;
+        engine->auto_hold_target = 0.0f;
     } else {
         if (engine->env_follower_state > engine->config.sustain_thresh) {
             engine->engine_state = ENGINE_STATE_SUSTAIN_BODY;
+            if (prev_state == ENGINE_STATE_SILENCE || prev_state == ENGINE_STATE_SPARSE_DECAY) {
+                engine->phrase_anchor_write_ptr = engine->write_ptr;
+                engine->phrase_anchor_valid = true;
+                engine->phrase_anchor_age = 0;
+            }
+            engine->recent_phrase_active = 1;
+            engine->auto_hold_target = 0.0f;
         } else if (engine->env_follower_state > engine->config.tracking_thresh) {
             engine->engine_state = ENGINE_STATE_SPARSE_DECAY;
+            if (engine->recent_phrase_active) {
+                if (engine->auto_hold_amount < 0.85f && engine->auto_hold_target >= 0.0f) {
+                    engine->auto_hold_target = 1.0f;
+                } else {
+                    engine->auto_hold_target = 0.0f;
+                }
+            }
         } else if (engine->smoothed_freeze > 0.05f) {
             // Active freeze sustains the cloud across quiet input (M3)
             engine->engine_state = ENGINE_STATE_SUSTAIN_BODY;
         } else {
             engine->engine_state = ENGINE_STATE_SILENCE;
+            if (engine->recent_phrase_active && engine->phrase_anchor_valid) {
+                if (engine->auto_hold_amount < 0.85f && engine->auto_hold_target >= 0.5f) {
+                    // Let auto-hold attack reach full retention
+                    engine->auto_hold_target = 1.0f;
+                } else if (engine->auto_hold_amount < 0.15f) {
+                    // Entered silence directly after phrase: start auto-hold attack
+                    engine->auto_hold_target = 1.0f;
+                } else if (engine->auto_hold_amount > BUBBLES_AUTO_HOLD_THRESHOLD) {
+                    // Peak reached; enter release phase towards 0.0
+                    engine->auto_hold_target = 0.0f;
+                } else {
+                    // Auto-hold released to silence; idle
+                    engine->auto_hold_target = 0.0f;
+                    engine->auto_hold_amount = 0.0f;
+                    engine->recent_phrase_active = 0;
+                    engine->phrase_anchor_valid = false;
+                }
+            } else {
+                engine->auto_hold_target = 0.0f;
+                engine->auto_hold_amount = 0.0f;
+                engine->recent_phrase_active = 0;
+                engine->phrase_anchor_valid = false;
+            }
         }
     }
+
+    // M4A: Track phrase anchor age
+    if (engine->phrase_anchor_valid) {
+        engine->phrase_anchor_age += BUBBLES_BLOCK_SIZE;
+        float max_anchor_age_samples = 10.0f * engine->config.sample_rate;
+        if ((float)engine->phrase_anchor_age >= max_anchor_age_samples) {
+            engine->phrase_anchor_valid = false;
+        }
+    }
+
+    // M4A: Derive and smooth anchor mix (Section 11)
+    float target_anchor_mix = 0.0f;
+    if (engine->phrase_anchor_valid) {
+        float state_weight = 0.0f;
+        switch (engine->engine_state) {
+            case ENGINE_STATE_TRANSIENT_BURST:
+            case ENGINE_STATE_ATTACK_ONGOING:
+                state_weight = 0.0f;
+                break;
+            case ENGINE_STATE_SUSTAIN_BODY:
+                state_weight = 0.08f;
+                break;
+            case ENGINE_STATE_SPARSE_DECAY:
+                state_weight = 0.40f;
+                break;
+            case ENGINE_STATE_SILENCE:
+            default:
+                state_weight = BUBBLES_ANCHOR_MAX_MIX;
+                break;
+        }
+        float mem_mod = 0.85f + 0.30f * Clamp01(engine->config.memory_mix);
+        float hold_mod = fmaxf(engine->auto_hold_amount, (engine->engine_state == ENGINE_STATE_SPARSE_DECAY ? 0.35f : 0.0f));
+        target_anchor_mix = state_weight * hold_mod * mem_mod;
+        target_anchor_mix = Clamp(target_anchor_mix, 0.0f, BUBBLES_ANCHOR_MAX_MIX);
+    }
+    engine->anchor_mix += (target_anchor_mix - engine->anchor_mix) * 0.15f;
 
     if (engine->bloom_timer_ticks > 0) {
         engine->bloom_timer_ticks--;
@@ -850,7 +979,12 @@ static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_
             break;
         case ENGINE_STATE_SILENCE:
         default:
-            engine->wet_presence_target = Lerp(0.32f, 0.90f, engine->smoothed_freeze);
+            if (engine->auto_hold_amount > BUBBLES_AUTO_HOLD_THRESHOLD) {
+                float tail_pres = Lerp(0.32f, 0.65f, engine->auto_hold_amount);
+                engine->wet_presence_target = Lerp(tail_pres, 0.90f, engine->smoothed_freeze);
+            } else {
+                engine->wet_presence_target = Lerp(0.32f, 0.90f, engine->smoothed_freeze);
+            }
             break;
     }
 
@@ -921,7 +1055,13 @@ static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_
         }
         case ENGINE_STATE_SILENCE:
         default:
-            engine->target_density = 0.0f;
+            if (engine->auto_hold_amount > BUBBLES_AUTO_HOLD_THRESHOLD && engine->phrase_anchor_valid) {
+                float base_density = engine->config.density_sustain;
+                float initial_ratio = 0.35f;
+                engine->target_density = base_density * initial_ratio * engine->auto_hold_amount;
+            } else {
+                engine->target_density = 0.0f;
+            }
             break;
     }
 
@@ -953,8 +1093,15 @@ static BubbleClass_t Scheduler_SelectClassForState(SoundBubblesEngine_t* engine,
             return (r < 0.7f) ? BUBBLE_CLASS_SUSTAIN_BODY : BUBBLE_CLASS_SHORT_INTERMEDIATE;
         case ENGINE_STATE_SPARSE_DECAY:
             return BUBBLE_CLASS_SUSTAIN_BODY;
+        case ENGINE_STATE_SILENCE:
         default:
-            return BUBBLE_CLASS_SHORT_INTERMEDIATE;
+            if (r < 0.05f) {
+                return BUBBLE_CLASS_MICRO_ATTACK;
+            } else if (r < 0.40f) {
+                return BUBBLE_CLASS_SHORT_INTERMEDIATE;
+            } else {
+                return BUBBLE_CLASS_SUSTAIN_BODY;
+            }
     }
 }
 
@@ -1067,8 +1214,10 @@ static void Scheduler_RunTick(SoundBubblesEngine_t* engine) {
     }
 
     if (engine->engine_state == ENGINE_STATE_SILENCE) {
-        engine->spawn_accumulator = 0.0f;
-        return;
+        if (!(engine->auto_hold_amount > BUBBLES_AUTO_HOLD_THRESHOLD && engine->phrase_anchor_valid)) {
+            engine->spawn_accumulator = 0.0f;
+            return;
+        }
     }
 
     if (engine->config.tempo_sync_enabled) {
@@ -1664,6 +1813,29 @@ static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadR
     int32_t offset = min_offset + (int32_t)(t * (float)span);
     if (offset < min_offset) offset = min_offset;
     if (offset > max_offset) offset = max_offset;
+
+    // M4A: Phrase Anchor reading during decay/tail (Section 10-12)
+    // With mixture probability anchor_mix (up to 0.60), grains sample near the phrase anchor.
+    if (engine->phrase_anchor_valid && engine->anchor_mix > 0.001f) {
+        float mix = Clamp(engine->anchor_mix, 0.0f, BUBBLES_ANCHOR_MAX_MIX);
+        float anchor_roll = RandomFloat01(engine);
+        if (anchor_roll < mix) {
+            int32_t anchor_distance = engine->write_ptr - engine->phrase_anchor_write_ptr;
+            if (anchor_distance < 0) anchor_distance += buffer_size;
+
+            float mem_macro = Clamp01(engine->config.memory_mix);
+            float spread_sec = 0.050f + 0.150f * mem_macro;
+            int32_t spread_samples = (int32_t)(spread_sec * engine->config.sample_rate);
+            if (spread_samples < 32) spread_samples = 32;
+
+            float anchor_u = RandomFloat01(engine);
+            int32_t candidate_anchor_offset = anchor_distance - (int32_t)(anchor_u * (float)spread_samples);
+            if (candidate_anchor_offset < min_safe) candidate_anchor_offset = min_safe;
+            if (candidate_anchor_offset > max_safe) candidate_anchor_offset = max_safe;
+            offset = candidate_anchor_offset;
+        }
+    }
+
     return offset;
 }
 
@@ -1889,17 +2061,6 @@ static float SharedSpawnRandom(SoundBubblesEngine_t* engine, float coherence, Sh
     return value;
 }
 
-static inline float Clamp01(float x) {
-    return Clamp(x, 0.0f, 1.0f);
-}
-
-static inline float Clamp(float x, float lo, float hi) {
-    return fmaxf(lo, fminf(hi, x));
-}
-
-static inline float Lerp(float a, float b, float t) {
-    return a + (b - a) * t;
-}
 
 static int32_t CountActiveVoices(const SoundBubblesEngine_t* engine) {
     int32_t count = 0;
@@ -2285,4 +2446,29 @@ static float LookupWindow(float phase, WindowType_t type) {
     } else {
         return WindowLUT_Tukey[idx];
     }
+}
+
+float SoundBubbles_GetAutoHoldAmount(const SoundBubblesEngine_t* engine) {
+    if (engine == NULL) return 0.0f;
+    return engine->auto_hold_amount;
+}
+
+int32_t SoundBubbles_GetPhraseAnchorWritePtr(const SoundBubblesEngine_t* engine) {
+    if (engine == NULL) return 0;
+    return engine->phrase_anchor_write_ptr;
+}
+
+bool SoundBubbles_GetPhraseAnchorValid(const SoundBubblesEngine_t* engine) {
+    if (engine == NULL) return false;
+    return engine->phrase_anchor_valid;
+}
+
+uint32_t SoundBubbles_GetPhraseAnchorAge(const SoundBubblesEngine_t* engine) {
+    if (engine == NULL) return 0u;
+    return engine->phrase_anchor_age;
+}
+
+float SoundBubbles_GetAnchorMix(const SoundBubblesEngine_t* engine) {
+    if (engine == NULL) return 0.0f;
+    return engine->anchor_mix;
 }

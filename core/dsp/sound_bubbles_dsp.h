@@ -480,6 +480,17 @@ typedef struct {
     // Continuous Freeze & Temporal Morphing state (M3)
     float smoothed_freeze;
 
+    // Auto-Hold & Phrase Anchor Tail Architecture (M4A)
+    float auto_hold_amount;
+    float auto_hold_target;
+    float auto_hold_attack_coef;
+    float auto_hold_release_coef;
+    uint8_t recent_phrase_active;
+    int32_t phrase_anchor_write_ptr;
+    bool phrase_anchor_valid;
+    uint32_t phrase_anchor_age;
+    float anchor_mix;
+
     // Product-facing macro state. Targets are written by bubble_engine_set_parameter();
     // current values are slewed at control-rate before being mapped to raw DSP fields.
     float macro_values[BUBBLES_MACRO_COUNT];
@@ -571,6 +582,13 @@ SOUND_BUBBLES_DEPRECATED void SoundBubbles_SetMetricsCallback(SoundBubblesEngine
 // SoundBubbles_GetInterpolationMode() reports the mode cached on a live engine.
 BubbleInterpolationMode_t SoundBubbles_InterpolationModeForProfile(BubbleQualityProfile profile);
 BubbleInterpolationMode_t SoundBubbles_GetInterpolationMode(const SoundBubblesEngine_t* engine);
+
+// M4A Auto-Hold & Phrase Anchor inspection helpers
+float SoundBubbles_GetAutoHoldAmount(const SoundBubblesEngine_t* engine);
+int32_t SoundBubbles_GetPhraseAnchorWritePtr(const SoundBubblesEngine_t* engine);
+bool SoundBubbles_GetPhraseAnchorValid(const SoundBubblesEngine_t* engine);
+uint32_t SoundBubbles_GetPhraseAnchorAge(const SoundBubblesEngine_t* engine);
+float SoundBubbles_GetAnchorMix(const SoundBubblesEngine_t* engine);
 
 #if defined(BUBBLES_INTERPOLATION_TELEMETRY) || defined(BUBBLES_BUILD_PROCESSOR_TESTS)
 // Test/telemetry-only: number of samples rendered through each interpolation
