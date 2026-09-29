@@ -124,11 +124,15 @@ namespace
 
     std::unique_ptr<juce::AudioParameterChoice> makeQualityParameter()
     {
+        // The VST opens at the highest quality tier by default. Every factory
+        // preset also ships at this tier, so a fresh instance, a preset load and
+        // a restored state all run WEB_ULTRA (shared-core Hermite) unless the
+        // user explicitly selects a lower profile.
         return std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID { "QUALITY_PROFILE", 1 },
             "Quality Profile",
             juce::StringArray { "Eco", "Balanced", "Studio", "Ultra" },
-            2);
+            3);
     }
 
     std::unique_ptr<juce::AudioParameterBool> makeAdvancedToggle(const char* id,

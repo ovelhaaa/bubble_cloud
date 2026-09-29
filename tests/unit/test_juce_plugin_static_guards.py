@@ -87,11 +87,28 @@ def test_vst_factory_catalog_contains_new_macro_presets() -> None:
     for expected_name in EXPECTED_NEW_PRESETS:
         assert expected_name in names
 
+    # M3.2B.1 follow-up: every VST factory preset ships at the highest quality
+    # tier (WEB_ULTRA = 3, shared-core Hermite), never a lower profile.
     for name, quality, macros in presets:
-        assert 0 <= quality <= 3, f"{name}: invalid quality profile {quality}"
+        assert quality == 3, f"{name}: expected the highest quality profile (3), got {quality}"
         assert [macro_name for macro_name, _ in macros] == EXPECTED_MACRO_IDS
         for macro_name, value in macros:
             assert 0.0 <= value <= 1.0, f"{name}: {macro_name}={value} outside 0..1"
+
+
+def test_quality_choice_defaults_to_ultra() -> None:
+    """A fresh VST instance must open at the highest quality profile (index 3 =
+    Ultra = WEB_ULTRA = Hermite), not Studio/Balanced/Eco."""
+    source = PLUGIN_PROCESSOR.read_text(encoding="utf-8")
+    quality_block_match = re.search(
+        r'makeQualityParameter\(\).*?juce::StringArray\s*\{\s*"Eco",\s*"Balanced",\s*"Studio",\s*"Ultra"\s*\},\s*(\d+)\s*\)',
+        source,
+        re.DOTALL,
+    )
+    assert quality_block_match is not None, "makeQualityParameter default not found"
+    assert quality_block_match.group(1) == "3", (
+        "quality profile default must be Ultra (3) so the VST runs WEB_ULTRA / Hermite out of the box"
+    )
 
 
 def test_quality_choice_is_forwarded_as_denormalised_index() -> None:

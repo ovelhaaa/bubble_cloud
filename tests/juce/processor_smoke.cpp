@@ -340,6 +340,15 @@ namespace
         processor.setRateAndBufferSizeDetails(48000.0, 128);
         processor.prepareToPlay(48000.0, 128);
 
+        // A fresh instance must open at the highest tier: Ultra (3), which maps
+        // to WEB_ULTRA / Hermite in the shared core.
+        const auto* defaultQuality = processor.treeState.getRawParameterValue("QUALITY_PROFILE");
+        require(defaultQuality != nullptr && std::abs(defaultQuality->load() - 3.0f) < 0.001f,
+                "a fresh VST instance must default to the Ultra quality profile");
+        render(processor);
+        require(processor.getEngineInterpolationMode() == 1,
+                "the default Ultra profile did not activate the Hermite path");
+
         // WEB_STANDARD: Hermite selected and executed, linear untouched.
         setParameter(processor, "QUALITY_PROFILE", 2.0f);
         render(processor);

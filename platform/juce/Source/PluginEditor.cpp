@@ -44,7 +44,7 @@ namespace
     const std::array<FactoryPreset, 20> factoryPresets {{
         {
             "Neutral",
-            2,
+            3,
             {{
                 { "DENSITY", 0.50f },
                 { "BLOOM", 0.50f },
@@ -62,7 +62,7 @@ namespace
         },
         {
             "Ambient Bloom",
-            1,
+            3,
             {{
                 { "DENSITY", 0.44f },
                 { "BLOOM", 0.86f },
@@ -80,7 +80,7 @@ namespace
         },
         {
             "Glass Rain",
-            1,
+            3,
             {{
                 { "DENSITY", 0.62f },
                 { "BLOOM", 0.54f },
@@ -98,7 +98,7 @@ namespace
         },
         {
             "Frozen Cathedral",
-            2,
+            3,
             {{
                 { "DENSITY", 0.50f },
                 { "BLOOM", 0.92f },
@@ -116,7 +116,7 @@ namespace
         },
         {
             "Pick Halo",
-            1,
+            3,
             {{
                 { "DENSITY", 0.26f },
                 { "BLOOM", 0.22f },
@@ -134,7 +134,7 @@ namespace
         },
         {
             "Bass Shadow",
-            0,
+            3,
             {{
                 { "DENSITY", 0.32f },
                 { "BLOOM", 0.36f },
@@ -152,7 +152,7 @@ namespace
         },
         {
             "Vocal Veil",
-            1,
+            3,
             {{
                 { "DENSITY", 0.34f },
                 { "BLOOM", 0.52f },
@@ -170,7 +170,7 @@ namespace
         },
         {
             "Small Cloud",
-            0,
+            3,
             {{
                 { "DENSITY", 0.42f },
                 { "BLOOM", 0.30f },
@@ -188,7 +188,7 @@ namespace
         },
         {
             "Firefly Arp",
-            1,
+            3,
             {{
                 { "DENSITY", 0.48f },
                 { "BLOOM", 0.38f },
@@ -206,7 +206,7 @@ namespace
         },
         {
             "Reverse Undercurrent",
-            2,
+            3,
             {{
                 { "DENSITY", 0.44f },
                 { "BLOOM", 0.56f },
@@ -224,7 +224,7 @@ namespace
         },
         {
             "Wide Clean Doubler",
-            1,
+            3,
             {{
                 { "DENSITY", 0.38f },
                 { "BLOOM", 0.18f },
@@ -242,7 +242,7 @@ namespace
         },
         {
             "Capture Ready",
-            2,
+            3,
             {{
                 { "DENSITY", 0.46f },
                 { "BLOOM", 0.86f },
@@ -260,7 +260,7 @@ namespace
         },
         {
             "Quarter Strum",
-            1,
+            3,
             {{
                 { "DENSITY", 0.44f },
                 { "BLOOM", 0.36f },
@@ -279,7 +279,7 @@ namespace
         },
         {
             "Tresillo Spray",
-            1,
+            3,
             {{
                 { "DENSITY", 0.52f },
                 { "BLOOM", 0.28f },
@@ -298,7 +298,7 @@ namespace
         },
         {
             "Last-16th Swarm",
-            2,
+            3,
             {{
                 { "DENSITY", 0.34f },
                 { "BLOOM", 0.22f },
@@ -317,7 +317,7 @@ namespace
         },
         {
             "Reverse Pulse",
-            2,
+            3,
             {{
                 { "DENSITY", 0.40f },
                 { "BLOOM", 0.56f },
@@ -336,7 +336,7 @@ namespace
         },
         {
             "Fifth Choir",
-            2,
+            3,
             {{
                 { "DENSITY", 0.46f },
                 { "BLOOM", 0.82f },
@@ -355,7 +355,7 @@ namespace
         },
         {
             "Undertow Octave",
-            1,
+            3,
             {{
                 { "DENSITY", 0.38f },
                 { "BLOOM", 0.58f },
@@ -374,7 +374,7 @@ namespace
         },
         {
             "Morse Dust",
-            1,
+            3,
             {{
                 { "DENSITY", 0.28f },
                 { "BLOOM", 0.12f },
@@ -393,7 +393,7 @@ namespace
         },
         {
             "Broken Constellation",
-            1,
+            3,
             {{
                 { "DENSITY", 0.36f },
                 { "BLOOM", 0.24f },
