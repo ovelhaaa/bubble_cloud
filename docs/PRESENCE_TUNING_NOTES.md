@@ -41,10 +41,10 @@ creating an audible post-attack bloom without adding heavy DSP or stochastic tim
 
 To improve spectral separation using existing components:
 
-- **Micro bus** remains bright via the existing HPF path and receives mild emphasis during attack states.
-- **Sustain bus** remains darker via the existing LPF path, with subtle stage-dependent tilt.
+- **Micro bus** keeps the fundamental and low-mid body via a gentle ~300 Hz HPF (M3.2A); it stays defined without collapsing into a thin "click".
+- **Sustain bus** stays slightly darker than the attack via a dynamic ~3.5–7 kHz 1-pole LPF (M3.2A) that opens on attacks and closes through decay and with higher WARMTH, with subtle stage-dependent tilt.
 
-This keeps the onset crisp while letting sustain content sit deeper in the mix.
+This keeps the onset crisp while letting sustain content sit deeper in the mix, without the two buses sounding like disconnected sources.
 
 ## CPU and Determinism Notes
 

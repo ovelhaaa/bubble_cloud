@@ -392,6 +392,13 @@ typedef struct {
     Filter1Pole_t sustain_lpf_r;
     Filter1Pole_t ducking_lpf;     // Smoothing filter for ducking gain
     Filter1Pole_t wet_presence_lpf;// Control-rate smoothing for wet presence target
+
+    // M3.2A tonal bus rebalance: the sustain LPF cutoff is modulated at control
+    // rate by phrase state and the resolved WARMTH/CLARITY darkness, then
+    // smoothed so warmth automation and phrase transitions cannot cause zipper.
+    float sustain_lpf_cutoff_smoothed_hz; // control-rate smoothed target cutoff
+    float sustain_lpf_applied_hz;         // cutoff of the coefficients currently loaded
+    float sustain_lpf_smooth_coef;        // control-rate one-pole smoothing coefficient
     float sustain_diffusion_delay_l[BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY];
     float sustain_diffusion_delay_r[BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY];
     float sustain_diffusion_delay2_l[BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY];

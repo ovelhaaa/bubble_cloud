@@ -92,7 +92,7 @@ Parameters are exposed via macro-level, physics-inspired labels rather than raw 
 * Simple envelope follower and discrete derivative for transient detection.
 * 2 deterministic states: Attack (spawns 10ms rectangular-windowed grains near the write head) and Sustain (spawns 100ms Hann-windowed grains drifting backwards).
 * Hard voice stealing on new transients.
-* Fixed internal filters (Attack = HPF @ 1kHz, Sustain = LPF @ 2kHz).
+* Fixed internal filters (Attack = HPF @ ~300 Hz, Sustain = dynamic LPF @ ~3.5–7 kHz; see `docs/M3_2A_TONAL_BUS_REBALANCE.md`).
 
 ## 15. Scalable future extensions that do not break the core concept
 * **Stereo Spread**: Panning alternating bubbles hard left and right for expansive width.

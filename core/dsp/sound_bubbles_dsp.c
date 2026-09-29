@@ -53,6 +53,33 @@ const BubbleQualityProfileLimits_t BUBBLE_QUALITY_PROFILE_LIMITS[BUBBLE_QUALITY_
 #define STEAL_MICRO_PROTECT_PHASE 0.5f
 #define PRESENCE_BLOOM_TICKS 32
 
+// --- M3.2A Tonal Bus Rebalance ---
+// The attack bus only needs its rumble/DC removed so it keeps the fundamental
+// and low-mid body instead of collapsing towards a thin "click" (was a fixed
+// 1500 Hz HPF). 1-pole, fixed in this milestone.
+#define ATTACK_HPF_CUTOFF_HZ 300.0f
+// The sustain bus is opened up so it keeps body and presence and glues to the
+// attack (was a fixed 2000 Hz LPF). Its cutoff breathes with phrase state and
+// the resolved WARMTH/CLARITY darkness, inside this safe range. 1-pole,
+// control-rate smoothed.
+#define SUSTAIN_LPF_BASE_HZ 5000.0f
+#define SUSTAIN_LPF_MIN_HZ 3500.0f
+#define SUSTAIN_LPF_MAX_HZ 7000.0f
+// Phrase-state openness (1 = open / bright, 0 = closed / dark).
+#define SUSTAIN_LPF_OPEN_TRANSIENT 1.00f
+#define SUSTAIN_LPF_OPEN_ATTACK    0.90f
+#define SUSTAIN_LPF_OPEN_SUSTAIN   0.50f
+#define SUSTAIN_LPF_OPEN_DECAY     0.25f
+#define SUSTAIN_LPF_OPEN_SILENCE   0.10f
+// High resolved darkness (WARMTH/CLARITY) pulls the sustain cutoff increasingly
+// dark; low darkness keeps it open.
+#define SUSTAIN_LPF_WARMTH_DARKEN 0.65f
+// Control-rate cutoff smoothing time (~20 ms) avoids zipper on warmth automation
+// and phrase transitions. Coefficients are refreshed only after the smoothed
+// cutoff actually moved, so expf() runs at most a few times per control block.
+#define SUSTAIN_LPF_SMOOTH_SECONDS 0.020f
+#define SUSTAIN_LPF_COEFF_EPSILON_HZ 1.0f
+
 // Internal non-UI defaults for bus and presence shaping (musical tuning constants).
 #define CLASS_GAIN_MICRO_DEFAULT   1.15f
 #define CLASS_GAIN_SHORT_DEFAULT   0.96f
@@ -164,6 +191,9 @@ static inline bool CheckGuardZoneDirectional(int32_t write_ptr, float read_ptr_f
 static float ResolvePitchModeRate(SoundBubblesEngine_t* engine);
 
 static void CalculateFilterCoeffsLPF(Filter1Pole_t* f, float cutoff_hz, float sample_rate);
+static void UpdateFilterCoeffsLPF(Filter1Pole_t* f, float cutoff_hz, float sample_rate);
+static float ResolveSustainLpfTargetHz(const SoundBubblesEngine_t* engine);
+static void UpdateSustainBusTone(SoundBubblesEngine_t* engine);
 static inline float Filter1Pole_ProcessLPF(Filter1Pole_t* f, float input);
 static inline float Filter1Pole_ProcessHPF(Filter1Pole_t* f, float input);
 
@@ -322,11 +352,20 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     }
 
     // Attack HPF (implemented internally as input - LPF), one state per stereo channel.
-    CalculateFilterCoeffsLPF(&engine->attack_hpf_l, 1500.0f, engine->config.sample_rate);
-    CalculateFilterCoeffsLPF(&engine->attack_hpf_r, 1500.0f, engine->config.sample_rate);
-    // Sustain LPF, one state per stereo channel.
-    CalculateFilterCoeffsLPF(&engine->sustain_lpf_l, 2000.0f, engine->config.sample_rate);
-    CalculateFilterCoeffsLPF(&engine->sustain_lpf_r, 2000.0f, engine->config.sample_rate);
+    // M3.2A: only removes rumble/DC; fundamental and low-mid body are preserved so
+    // attack and sustain share the same source body.
+    CalculateFilterCoeffsLPF(&engine->attack_hpf_l, ATTACK_HPF_CUTOFF_HZ, engine->config.sample_rate);
+    CalculateFilterCoeffsLPF(&engine->attack_hpf_r, ATTACK_HPF_CUTOFF_HZ, engine->config.sample_rate);
+    // Sustain LPF, one state per stereo channel. Starts open at the base cutoff and
+    // is then breathed by UpdateSustainBusTone() at control rate.
+    CalculateFilterCoeffsLPF(&engine->sustain_lpf_l, SUSTAIN_LPF_BASE_HZ, engine->config.sample_rate);
+    CalculateFilterCoeffsLPF(&engine->sustain_lpf_r, SUSTAIN_LPF_BASE_HZ, engine->config.sample_rate);
+    engine->sustain_lpf_cutoff_smoothed_hz = SUSTAIN_LPF_BASE_HZ;
+    engine->sustain_lpf_applied_hz = SUSTAIN_LPF_BASE_HZ;
+    {
+        float control_dt = (float)BUBBLES_BLOCK_SIZE / fmaxf(1.0f, engine->config.sample_rate);
+        engine->sustain_lpf_smooth_coef = 1.0f - expf(-control_dt / SUSTAIN_LPF_SMOOTH_SECONDS);
+    }
 
     engine->ducking_lpf.b0 = engine->config.duck_attack_coef;
     engine->ducking_lpf.a1 = 1.0f - engine->config.duck_attack_coef;
@@ -627,6 +666,7 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
             Scheduler_ResetSpawnIdentity(engine);
             engine->metrics_tick_spawn_count = 0;
             UpdateStateAndDensity(engine, block_peak);
+            UpdateSustainBusTone(engine);
             Scheduler_RunTick(engine);
 
             engine->metrics_last_block.spawn_count = engine->metrics_tick_spawn_count;
@@ -1852,6 +1892,49 @@ static void CalculateFilterCoeffsLPF(Filter1Pole_t* f, float cutoff_hz, float sa
     f->a1 = a1;
     f->b0 = 1.0f - a1;
     f->z1 = 0.0f;
+}
+
+// Recompute the 1-pole lowpass coefficients while preserving z1. Unlike
+// CalculateFilterCoeffsLPF() (init only), this is used by the control-rate tone
+// update, so the filter state must never be reset: that would click.
+static void UpdateFilterCoeffsLPF(Filter1Pole_t* f, float cutoff_hz, float sample_rate) {
+    float a1 = expf(-2.0f * M_PI * cutoff_hz / sample_rate);
+    f->a1 = a1;
+    f->b0 = 1.0f - a1;
+}
+
+// Sustain bus target cutoff, driven by phrase state and the resolved tonal
+// darkness (WARMTH is folded into sustain_darkness by the macro map, and CLARITY
+// also acts through it). Attacks open the sustain bus, decay closes it, and high
+// darkness pulls it darker.
+static float ResolveSustainLpfTargetHz(const SoundBubblesEngine_t* engine) {
+    float state_open;
+    switch (engine->engine_state) {
+        case ENGINE_STATE_TRANSIENT_BURST: state_open = SUSTAIN_LPF_OPEN_TRANSIENT; break;
+        case ENGINE_STATE_ATTACK_ONGOING:  state_open = SUSTAIN_LPF_OPEN_ATTACK; break;
+        case ENGINE_STATE_SUSTAIN_BODY:    state_open = SUSTAIN_LPF_OPEN_SUSTAIN; break;
+        case ENGINE_STATE_SPARSE_DECAY:    state_open = SUSTAIN_LPF_OPEN_DECAY; break;
+        case ENGINE_STATE_SILENCE:
+        default:                           state_open = SUSTAIN_LPF_OPEN_SILENCE; break;
+    }
+    float darkness = Clamp01(engine->config.sustain_darkness);
+    float openness = state_open * Lerp(1.0f, 1.0f - SUSTAIN_LPF_WARMTH_DARKEN, darkness);
+    return SUSTAIN_LPF_MIN_HZ + (SUSTAIN_LPF_MAX_HZ - SUSTAIN_LPF_MIN_HZ) * Clamp01(openness);
+}
+
+// Control-rate sustain LPF tone update. No per-sample or per-voice expf(): the
+// cutoff is slewed once per control tick and the coefficients are refreshed only
+// when the smoothed cutoff actually moved.
+static void UpdateSustainBusTone(SoundBubblesEngine_t* engine) {
+    float target = ResolveSustainLpfTargetHz(engine);
+    float current = engine->sustain_lpf_cutoff_smoothed_hz;
+    current += (target - current) * engine->sustain_lpf_smooth_coef;
+    if (fabsf(current - engine->sustain_lpf_applied_hz) >= SUSTAIN_LPF_COEFF_EPSILON_HZ) {
+        UpdateFilterCoeffsLPF(&engine->sustain_lpf_l, current, engine->config.sample_rate);
+        UpdateFilterCoeffsLPF(&engine->sustain_lpf_r, current, engine->config.sample_rate);
+        engine->sustain_lpf_applied_hz = current;
+    }
+    engine->sustain_lpf_cutoff_smoothed_hz = current;
 }
 
 static inline float Filter1Pole_ProcessLPF(Filter1Pole_t* f, float input) {

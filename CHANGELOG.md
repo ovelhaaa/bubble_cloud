@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0-rc.1 — 2026-09-29
+
+- **M3.2A — Tonal Bus Rebalance.** Corrects the overly aggressive tonal split between the attack and sustain buses. Purely tonal: no scheduler, spawn timing, interpolation, ring buffer, Freeze, memory tiers, Sparkle, microdetune, reverse, stereo coherence, droplets, limiter, wet normalization, diffusion, feedback, FDN, presets or UI changes.
+- Attack HPF: fixed 1500 Hz → fixed 300 Hz (1-pole, calibration range 200–400 Hz). Keeps fundamental and low-mid body instead of collapsing the attack into a thin "click".
+- Sustain LPF: fixed 2000 Hz → dynamic 3.5–7 kHz (1-pole, init/base 5000 Hz). Cutoff is `state_open × lerp(1.0, 0.35, clamp01(sustain_darkness))` inside `3500 + 3500·openness`, so attacks open the bus, decay closes it, and the resolved WARMTH (folded into `sustain_darkness` by the macro map; CLARITY also acts through it) darkens it.
+- Smoothing: a ~20 ms control-rate one-pole slews the cutoff; `a1/b0` are refreshed only after the smoothed cutoff moved ≥ 1 Hz, via `UpdateFilterCoeffsLPF` which **preserves `z1`** (no click/zipper). No per-voice/per-sample `expf()`.
+- Preserved: `attack_tilt`/`sustain_tilt` ranges, `attack_brightness`/`sustain_darkness` per-grain tone gain, WARMTH/BLOOM/CLARITY mapping, all other DSP contracts.
+- Tests: new objective `tests/dsp/m3_2a_tone_harness.c` (+ `tests/dsp/test_m3_2a_tone.py`) measures each bus before/after its filter per frequency, band continuity, state/WARMTH modulation, per-tick smoothing bound and SR invariance. `scripts/m3_2a_tonal_rebalance.py` renders before/after (pluck/pad/transient) with RMS, peak, spectral centroid, band energy, transient→sustain continuity and limiter GR. Documentation in `docs/M3_2A_TONAL_BUS_REBALANCE.md`.
+
 ## 1.2.0-rc.6 — 2026-09-27
 
 - **M2 — Musical Cloud Character: FROZEN.** Documentation-only freeze. No DSP, scheduler, RNG, preset, parameter, UI or sound changes.

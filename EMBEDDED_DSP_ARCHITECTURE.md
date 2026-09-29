@@ -219,11 +219,11 @@ O processamento ocorre pós-soma das `MAX_VOICES`, manipulando apenas 3 busses e
 
 *   **Attack Bus (Class 1):**
     *   Recebe hard-panned L/R outputs.
-    *   Filtro: Passa-alta Global (Biquad ou 1-pole HPF, cutoff ~800 Hz).
+    *   Filtro: Passa-alta Global (1-pole HPF, cutoff ~300 Hz). Remove apenas rumble/DC e preserva fundamental e médios-baixos; ver `docs/M3_2A_TONAL_BUS_REBALANCE.md`.
 *   **Flat Bus (Class 2):**
     *   Nenhum filtro. Mix direto na soma master.
 *   **Sustain Bus (Class 3):**
-    *   Filtro: Passa-baixa Global (1-pole LPF, cutoff ~2000 Hz, fixo).
+    *   Filtro: Passa-baixa Global (1-pole LPF, cutoff dinâmico ~3.5–7 kHz, suavizado em control-rate por estado da frase + WARMTH/CLARITY resolvidos).
 
 *   **Mix Final:**
     *   `Wet_L = (Attack_L + Flat_L + Sustain_L) * global_wet_ducking_state * wet_volume_pot`.
