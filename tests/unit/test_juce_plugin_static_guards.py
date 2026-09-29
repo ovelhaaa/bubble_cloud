@@ -279,3 +279,42 @@ def test_release_candidate_has_perceptual_morph_calibration_and_pluginval() -> N
     assert "Get-FileHash" in workflow
     assert 'COMPANY_NAME "Bubbles Audio"' in JUCE_CMAKE.read_text(encoding="utf-8")
     assert 'BUNDLE_ID "audio.bubbles.Bubbles"' in JUCE_CMAKE.read_text(encoding="utf-8")
+
+
+def test_quality_profile_drives_shared_hermite_interpolator_through_juce() -> None:
+    """M3.2B: the JUCE VST/AU/Standalone must reach the shared core interpolator.
+
+    The interpolator is defined only in the C core; the JUCE layer merely selects
+    the quality profile. The processor smoke test observes both the cached mode
+    and the executed-path counters, so the regression cannot pass by inspection
+    alone."""
+    wrapper = ENGINE_WRAPPER.read_text(encoding="utf-8")
+    wrapper_header = ENGINE_WRAPPER_HEADER.read_text(encoding="utf-8")
+    processor = PLUGIN_PROCESSOR.read_text(encoding="utf-8")
+    processor_header = PLUGIN_PROCESSOR_HEADER.read_text(encoding="utf-8")
+    smoke = PROCESSOR_SMOKE.read_text(encoding="utf-8")
+    dsp = (REPO_ROOT / "core" / "dsp" / "sound_bubbles_dsp.c").read_text(encoding="utf-8")
+    dsp_header = (REPO_ROOT / "core" / "dsp" / "sound_bubbles_dsp.h").read_text(encoding="utf-8")
+
+    # Single source of truth: the interpolator and the profile selection live in
+    # the shared C DSP, not in the JUCE wrapper.
+    assert "Hermite4Interpolate" in dsp
+    assert "ResolveInterpolationMode" in dsp
+    assert "BUBBLES_INTERPOLATION_HERMITE" in dsp_header
+    assert "Hermite4Interpolate" not in wrapper
+    assert "ResolveInterpolationMode" not in wrapper
+
+    # The wrapper exposes the cached mode and a test-only path counter; the
+    # processor forwards a test-only observation of both.
+    assert "getInterpolationMode" in wrapper_header
+    assert "SoundBubbles_GetInterpolationMode" in wrapper
+    assert "BUBBLES_BUILD_PROCESSOR_TESTS" in wrapper_header
+    assert "getEngineInterpolationMode" in processor_header
+    assert "getEngineInterpolationMode" in processor
+    assert "getEngineInterpolationCallCounts" in processor
+
+    # The smoke test must assert WEB_* -> Hermite and MCU_* -> linear.
+    assert "testQualityProfileSelectsInterpolationPath" in smoke
+    assert "getEngineInterpolationCallCounts" in smoke
+    assert "WEB_STANDARD did not execute the Hermite path" in smoke
+    assert "MCU_SAFE did not execute the linear path" in smoke

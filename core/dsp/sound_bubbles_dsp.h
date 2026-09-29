@@ -24,6 +24,16 @@
 #define BUBBLES_SUSTAIN_DIFFUSION_MAX_DELAY 96
 #define BUBBLES_MACRO_COUNT 12
 
+// Read-position interpolation quality (M3.2B). Linear is the low-cost baseline
+// kept for the MCU quality profiles; WEB_STANDARD/WEB_ULTRA select 4-point cubic
+// Hermite (Catmull-Rom). The selection is derived from EngineConfig_t
+// .quality_profile and cached on the engine so the render loop only branches on
+// a plain flag.
+typedef enum {
+    BUBBLES_INTERPOLATION_LINEAR = 0,
+    BUBBLES_INTERPOLATION_HERMITE = 1
+} BubbleInterpolationMode_t;
+
 // --- M2 musical character constants ---
 
 // Exact 12-TET interval ratios used by fixed pitch modes and the weighted
@@ -256,7 +266,8 @@ typedef struct {
     uint32_t rhythm_pattern;
 
     // Product/runtime quality profile. It selects an active subset of the
-    // compiled voice pool without changing per-voice DSP behavior.
+    // compiled voice pool and the read-position interpolator (M3.2B) without
+    // changing per-voice DSP behavior.
     BubbleQualityProfile quality_profile;
     int32_t active_voice_limit;
 
@@ -410,6 +421,17 @@ typedef struct {
     EngineConfig_t motion_base_config;
     BubbleMotionState motion_state;
     int32_t active_voice_limit;
+    // Cached read-position interpolator selected by config.quality_profile
+    // (M3.2B). Keeping it as a field avoids re-deriving the profile in the
+    // per-voice render loop.
+    BubbleInterpolationMode_t interpolation_mode;
+#if defined(BUBBLES_INTERPOLATION_TELEMETRY) || defined(BUBBLES_BUILD_PROCESSOR_TESTS)
+    // Test/telemetry-only path counters. Compiled out of production release
+    // builds (the macros are only set by test targets), so the render loop
+    // carries no release overhead.
+    uint64_t interpolation_linear_samples;
+    uint64_t interpolation_hermite_samples;
+#endif
     // Preemption fade length resolved from BUBBLES_FADE_MS at config.sample_rate.
     int32_t fade_samples;
     int32_t block_counter;         // Triggers control ticks every 32 samples
@@ -526,6 +548,20 @@ SOUND_BUBBLES_DEPRECATED int32_t SoundBubbles_ReferenceSamplesToSamples(int32_t 
 
 // Optional metrics callback registration. Pass NULL callback to disable export.
 SOUND_BUBBLES_DEPRECATED void SoundBubbles_SetMetricsCallback(SoundBubblesEngine_t* engine, SoundBubblesMetricsCallback_t callback, void* user_data);
+
+// M3.2B interpolation selection. The mode is a pure function of the quality
+// profile: MCU_SAFE/MCU_PLUS -> LINEAR, WEB_STANDARD/WEB_ULTRA -> HERMITE.
+// SoundBubbles_GetInterpolationMode() reports the mode cached on a live engine.
+BubbleInterpolationMode_t SoundBubbles_InterpolationModeForProfile(BubbleQualityProfile profile);
+BubbleInterpolationMode_t SoundBubbles_GetInterpolationMode(const SoundBubblesEngine_t* engine);
+
+#if defined(BUBBLES_INTERPOLATION_TELEMETRY) || defined(BUBBLES_BUILD_PROCESSOR_TESTS)
+// Test/telemetry-only: number of samples rendered through each interpolation
+// path since engine init. Compiled only under the test macros.
+void SoundBubbles_GetInterpolationCallCounts(const SoundBubblesEngine_t* engine,
+                                             uint64_t* out_linear_samples,
+                                             uint64_t* out_hermite_samples);
+#endif
 
 #undef SOUND_BUBBLES_DEPRECATED
 

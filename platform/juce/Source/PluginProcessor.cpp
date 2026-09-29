@@ -657,4 +657,15 @@ BubbleCloudAudioProcessor::TransportTestState BubbleCloudAudioProcessor::getTran
     state.syncRhythmPhaseCalls = transportSyncRhythmPhaseCalls;
     return state;
 }
+
+int BubbleCloudAudioProcessor::getEngineInterpolationMode() const noexcept
+{
+    return engineWrapper.getInterpolationMode();
+}
+
+void BubbleCloudAudioProcessor::getEngineInterpolationCallCounts(unsigned long long& linearSamples,
+                                                                 unsigned long long& hermiteSamples) const noexcept
+{
+    engineWrapper.getInterpolationCallCounts(linearSamples, hermiteSamples);
+}
 #endif

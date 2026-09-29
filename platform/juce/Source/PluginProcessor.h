@@ -56,6 +56,12 @@ public:
         int syncRhythmPhaseCalls = 0;
     };
     TransportTestState getTransportTestState() const noexcept;
+
+    // M3.2B: observe that the requested quality profile reached the shared DSP
+    // core and that the expected interpolation path actually executed.
+    int getEngineInterpolationMode() const noexcept;
+    void getEngineInterpolationCallCounts(unsigned long long& linearSamples,
+                                          unsigned long long& hermiteSamples) const noexcept;
 #endif
 
     juce::AudioProcessorValueTreeState treeState;

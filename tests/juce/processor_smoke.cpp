@@ -326,6 +326,69 @@ namespace
         require(std::abs(state.lastValidHostBpm - bpm) < 1e-6,
                 "stopping the transport discarded the last valid BPM");
     }
+
+    // M3.2B: the JUCE path must actually reach the shared core interpolator. The
+    // quality profile is only a selector; this proves WEB_* executes Hermite and
+    // MCU_* executes linear through PluginProcessor -> EngineWrapper -> DSP.
+    void testQualityProfileSelectsInterpolationPath()
+    {
+        const auto render = [](BubbleCloudAudioProcessor& processor) {
+            (void)renderMusicalProbe(processor, 48000.0, 128, 0.3);
+        };
+
+        BubbleCloudAudioProcessor processor;
+        processor.setRateAndBufferSizeDetails(48000.0, 128);
+        processor.prepareToPlay(48000.0, 128);
+
+        // WEB_STANDARD: Hermite selected and executed, linear untouched.
+        setParameter(processor, "QUALITY_PROFILE", 2.0f);
+        render(processor);
+        require(processor.getEngineInterpolationMode() == 1,
+                "WEB_STANDARD did not select the Hermite interpolator");
+        unsigned long long linearBefore = 0;
+        unsigned long long hermiteBefore = 0;
+        processor.getEngineInterpolationCallCounts(linearBefore, hermiteBefore);
+        require(hermiteBefore > 0, "WEB_STANDARD did not execute the Hermite path");
+        require(linearBefore == 0, "WEB_STANDARD unexpectedly executed the linear path");
+
+        // WEB_ULTRA: still Hermite.
+        setParameter(processor, "QUALITY_PROFILE", 3.0f);
+        render(processor);
+        require(processor.getEngineInterpolationMode() == 1,
+                "WEB_ULTRA did not select the Hermite interpolator");
+        unsigned long long linearUltra = 0;
+        unsigned long long hermiteUltra = 0;
+        processor.getEngineInterpolationCallCounts(linearUltra, hermiteUltra);
+        require(hermiteUltra > hermiteBefore, "WEB_ULTRA did not execute the Hermite path");
+        require(linearUltra == 0, "WEB_ULTRA unexpectedly executed the linear path");
+
+        // MCU_SAFE: linear selected and executed; Hermite counter must not grow.
+        setParameter(processor, "QUALITY_PROFILE", 0.0f);
+        render(processor);
+        require(processor.getEngineInterpolationMode() == 0,
+                "MCU_SAFE did not select the linear interpolator");
+        unsigned long long linearSafe = 0;
+        unsigned long long hermiteSafe = 0;
+        processor.getEngineInterpolationCallCounts(linearSafe, hermiteSafe);
+        require(linearSafe > 0, "MCU_SAFE did not execute the linear path");
+        require(hermiteSafe == hermiteUltra,
+                "MCU_SAFE must not execute the Hermite path after downgrade");
+
+        // MCU_PLUS: still linear.
+        setParameter(processor, "QUALITY_PROFILE", 1.0f);
+        render(processor);
+        require(processor.getEngineInterpolationMode() == 0,
+                "MCU_PLUS did not select the linear interpolator");
+        unsigned long long linearPlus = 0;
+        unsigned long long hermitePlus = 0;
+        processor.getEngineInterpolationCallCounts(linearPlus, hermitePlus);
+        require(linearPlus > linearSafe, "MCU_PLUS did not execute the linear path");
+        require(hermitePlus == hermiteUltra,
+                "MCU_PLUS must not execute the Hermite path");
+
+        std::cout << "interpolation path: WEB hermite_samples=" << hermiteUltra
+                  << ", MCU linear_samples=" << linearPlus << '\n';
+    }
 }
 
 int main()
@@ -343,6 +406,7 @@ int main()
         testStereoContractKeepsDryLocalAndLetsWetCrossChannel();
         testSpaceMacroChangesStereoWidth();
         testHostTempoFallbackSurvivesMissingBpm();
+        testQualityProfileSelectsInterpolationPath();
 
         // Left-only probe with spatial settings: the left channel must carry
         // output and telemetry must publish left-engine voices. The wet bus may

@@ -387,6 +387,23 @@ void BubbleCloudEngineWrapper::syncRhythmPhase(double ppqPosition)
     bubble_engine_sync_rhythm_phase(&engineR, ppqPosition);
 }
 
+int BubbleCloudEngineWrapper::getInterpolationMode() const noexcept
+{
+    return (int)SoundBubbles_GetInterpolationMode(&engineL);
+}
+
+#if defined(BUBBLES_BUILD_PROCESSOR_TESTS)
+void BubbleCloudEngineWrapper::getInterpolationCallCounts(unsigned long long& linearSamples,
+                                                          unsigned long long& hermiteSamples) const noexcept
+{
+    uint64_t linearL = 0, hermiteL = 0, linearR = 0, hermiteR = 0;
+    SoundBubbles_GetInterpolationCallCounts(&engineL, &linearL, &hermiteL);
+    SoundBubbles_GetInterpolationCallCounts(&engineR, &linearR, &hermiteR);
+    linearSamples = (unsigned long long)(linearL + linearR);
+    hermiteSamples = (unsigned long long)(hermiteL + hermiteR);
+}
+#endif
+
 EngineConfig_t BubbleCloudEngineWrapper::getConfig() const
 {
     if (!prepared) {

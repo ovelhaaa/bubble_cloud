@@ -61,6 +61,14 @@ int wasm_get_active_voice_limit() {
 }
 
 EMSCRIPTEN_KEEPALIVE
+int wasm_get_interpolation_mode() {
+    // M3.2B: expose the shared-core interpolation selection so the web build can
+    // be proven to use the same path as the native/JUCE builds for a profile.
+    // No DSP behavior is introduced in the WASM layer.
+    return (int)SoundBubbles_GetInterpolationMode(&engine);
+}
+
+EMSCRIPTEN_KEEPALIVE
 uintptr_t wasm_alloc(size_t size) {
     return (uintptr_t)malloc(size);
 }

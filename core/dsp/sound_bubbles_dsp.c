@@ -187,6 +187,9 @@ static float ResolveMicroDetuneCents(SoundBubblesEngine_t* engine, BubbleClass_t
 static inline int32_t WrapIntIndex(int32_t index, int32_t size);
 static inline float WrapFloatIndex(float index, float size);
 static inline float LinearInterpolate(const int16_t* buffer, float index_float, int32_t buffer_size);
+static inline float Hermite4Interpolate(const int16_t* buffer, float index_float, int32_t buffer_size);
+static inline BubbleInterpolationMode_t ResolveInterpolationMode(BubbleQualityProfile profile);
+static inline float InterpolateSample(SoundBubblesEngine_t* engine, const int16_t* buffer, float index_float, int32_t buffer_size);
 static inline bool CheckGuardZoneDirectional(int32_t write_ptr, float read_ptr_float, float rate, int32_t buffer_size);
 static float ResolvePitchModeRate(SoundBubblesEngine_t* engine);
 
@@ -280,6 +283,11 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     ApplyQualityTierDefaults(&engine->config);
     engine->motion_base_config = engine->config;
     engine->active_voice_limit = engine->config.active_voice_limit;
+    engine->interpolation_mode = ResolveInterpolationMode(engine->config.quality_profile);
+#if defined(BUBBLES_INTERPOLATION_TELEMETRY) || defined(BUBBLES_BUILD_PROCESSOR_TESTS)
+    engine->interpolation_linear_samples = 0;
+    engine->interpolation_hermite_samples = 0;
+#endif
     engine->fade_samples = ResolveFadeSamples(engine->config.sample_rate);
     engine->channel_decorrelation = 0u;
     SoundBubbles_SetRngSeed(engine, engine->config.rng_seed);
@@ -390,6 +398,7 @@ void SoundBubbles_UpdateConfig(SoundBubblesEngine_t* engine, const EngineConfig_
     ApplyQualityTierDefaults(&engine->motion_base_config);
     engine->config = engine->motion_base_config;
     engine->active_voice_limit = engine->config.active_voice_limit;
+    engine->interpolation_mode = ResolveInterpolationMode(engine->config.quality_profile);
     engine->fade_samples = ResolveFadeSamples(engine->config.sample_rate);
     DeactivateVoicesAboveActiveLimit(engine);
     if (rng_seed_changed) {
@@ -401,6 +410,7 @@ void SoundBubbles_UpdateRuntimeConfig(SoundBubblesEngine_t* engine, const Engine
     engine->config = *new_config;
     ApplyQualityTierDefaults(&engine->config);
     engine->active_voice_limit = engine->config.active_voice_limit;
+    engine->interpolation_mode = ResolveInterpolationMode(engine->config.quality_profile);
     engine->fade_samples = ResolveFadeSamples(engine->config.sample_rate);
     DeactivateVoicesAboveActiveLimit(engine);
 }
@@ -545,8 +555,8 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
                 v->fade_counter = engine->fade_samples;
             }
 
-            // Interpolate and apply window
-            float sample_val = LinearInterpolate(engine->delay_buffer, v->read_ptr_float, buffer_size);
+            // Interpolate (profile-selected linear/Hermite) and apply window
+            float sample_val = InterpolateSample(engine, engine->delay_buffer, v->read_ptr_float, buffer_size);
             float window_val = LookupWindow(v->phase, engine->config.class_configs[v->bubble_class].window_type);
             float env_var = EnvelopeVariantGain(v->phase, v->envelope_variant, engine->config.envelope_family);
             float voice_out = sample_val * window_val * env_var * v->amp * v->gain;
@@ -1832,6 +1842,89 @@ static inline float LinearInterpolate(const int16_t* buffer, float index_float, 
     float val2 = (float)buffer[idx_next] * (1.0f / 32768.0f);
     return val1 + frac * (val2 - val1);
 }
+
+// M3.2B: quality-profile -> read-position interpolator selection. MCU profiles
+// stay on the cheap linear path; the WEB profiles get cubic Hermite.
+static inline BubbleInterpolationMode_t ResolveInterpolationMode(BubbleQualityProfile profile) {
+    switch (profile) {
+        case BUBBLE_QUALITY_PROFILE_WEB_STANDARD:
+        case BUBBLE_QUALITY_PROFILE_WEB_ULTRA:
+            return BUBBLES_INTERPOLATION_HERMITE;
+        case BUBBLE_QUALITY_PROFILE_MCU_SAFE:
+        case BUBBLE_QUALITY_PROFILE_MCU_PLUS:
+        default:
+            return BUBBLES_INTERPOLATION_LINEAR;
+    }
+}
+
+// M3.2B: 4-point cubic Hermite (Catmull-Rom) interpolation around the fractional
+// read position. Uses the four ring-buffer samples xm1/x0/x1/x2, is exact for
+// constants and linear ramps, needs no allocation and no powf/trig, and wraps
+// correctly at both buffer edges. Samples are scaled to [-1, 1] like the linear
+// path so voice gain/normalisation stays unchanged.
+//
+//   a = -0.5*xm1 + 1.5*x0 - 1.5*x1 + 0.5*x2
+//   b =        xm1 - 2.5*x0 + 2.0*x1 - 0.5*x2
+//   c = -0.5*xm1        + 0.5*x1
+//   d =        x0
+//   y(t) = ((a*t + b)*t + c)*t + d
+static inline float Hermite4Interpolate(const int16_t* buffer, float index_float, int32_t buffer_size) {
+    int32_t idx = (int32_t)index_float;
+    float frac = index_float - (float)idx;
+
+    int32_t im1 = (idx > 0) ? idx - 1 : buffer_size - 1;
+    int32_t ip1 = (idx + 1 < buffer_size) ? idx + 1 : 0;
+    int32_t ip2 = (idx + 2 < buffer_size) ? idx + 2 : idx + 2 - buffer_size;
+
+    const float scale = 1.0f / 32768.0f;
+    float xm1 = (float)buffer[im1] * scale;
+    float x0  = (float)buffer[idx] * scale;
+    float x1  = (float)buffer[ip1] * scale;
+    float x2  = (float)buffer[ip2] * scale;
+
+    float a = -0.5f * xm1 + 1.5f * x0 - 1.5f * x1 + 0.5f * x2;
+    float b =        xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2;
+    float c = -0.5f * xm1 + 0.5f * x1;
+    float d = x0;
+    return ((a * frac + b) * frac + c) * frac + d;
+}
+
+// Dispatch on the cached profile-derived mode. One well-predicted branch per
+// voice-sample; the path counters exist only in test/telemetry builds.
+static inline float InterpolateSample(SoundBubblesEngine_t* engine, const int16_t* buffer, float index_float, int32_t buffer_size) {
+#if defined(BUBBLES_INTERPOLATION_TELEMETRY) || defined(BUBBLES_BUILD_PROCESSOR_TESTS)
+    if (engine->interpolation_mode == BUBBLES_INTERPOLATION_HERMITE) {
+        engine->interpolation_hermite_samples++;
+        return Hermite4Interpolate(buffer, index_float, buffer_size);
+    }
+    engine->interpolation_linear_samples++;
+    return LinearInterpolate(buffer, index_float, buffer_size);
+#else
+    if (engine->interpolation_mode == BUBBLES_INTERPOLATION_HERMITE) {
+        return Hermite4Interpolate(buffer, index_float, buffer_size);
+    }
+    return LinearInterpolate(buffer, index_float, buffer_size);
+#endif
+}
+
+BubbleInterpolationMode_t SoundBubbles_InterpolationModeForProfile(BubbleQualityProfile profile) {
+    return ResolveInterpolationMode(profile);
+}
+
+BubbleInterpolationMode_t SoundBubbles_GetInterpolationMode(const SoundBubblesEngine_t* engine) {
+    if (engine == NULL) return BUBBLES_INTERPOLATION_LINEAR;
+    return engine->interpolation_mode;
+}
+
+#if defined(BUBBLES_INTERPOLATION_TELEMETRY) || defined(BUBBLES_BUILD_PROCESSOR_TESTS)
+void SoundBubbles_GetInterpolationCallCounts(const SoundBubblesEngine_t* engine,
+                                             uint64_t* out_linear_samples,
+                                             uint64_t* out_hermite_samples) {
+    if (engine == NULL) return;
+    if (out_linear_samples != NULL) *out_linear_samples = engine->interpolation_linear_samples;
+    if (out_hermite_samples != NULL) *out_hermite_samples = engine->interpolation_hermite_samples;
+}
+#endif
 
 static inline bool CheckGuardZoneDirectional(int32_t write_ptr, float read_ptr_float, float rate, int32_t buffer_size) {
     int32_t read_ptr = (int32_t)read_ptr_float;

@@ -58,6 +58,18 @@ public:
     EngineConfig_t getConfig() const;
     void setConfig(const EngineConfig_t& config);
 
+    // M3.2B: cached read-position interpolator of the left engine
+    // (0 = linear, 1 = Hermite), derived from the active quality profile. The
+    // JUCE layer only selects the profile; the DSP core owns the interpolator.
+    int getInterpolationMode() const noexcept;
+
+#if defined(BUBBLES_BUILD_PROCESSOR_TESTS)
+    // Test-only observation that the selected interpolation path actually ran.
+    // Compiled out of production builds.
+    void getInterpolationCallCounts(unsigned long long& linearSamples,
+                                    unsigned long long& hermiteSamples) const noexcept;
+#endif
+
     // Explicit stereo wet summing law.
     //
     // Each engine contributes its own decorrelated spatial wet field (separate
