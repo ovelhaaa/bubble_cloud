@@ -233,6 +233,9 @@ static float ResolveSustainLpfTargetHz(const SoundBubblesEngine_t* engine);
 static void UpdateSustainBusTone(SoundBubblesEngine_t* engine);
 static inline float Filter1Pole_ProcessLPF(Filter1Pole_t* f, float input);
 static inline float Filter1Pole_ProcessHPF(Filter1Pole_t* f, float input);
+static void UpdateFeedbackCoeffs(SoundBubblesEngine_t* engine);
+static void UpdateFeedbackTone(SoundBubblesEngine_t* engine);
+static void UpdateFeedbackTarget(SoundBubblesEngine_t* engine);
 
 static float UpdateEnvelope(float prev_state, float input_peak, float attack_coef, float release_coef);
 static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_peak);
@@ -321,6 +324,18 @@ static void UpdateAutoHoldCoeffs(SoundBubblesEngine_t* engine) {
     engine->auto_hold_release_coef = 1.0f - expf(-1.0f / (sr * release_sec));
 }
 
+static void UpdateFeedbackCoeffs(SoundBubblesEngine_t* engine) {
+    float sr = fmaxf(1.0f, engine->config.sample_rate);
+    CalculateFilterCoeffsLPF(&engine->feedback_hpf, BUBBLES_FEEDBACK_HPF_HZ, sr);
+    if (engine->feedback_lpf_cutoff_hz < 1000.0f) {
+        engine->feedback_lpf_cutoff_hz = BUBBLES_FEEDBACK_LPF_BASE_HZ;
+    }
+    CalculateFilterCoeffsLPF(&engine->feedback_lpf, engine->feedback_lpf_cutoff_hz, sr);
+    engine->feedback_gain_smooth_coef = 1.0f - expf(-1.0f / (sr * 0.015f));
+    engine->feedback_energy_att_coef = 1.0f - expf(-1.0f / (sr * 0.010f));
+    engine->feedback_energy_rel_coef = 1.0f - expf(-1.0f / (sr * 0.300f));
+}
+
 static int32_t CountActiveVoices(const SoundBubblesEngine_t* engine);
 static void MotionResetLfo(BubbleMotionLfoState_t* lfo, uint32_t seed);
 
@@ -384,6 +399,16 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     engine->phrase_anchor_age = 0;
     engine->anchor_mix = 0.0f;
     UpdateAutoHoldCoeffs(engine);
+    engine->feedback_enabled = 1;
+    engine->feedback_sample = 0.0f;
+    engine->feedback_gain = 0.0f;
+    engine->feedback_gain_target = 0.0f;
+    engine->feedback_energy = 0.0f;
+    engine->feedback_lpf_cutoff_hz = BUBBLES_FEEDBACK_LPF_BASE_HZ;
+    engine->last_write_input = 0.0f;
+    engine->last_write_feedback = 0.0f;
+    engine->last_write_retained = 0.0f;
+    UpdateFeedbackCoeffs(engine);
     bubble_macro_map_default_values(engine->macro_values);
     bubble_macro_map_default_values(engine->macro_targets);
     engine->macro_dirty_mask = (1u << BUBBLES_MACRO_COUNT) - 1u;
@@ -463,6 +488,7 @@ void SoundBubbles_UpdateConfig(SoundBubblesEngine_t* engine, const EngineConfig_
     engine->fade_samples = ResolveFadeSamples(engine->config.sample_rate);
     DeactivateVoicesAboveActiveLimit(engine);
     UpdateAutoHoldCoeffs(engine);
+    UpdateFeedbackCoeffs(engine);
     if (rng_seed_changed) {
         SoundBubbles_SetRngSeed(engine, engine->config.rng_seed);
     }
@@ -476,6 +502,7 @@ void SoundBubbles_UpdateRuntimeConfig(SoundBubblesEngine_t* engine, const Engine
     engine->fade_samples = ResolveFadeSamples(engine->config.sample_rate);
     DeactivateVoicesAboveActiveLimit(engine);
     UpdateAutoHoldCoeffs(engine);
+    UpdateFeedbackCoeffs(engine);
 }
 
 void SoundBubbles_ResetMotionPhase(SoundBubblesEngine_t* engine) {
@@ -568,6 +595,14 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
         float write_gain = 1.0f - effective_retention;
         bool write_locked = discrete_freeze_lock || (f >= 0.999f);
 
+        // Update feedback gain smoothing (M4B)
+        float g_delta = engine->feedback_gain_target - engine->feedback_gain;
+        if (fabsf(g_delta) < 1.0e-5f) {
+            engine->feedback_gain = engine->feedback_gain_target;
+        } else {
+            engine->feedback_gain += g_delta * engine->feedback_gain_smooth_coef;
+        }
+
         float dry_sample = in_mono[i];
 
         // Track peak for control block envelope
@@ -579,10 +614,24 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
         // Clamp input to [-1.0f, 1.0f] before conversion. Continuous retention blends
         // incoming live audio with retained memory, locking the head only at full freeze.
         float clamped_sample = fmaxf(-1.0f, fminf(1.0f, dry_sample));
+        float live_input_component = clamped_sample * write_gain;
+        float old_sample = (float)engine->delay_buffer[engine->write_ptr] * (1.0f / 32767.0f);
+        float retained_component = old_sample * effective_retention;
+        float feedback_component = engine->feedback_sample * engine->feedback_gain * (1.0f - manual_retention);
+        feedback_component = Clamp(feedback_component, -BUBBLES_FEEDBACK_SAFE_BOUND, BUBBLES_FEEDBACK_SAFE_BOUND);
+
+        engine->last_write_input = live_input_component;
+        engine->last_write_feedback = feedback_component;
+        engine->last_write_retained = retained_component;
+
         if (!write_locked) {
-            float old_sample = (float)engine->delay_buffer[engine->write_ptr] * (1.0f / 32767.0f);
-            float mixed = old_sample * effective_retention + clamped_sample * write_gain;
-            engine->delay_buffer[engine->write_ptr] = (int16_t)(fmaxf(-1.0f, fminf(1.0f, mixed)) * 32767.0f);
+            float ring_mixed = retained_component + live_input_component;
+            if (engine->feedback_enabled && fabsf(feedback_component) > 1.0e-7f) {
+                ring_mixed += feedback_component;
+                ring_mixed = SoftClip(ring_mixed, 0.20f);
+            }
+            ring_mixed = Clamp(ring_mixed, -1.0f, 1.0f);
+            engine->delay_buffer[engine->write_ptr] = (int16_t)(ring_mixed * 32767.0f);
         }
 
         // Zero audio busses
@@ -719,6 +768,20 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
         float wet_trim = fmaxf(0.0f, engine->config.wet_output_trim);
         wet_sum_l = SoftClip(wet_sum_l * wet_drive, wet_clip_amt) * wet_trim;
         wet_sum_r = SoftClip(wet_sum_r * wet_drive, wet_clip_amt) * wet_trim;
+
+        // Bounded Granular Feedback conditioning (M4B)
+        // Equal-power mono fold-down with granular window compensation
+        float feedback_mono = (wet_sum_l + wet_sum_r) * 0.70710678f;
+        float fb_hp = Filter1Pole_ProcessHPF(&engine->feedback_hpf, feedback_mono);
+        float fb_lp = Filter1Pole_ProcessLPF(&engine->feedback_lpf, fb_hp);
+        float fb_sat = SoftClip(fb_lp, 0.30f);
+        engine->feedback_sample = fb_sat;
+
+        // Feedback energy follower (M4B)
+        float fb_abs = fabsf(fb_sat);
+        float e_coef = (fb_abs > engine->feedback_energy) ? engine->feedback_energy_att_coef : engine->feedback_energy_rel_coef;
+        engine->feedback_energy += (fb_abs - engine->feedback_energy) * e_coef;
+
         float wet_gain = engine->smoothed_ducking_gain * engine->wet_presence_smoothed * engine->master_wet_gain;
         float wet_mix_l = wet_sum_l * wet_gain;
         float wet_mix_r = wet_sum_r * wet_gain;
@@ -767,6 +830,8 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
             engine->metrics_tick_spawn_count = 0;
             UpdateStateAndDensity(engine, engine->block_peak_accum);
             UpdateSustainBusTone(engine);
+            UpdateFeedbackTone(engine);
+            UpdateFeedbackTarget(engine);
             Scheduler_RunTick(engine);
 
             engine->metrics_last_block.spawn_count = engine->metrics_tick_spawn_count;
@@ -915,7 +980,8 @@ static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_
     // M4A: Track phrase anchor age
     if (engine->phrase_anchor_valid) {
         engine->phrase_anchor_age += BUBBLES_BLOCK_SIZE;
-        float max_anchor_age_samples = 10.0f * engine->config.sample_rate;
+        float max_age_sec = engine->feedback_enabled ? 20.0f : 10.0f;
+        float max_anchor_age_samples = max_age_sec * engine->config.sample_rate;
         if ((float)engine->phrase_anchor_age >= max_anchor_age_samples) {
             engine->phrase_anchor_valid = false;
         }
@@ -1072,8 +1138,14 @@ static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_
         default:
             if (engine->auto_hold_amount > BUBBLES_AUTO_HOLD_THRESHOLD && engine->phrase_anchor_valid) {
                 float base_density = engine->config.density_sustain;
-                float initial_ratio = 0.35f;
-                engine->target_density = base_density * initial_ratio * engine->auto_hold_amount;
+                float ratio;
+                if (engine->feedback_enabled) {
+                    float mem_bloom = 0.5f * (Clamp01(engine->config.memory_mix) + Clamp01(engine->config.sustain_diffusion_amount));
+                    ratio = Lerp(0.70f, 1.15f, mem_bloom);
+                } else {
+                    ratio = 0.35f;
+                }
+                engine->target_density = base_density * ratio * engine->auto_hold_amount;
             } else {
                 engine->target_density = 0.0f;
             }
@@ -2311,6 +2383,83 @@ static void UpdateSustainBusTone(SoundBubblesEngine_t* engine) {
     engine->sustain_lpf_cutoff_smoothed_hz = current;
 }
 
+static void UpdateFeedbackTone(SoundBubblesEngine_t* engine) {
+    float warmth = Clamp01(engine->config.wet_clip_amount * 1.8f);
+    float mem_dark = Clamp01(engine->config.memory_darkening);
+    float sus_dark = Clamp01(engine->config.sustain_darkness);
+    float darkness_factor = 0.40f * sus_dark + 0.35f * mem_dark + 0.25f * warmth;
+    float target_cutoff = Lerp(8500.0f, 4200.0f, darkness_factor);
+
+    // Progressive darkening during decay/silence tail context
+    if (engine->engine_state == ENGINE_STATE_SPARSE_DECAY || engine->engine_state == ENGINE_STATE_SILENCE) {
+        target_cutoff *= 0.85f;
+    }
+    target_cutoff = Clamp(target_cutoff, 3600.0f, 9000.0f);
+    if (fabsf(target_cutoff - engine->feedback_lpf_cutoff_hz) > 20.0f) {
+        engine->feedback_lpf_cutoff_hz = target_cutoff;
+        CalculateFilterCoeffsLPF(&engine->feedback_lpf, engine->feedback_lpf_cutoff_hz, engine->config.sample_rate);
+    }
+}
+
+static void UpdateFeedbackTarget(SoundBubblesEngine_t* engine) {
+    if (!engine->feedback_enabled) {
+        engine->feedback_gain_target = 0.0f;
+        return;
+    }
+
+    float state_base = 0.0f;
+    // Feedback active strictly in tail context (Section 4):
+    // Prioritize Auto-Hold ATTACK/RELEASE, SPARSE_DECAY, and SILENCE tail.
+    // During active phrase (Auto-Hold IDLE and active engine state), feedback is zero
+    // to preserve attack clarity and prevent continuous regeneration during the phrase.
+    bool in_tail_context = (engine->auto_hold_state != AUTO_HOLD_IDLE) ||
+                           (engine->engine_state == ENGINE_STATE_SPARSE_DECAY) ||
+                           (engine->engine_state == ENGINE_STATE_SILENCE);
+
+    if (in_tail_context) {
+        switch (engine->engine_state) {
+            case ENGINE_STATE_SPARSE_DECAY:
+                state_base = 0.35f;
+                break;
+            case ENGINE_STATE_SILENCE:
+            default:
+                if (engine->auto_hold_amount > BUBBLES_AUTO_HOLD_THRESHOLD && engine->phrase_anchor_valid) {
+                    float hold_norm = (engine->auto_hold_amount - BUBBLES_AUTO_HOLD_THRESHOLD) /
+                                      (1.0f - BUBBLES_AUTO_HOLD_THRESHOLD);
+                    hold_norm = Clamp01(hold_norm);
+                    // Silence tail: 0.50 to 0.65 depending on Auto-Hold envelope
+                    state_base = Lerp(0.50f, 0.65f, hold_norm);
+                } else if (engine->auto_hold_state == AUTO_HOLD_ATTACK) {
+                    state_base = 0.10f;
+                } else if (engine->auto_hold_state == AUTO_HOLD_RELEASE) {
+                    state_base = 0.25f;
+                } else {
+                    state_base = 0.0f;
+                }
+                break;
+        }
+    } else {
+        state_base = 0.0f;
+    }
+
+    float mem = Clamp01(engine->config.memory_mix);
+    float bloom = Clamp01(engine->config.sustain_diffusion_amount);
+    float macro_factor = (0.85f + 0.30f * mem) * (0.85f + 0.30f * bloom);
+
+    float nominal = state_base * macro_factor;
+
+    // Safety gain reduction based on energy follower (Section 15)
+    // Nominal tail energy is around 0.20-0.45; safety activates above 0.60
+    const float ENERGY_SAFETY_THRESH = 0.60f;
+    float energy_safety = 1.0f;
+    if (engine->feedback_energy > ENERGY_SAFETY_THRESH) {
+        energy_safety = ENERGY_SAFETY_THRESH / engine->feedback_energy;
+    }
+    nominal *= energy_safety;
+
+    engine->feedback_gain_target = Clamp(nominal, 0.0f, BUBBLES_FEEDBACK_MAX_GAIN);
+}
+
 static inline float Filter1Pole_ProcessLPF(Filter1Pole_t* f, float input) {
     f->z1 = (input * f->b0) + (f->z1 * f->a1);
     return f->z1;
@@ -2499,4 +2648,40 @@ uint32_t SoundBubbles_GetPhraseAnchorAge(const SoundBubblesEngine_t* engine) {
 float SoundBubbles_GetAnchorMix(const SoundBubblesEngine_t* engine) {
     if (engine == NULL) return 0.0f;
     return engine->anchor_mix;
+}
+
+float SoundBubbles_GetFeedbackGain(const SoundBubblesEngine_t* engine) {
+    if (engine == NULL) return 0.0f;
+    return engine->feedback_gain;
+}
+
+float SoundBubbles_GetFeedbackEnergy(const SoundBubblesEngine_t* engine) {
+    if (engine == NULL) return 0.0f;
+    return engine->feedback_energy;
+}
+
+float SoundBubbles_GetFeedbackSample(const SoundBubblesEngine_t* engine) {
+    if (engine == NULL) return 0.0f;
+    return engine->feedback_sample;
+}
+
+void SoundBubbles_SetFeedbackEnabled(SoundBubblesEngine_t* engine, bool enabled) {
+    if (engine == NULL) return;
+    engine->feedback_enabled = enabled ? 1 : 0;
+    UpdateAutoHoldCoeffs(engine);
+    if (!enabled) {
+        engine->feedback_gain = 0.0f;
+        engine->feedback_gain_target = 0.0f;
+        engine->feedback_sample = 0.0f;
+        engine->feedback_energy = 0.0f;
+    }
+}
+
+void SoundBubbles_GetLastWriteContributions(const SoundBubblesEngine_t* engine,
+                                            float* out_input,
+                                            float* out_feedback,
+                                            float* out_retained) {
+    if (out_input != NULL) *out_input = engine ? engine->last_write_input : 0.0f;
+    if (out_feedback != NULL) *out_feedback = engine ? engine->last_write_feedback : 0.0f;
+    if (out_retained != NULL) *out_retained = engine ? engine->last_write_retained : 0.0f;
 }

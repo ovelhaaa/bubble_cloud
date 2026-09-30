@@ -71,6 +71,13 @@ typedef enum {
 #define BUBBLES_AUTO_HOLD_ATTACK_PEAK          0.850f
 #define BUBBLES_ANCHOR_MAX_MIX                 0.600f
 
+// --- M4B Bounded Granular Feedback Path ---
+#define BUBBLES_FEEDBACK_HPF_HZ             120.0f
+#define BUBBLES_FEEDBACK_LPF_BASE_HZ        7000.0f
+#define BUBBLES_FEEDBACK_SAFE_BOUND         0.650f
+#define BUBBLES_FEEDBACK_MAX_GAIN           0.650f
+#define BUBBLES_FEEDBACK_ENERGY_SAFETY_TH   0.280f
+
 // --- Enums ---
 
 typedef enum {
@@ -506,6 +513,22 @@ typedef struct {
     uint32_t phrase_anchor_age;
     float anchor_mix;
 
+    // Bounded Granular Feedback Path (M4B)
+    int32_t feedback_enabled;
+    float feedback_sample;
+    float feedback_gain;
+    float feedback_gain_target;
+    float feedback_gain_smooth_coef;
+    float feedback_energy;
+    float feedback_energy_att_coef;
+    float feedback_energy_rel_coef;
+    Filter1Pole_t feedback_hpf;
+    Filter1Pole_t feedback_lpf;
+    float feedback_lpf_cutoff_hz;
+    float last_write_input;
+    float last_write_feedback;
+    float last_write_retained;
+
     // Product-facing macro state. Targets are written by bubble_engine_set_parameter();
     // current values are slewed at control-rate before being mapped to raw DSP fields.
     float macro_values[BUBBLES_MACRO_COUNT];
@@ -606,6 +629,16 @@ int32_t SoundBubbles_GetPhraseAnchorWritePtr(const SoundBubblesEngine_t* engine)
 bool SoundBubbles_GetPhraseAnchorValid(const SoundBubblesEngine_t* engine);
 uint32_t SoundBubbles_GetPhraseAnchorAge(const SoundBubblesEngine_t* engine);
 float SoundBubbles_GetAnchorMix(const SoundBubblesEngine_t* engine);
+
+// M4B Bounded Granular Feedback inspection helpers
+float SoundBubbles_GetFeedbackGain(const SoundBubblesEngine_t* engine);
+float SoundBubbles_GetFeedbackEnergy(const SoundBubblesEngine_t* engine);
+float SoundBubbles_GetFeedbackSample(const SoundBubblesEngine_t* engine);
+void SoundBubbles_SetFeedbackEnabled(SoundBubblesEngine_t* engine, bool enabled);
+void SoundBubbles_GetLastWriteContributions(const SoundBubblesEngine_t* engine,
+                                            float* out_input,
+                                            float* out_feedback,
+                                            float* out_retained);
 
 #if defined(BUBBLES_INTERPOLATION_TELEMETRY) || defined(BUBBLES_BUILD_PROCESSOR_TESTS)
 // Test/telemetry-only: number of samples rendered through each interpolation
