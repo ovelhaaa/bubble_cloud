@@ -404,10 +404,14 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     engine->feedback_gain = 0.0f;
     engine->feedback_gain_target = 0.0f;
     engine->feedback_energy = 0.0f;
+    engine->feedback_safety_threshold = BUBBLES_FEEDBACK_ENERGY_SAFETY_TH;
     engine->feedback_lpf_cutoff_hz = BUBBLES_FEEDBACK_LPF_BASE_HZ;
     engine->last_write_input = 0.0f;
     engine->last_write_feedback = 0.0f;
     engine->last_write_retained = 0.0f;
+    engine->feedback_write_aperture = 0.0f;
+    engine->ring_softclip_count = 0u;
+    engine->ring_clamp_count = 0u;
     UpdateFeedbackCoeffs(engine);
     bubble_macro_map_default_values(engine->macro_values);
     bubble_macro_map_default_values(engine->macro_targets);
@@ -617,9 +621,18 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
         float live_input_component = clamped_sample * write_gain;
         float old_sample = (float)engine->delay_buffer[engine->write_ptr] * (1.0f / 32767.0f);
         float retained_component = old_sample * effective_retention;
-        float feedback_component = engine->feedback_sample * engine->feedback_gain * (1.0f - manual_retention);
+
+        // Feedback write aperture (M4B.1)
+        float base_aperture = 1.0f - effective_retention;
+        float hold_regen_aperture = engine->auto_hold_amount * BUBBLES_FEEDBACK_HOLD_APERTURE_MAX;
+        float feedback_write_aperture = base_aperture + hold_regen_aperture;
+        feedback_write_aperture = Clamp(feedback_write_aperture, 0.0f, BUBBLES_FEEDBACK_WRITE_APERTURE_MAX);
+        feedback_write_aperture *= (1.0f - manual_retention);
+
+        float feedback_component = engine->feedback_sample * engine->feedback_gain * feedback_write_aperture;
         feedback_component = Clamp(feedback_component, -BUBBLES_FEEDBACK_SAFE_BOUND, BUBBLES_FEEDBACK_SAFE_BOUND);
 
+        engine->feedback_write_aperture = feedback_write_aperture;
         engine->last_write_input = live_input_component;
         engine->last_write_feedback = feedback_component;
         engine->last_write_retained = retained_component;
@@ -628,7 +641,13 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
             float ring_mixed = retained_component + live_input_component;
             if (engine->feedback_enabled && fabsf(feedback_component) > 1.0e-7f) {
                 ring_mixed += feedback_component;
+                if (fabsf(ring_mixed) > 0.5f) {
+                    engine->ring_softclip_count++;
+                }
                 ring_mixed = SoftClip(ring_mixed, 0.20f);
+            }
+            if (ring_mixed > 1.0f || ring_mixed < -1.0f) {
+                engine->ring_clamp_count++;
             }
             ring_mixed = Clamp(ring_mixed, -1.0f, 1.0f);
             engine->delay_buffer[engine->write_ptr] = (int16_t)(ring_mixed * 32767.0f);
@@ -2448,12 +2467,23 @@ static void UpdateFeedbackTarget(SoundBubblesEngine_t* engine) {
 
     float nominal = state_base * macro_factor;
 
-    // Safety gain reduction based on energy follower (Section 15)
-    // Nominal tail energy is around 0.20-0.45; safety activates above 0.60
-    const float ENERGY_SAFETY_THRESH = 0.60f;
+    // Safety gain reduction based on energy follower with smooth knee (M4B.1)
+    // Canonical threshold: BUBBLES_FEEDBACK_ENERGY_SAFETY_TH
+    float safety_th = (engine->feedback_safety_threshold > 0.0f) ? engine->feedback_safety_threshold : BUBBLES_FEEDBACK_ENERGY_SAFETY_TH;
+    float knee_width = 0.25f * safety_th;
+    float t_low = safety_th - knee_width;
+    if (t_low < 0.01f) t_low = 0.01f;
+    float t_high = safety_th + knee_width;
+
     float energy_safety = 1.0f;
-    if (engine->feedback_energy > ENERGY_SAFETY_THRESH) {
-        energy_safety = ENERGY_SAFETY_THRESH / engine->feedback_energy;
+    if (engine->feedback_energy <= t_low) {
+        energy_safety = 1.0f;
+    } else if (engine->feedback_energy >= t_high) {
+        energy_safety = safety_th / engine->feedback_energy;
+    } else {
+        float x = engine->feedback_energy - t_low;
+        float quad = (x * x) / (4.0f * knee_width * engine->feedback_energy);
+        energy_safety = Clamp01(1.0f - quad);
     }
     nominal *= energy_safety;
 
@@ -2684,4 +2714,33 @@ void SoundBubbles_GetLastWriteContributions(const SoundBubblesEngine_t* engine,
     if (out_input != NULL) *out_input = engine ? engine->last_write_input : 0.0f;
     if (out_feedback != NULL) *out_feedback = engine ? engine->last_write_feedback : 0.0f;
     if (out_retained != NULL) *out_retained = engine ? engine->last_write_retained : 0.0f;
+}
+
+float SoundBubbles_GetFeedbackWriteAperture(const SoundBubblesEngine_t* engine) {
+    if (engine == NULL) return 0.0f;
+    return engine->feedback_write_aperture;
+}
+
+float SoundBubbles_GetFeedbackSafetyThreshold(const SoundBubblesEngine_t* engine) {
+    if (engine == NULL) return BUBBLES_FEEDBACK_ENERGY_SAFETY_TH;
+    return (engine->feedback_safety_threshold > 0.0f) ? engine->feedback_safety_threshold : BUBBLES_FEEDBACK_ENERGY_SAFETY_TH;
+}
+
+void SoundBubbles_SetFeedbackSafetyThreshold(SoundBubblesEngine_t* engine, float threshold) {
+    if (engine == NULL) return;
+    engine->feedback_safety_threshold = (threshold > 0.0f) ? threshold : BUBBLES_FEEDBACK_ENERGY_SAFETY_TH;
+}
+
+void SoundBubbles_GetRingSaturationCounts(const SoundBubblesEngine_t* engine,
+                                         uint32_t* out_softclip,
+                                         uint32_t* out_clamp) {
+    if (out_softclip != NULL) *out_softclip = engine ? engine->ring_softclip_count : 0u;
+    if (out_clamp != NULL) *out_clamp = engine ? engine->ring_clamp_count : 0u;
+}
+
+void SoundBubbles_ResetRingSaturationCounts(SoundBubblesEngine_t* engine) {
+    if (engine != NULL) {
+        engine->ring_softclip_count = 0u;
+        engine->ring_clamp_count = 0u;
+    }
 }

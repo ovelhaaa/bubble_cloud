@@ -956,10 +956,359 @@ static int test_tail_class_distribution_m4b(void) {
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// 13. Freeze Bit-Exact Ring Lock (M4B.1 Section 18)
+// ---------------------------------------------------------------------------
+static uint32_t hash_delay_buffer_samples(const int16_t* buf, int32_t count) {
+    uint32_t hash = 2166136261u;
+    for (int32_t i = 0; i < count; i++) {
+        uint16_t val = (uint16_t)buf[i];
+        hash ^= (val & 0xFF);
+        hash *= 16777619u;
+        hash ^= (val >> 8);
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+static int test_freeze_bitexact_lock(void) {
+    printf("[13/17] test_freeze_bitexact_lock (byte/sample hash invariance during Freeze=1.0)... ");
+    static int16_t delay[MAX_BUFFER_SAMPLES];
+    BubbleEngineConfig_t config;
+    bubble_engine_default_config(&config);
+    config.sample_rate = 44100.0f;
+    config.rng_seed = 42;
+
+    BubbleEngine_t engine;
+    SoundBubbles_Init(&engine, delay, &config);
+    SoundBubbles_SetFeedbackEnabled(&engine, true);
+
+    const int block_size = 64;
+    float in[64], out_l[64], out_r[64];
+
+    // Excite with 300ms tone
+    for (int i = 0; i < (int)(0.3f * 44100.0f); i += block_size) {
+        for (int k = 0; k < block_size; k++) {
+            in[k] = 0.8f * sinf(2.0f * M_PI * 440.0f * (float)(i + k) / 44100.0f);
+        }
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+    }
+
+    // Engage Freeze = 1.0
+    config.freeze_enabled = 1;
+    config.freeze_amount = 1.0f;
+    SoundBubbles_UpdateRuntimeConfig(&engine, &config);
+
+    int32_t buf_samples = (int32_t)SoundBubbles_RequiredBufferSamples(config.sample_rate);
+    int32_t ptr_before = engine.write_ptr;
+    uint32_t hash_before = hash_delay_buffer_samples(engine.delay_buffer, buf_samples);
+
+    // Process 1 full second (44100 samples) under Freeze=1.0 with incoming noise/signal
+    for (int i = 0; i < 44100; i += block_size) {
+        for (int k = 0; k < block_size; k++) in[k] = 0.5f * sinf((float)(i + k) * 0.1f);
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+    }
+
+    int32_t ptr_after = engine.write_ptr;
+    uint32_t hash_after = hash_delay_buffer_samples(engine.delay_buffer, buf_samples);
+    float aperture = SoundBubbles_GetFeedbackWriteAperture(&engine);
+
+    CHECK(ptr_before == ptr_after, "Freeze=1.0 write pointer must not advance");
+    CHECK(hash_before == hash_after, "Freeze=1.0 delay buffer contents must remain 100% bit-exact bitwise identical");
+    CHECK(aperture == 0.0f, "Freeze=1.0 feedback write aperture must be strictly 0.0f");
+
+    printf("PASS (ptr=%d, hash=0x%08X match, aperture=0.0000)\n", ptr_before, hash_before);
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// 14. Feedback Write Aperture Law & Freeze Sweep (M4B.1 Sections 4-8, 10, 11)
+// ---------------------------------------------------------------------------
+static int test_autohold_aperture_law_and_freeze_sweep(void) {
+    printf("[14/17] test_autohold_aperture_law_and_freeze_sweep (monotonic freeze closure, bounded hold regen)... ");
+    static int16_t delay[MAX_BUFFER_SAMPLES];
+    BubbleEngineConfig_t config;
+    bubble_engine_default_config(&config);
+    config.sample_rate = 44100.0f;
+
+    // Test 1: Freeze sweep (0.0, 0.25, 0.50, 0.75, 1.0) with active Auto-Hold
+    float freeze_steps[] = {0.0f, 0.25f, 0.50f, 0.75f, 1.0f};
+    float prev_ap = 100.0f;
+    for (int i = 0; i < 5; i++) {
+        float f = freeze_steps[i];
+        BubbleEngine_t engine;
+        SoundBubbles_Init(&engine, delay, &config);
+        SoundBubbles_SetFeedbackEnabled(&engine, true);
+
+        // Excite
+        float in[64], out_l[64], out_r[64];
+        for (int n = 0; n < (int)(0.5f * 44100.0f); n += 64) {
+            fill_harmonic_tone(in, 64, 440.0f, 44100.0f, 0.85f);
+            SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, 64);
+        }
+        memset(in, 0, sizeof(in));
+        for (int n = 0; n < (int)(0.2f * 44100.0f); n += 64) {
+            SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, 64);
+        }
+
+        config.freeze_enabled = (f > 0.0f) ? 1 : 0;
+        config.freeze_amount = f;
+        SoundBubbles_UpdateRuntimeConfig(&engine, &config);
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, 64);
+
+        float ap = SoundBubbles_GetFeedbackWriteAperture(&engine);
+        CHECK(ap <= prev_ap + 1.0e-5f, "Feedback aperture must decrease monotonically as Freeze increases");
+        prev_ap = ap;
+        if (f >= 0.999f) {
+            CHECK(ap == 0.0f, "Full freeze must yield exactly 0.0 feedback aperture");
+        }
+    }
+
+    // Test 2: Auto-Hold sweep without Freeze (0.0, 0.25, 0.50, 0.75, 0.90)
+    config.freeze_enabled = 0;
+    config.freeze_amount = 0.0f;
+    float ah_steps[] = {0.0f, 0.25f, 0.50f, 0.75f, 0.90f};
+    for (int i = 0; i < 5; i++) {
+        float ah = ah_steps[i];
+        BubbleEngine_t engine;
+        SoundBubbles_Init(&engine, delay, &config);
+        SoundBubbles_SetFeedbackEnabled(&engine, true);
+
+        float in[64], out_l[64], out_r[64];
+        for (int n = 0; n < (int)(0.5f * 44100.0f); n += 64) {
+            fill_harmonic_tone(in, 64, 440.0f, 44100.0f, 0.85f);
+            SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, 64);
+        }
+        engine.auto_hold_amount = ah;
+        memset(in, 0, sizeof(in));
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, 64);
+
+        float ap = SoundBubbles_GetFeedbackWriteAperture(&engine);
+        CHECK(ap <= BUBBLES_FEEDBACK_WRITE_APERTURE_MAX + 1.0e-5f, "Aperture must stay within MAX_APERTURE");
+        CHECK(ap > 0.05f, "Aperture must not collapse to zero before manual freeze");
+    }
+
+    printf("PASS\n");
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// 15. Contribution Analysis & Ring Saturation (M4B.1 Sections 9 & 17)
+// ---------------------------------------------------------------------------
+static int test_feedback_to_retained_ratio_and_ring_saturation(void) {
+    printf("[15/17] test_feedback_to_retained_ratio_and_ring_saturation (ratio & saturation metrics)... ");
+    static int16_t delay[MAX_BUFFER_SAMPLES];
+    BubbleEngineConfig_t config;
+    bubble_engine_default_config(&config);
+    config.sample_rate = 44100.0f;
+    config.memory_mix = 0.50f;
+    config.sustain_diffusion_enable = 1;
+    config.sustain_diffusion_amount = 0.50f;
+
+    BubbleEngine_t engine;
+    SoundBubbles_Init(&engine, delay, &config);
+    SoundBubbles_SetFeedbackEnabled(&engine, true);
+    SoundBubbles_ResetRingSaturationCounts(&engine);
+
+    const int total_samples = (int)(8.0f * 44100.0f);
+    const int tone_samples = (int)(0.5f * 44100.0f);
+    const int block_size = 64;
+
+    float in[64], out_l[64], out_r[64];
+    float* ratios = (float*)malloc(200000 * sizeof(float));
+    CHECK(ratios != NULL, "Allocation failed");
+    int ratio_count = 0;
+
+    for (int i = 0; i < total_samples; i += block_size) {
+        for (int k = 0; k < block_size; k++) {
+            int idx = i + k;
+            if (idx < tone_samples) {
+                float t = (float)idx / 44100.0f;
+                in[k] = 0.85f * (0.55f * sinf(2.0f * M_PI * 440.0f * t) + 0.28f * sinf(2.0f * M_PI * 880.0f * t));
+            } else {
+                in[k] = 0.0f;
+            }
+        }
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+
+        float in_c, fb_c, ret_c;
+        SoundBubbles_GetLastWriteContributions(&engine, &in_c, &fb_c, &ret_c);
+        if (i >= tone_samples && fabsf(ret_c) > 1.0e-4f && ratio_count < 200000) {
+            float r = fabsf(fb_c) / (fabsf(ret_c) + 1.0e-7f);
+            ratios[ratio_count++] = r;
+        }
+    }
+
+    uint32_t softclip_cnt = 0, clamp_cnt = 0;
+    SoundBubbles_GetRingSaturationCounts(&engine, &softclip_cnt, &clamp_cnt);
+
+    float median_r = 0.0f, p95_r = 0.0f;
+    if (ratio_count > 0) {
+        int compare_floats_local(const void* a, const void* b) {
+            float fa = *(const float*)a;
+            float fb = *(const float*)b;
+            return (fa > fb) - (fa < fb);
+        }
+        qsort(ratios, ratio_count, sizeof(float), compare_floats_local);
+        median_r = ratios[ratio_count / 2];
+        p95_r = ratios[(int)(ratio_count * 0.95f)];
+    }
+
+    free(ratios);
+
+    CHECK(median_r <= 0.20f, "Median feedback-to-retained ratio must be small (feedback complements memory)");
+    CHECK(p95_r <= 0.50f, "P95 feedback-to-retained ratio must stay well below 0.50");
+    CHECK(clamp_cnt == 0, "Hard clamp must be strictly 0 under normal tail processing");
+    CHECK(softclip_cnt == 0, "Softclip activation must be 0 under normal tail processing");
+
+    printf("PASS (median=%.4f, p95=%.4f, softclip=%u, clamp=%u)\n", median_r, p95_r, softclip_cnt, clamp_cnt);
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// 16. Smooth Knee Safety & No-Pumping Repeated Bursts (M4B.1 Sections 12 & 13)
+// ---------------------------------------------------------------------------
+static int test_smooth_knee_safety_repeated_bursts(void) {
+    printf("[16/17] test_smooth_knee_safety_repeated_bursts (repeated tone bursts, smooth gain modulation)... ");
+    static int16_t delay[MAX_BUFFER_SAMPLES];
+    BubbleEngineConfig_t config;
+    bubble_engine_default_config(&config);
+    config.sample_rate = 44100.0f;
+    config.memory_mix = 0.65f;
+    config.sustain_diffusion_enable = 1;
+    config.sustain_diffusion_amount = 0.65f;
+
+    BubbleEngine_t engine;
+    SoundBubbles_Init(&engine, delay, &config);
+    SoundBubbles_SetFeedbackEnabled(&engine, true);
+
+    const int block_size = 64;
+    float in[64], out_l[64], out_r[64];
+
+    // 5 repeated bursts of 200ms tone + 400ms silence
+    float burst_dur = 0.20f;
+    float silence_dur = 0.40f;
+    float cycle_dur = burst_dur + silence_dur;
+    const int total_samples = (int)(5.0f * cycle_dur * 44100.0f);
+
+    float prev_gain = 0.0f;
+    float max_gain_step = 0.0f;
+
+    for (int i = 0; i < total_samples; i += block_size) {
+        float t_in_cycle = fmodf((float)i / 44100.0f, cycle_dur);
+        bool in_burst = (t_in_cycle < burst_dur);
+
+        for (int k = 0; k < block_size; k++) {
+            if (in_burst) {
+                float t = (float)(i + k) / 44100.0f;
+                in[k] = 0.85f * sinf(2.0f * M_PI * 440.0f * t);
+            } else {
+                in[k] = 0.0f;
+            }
+        }
+
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+
+        float current_gain = SoundBubbles_GetFeedbackGain(&engine);
+        float step = fabsf(current_gain - prev_gain);
+        if (step > max_gain_step && i > (int)(0.2f * 44100.0f)) {
+            max_gain_step = step;
+        }
+        prev_gain = current_gain;
+
+        // Limiter and peak stability
+        for (int k = 0; k < block_size; k++) {
+            CHECK(isfinite(out_l[k]) && isfinite(out_r[k]), "Outputs must be finite");
+            CHECK(fabsf(out_l[k]) <= 1.0f && fabsf(out_r[k]) <= 1.0f, "Output must not clip outside [-1, 1]");
+        }
+    }
+
+    CHECK(max_gain_step < 0.10f, "Feedback gain step per block must be smooth (no sudden slope discontinuity or pumping)");
+
+    printf("PASS (max_block_delta=%.4f, no pumping)\n", max_gain_step);
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// 17. Periodicity & Autocorrelation Verification (M4B.1 Section 16)
+// ---------------------------------------------------------------------------
+static int test_autocorrelation_periodicity(void) {
+    printf("[17/17] test_autocorrelation_periodicity (autocorrelation at ~2.0s and ~4.0s < 0.40)... ");
+    static int16_t delay[MAX_BUFFER_SAMPLES];
+    BubbleEngineConfig_t config;
+    bubble_engine_default_config(&config);
+    config.sample_rate = 44100.0f;
+    config.active_voice_limit = 24;
+    config.memory_mix = 0.50f;
+    config.sustain_diffusion_enable = 1;
+    config.sustain_diffusion_amount = 0.50f;
+    config.rng_seed = 42;
+
+    BubbleEngine_t engine;
+    SoundBubbles_Init(&engine, delay, &config);
+    SoundBubbles_SetFeedbackEnabled(&engine, true);
+
+    const int total_samples = (int)(9.0f * 44100.0f);
+    const int tone_samples = (int)(0.5f * 44100.0f);
+    const int block_size = 64;
+
+    float* in = (float*)calloc(total_samples, sizeof(float));
+    float* out_l = (float*)calloc(total_samples, sizeof(float));
+    float* out_r = (float*)calloc(total_samples, sizeof(float));
+    CHECK(in && out_l && out_r, "Allocation failed");
+
+    fill_harmonic_tone(in, tone_samples, 440.0f, 44100.0f, 0.85f);
+
+    for (int i = 0; i < total_samples; i += block_size) {
+        SoundBubbles_ProcessBlock(&engine, &in[i], &out_l[i], &out_r[i], block_size);
+    }
+
+    // Compare 1.0s-3.0s window against window at +2.0s (~44100 * 2) and +4.0s (~44100 * 4)
+    int start = (int)(1.0f * 44100.0f);
+    int len = (int)(2.0f * 44100.0f);
+
+    double ref_sum_sq = 0.0;
+    for (int i = 0; i < len; i++) {
+        double v = out_l[start + i];
+        ref_sum_sq += v * v;
+    }
+    double ref_norm = sqrt(ref_sum_sq);
+
+    // Similarity at +2.0s
+    int lag2 = (int)(2.0f * 44100.0f);
+    double dot2 = 0.0, target2_sum_sq = 0.0;
+    for (int i = 0; i < len; i++) {
+        double r = out_l[start + i];
+        double t = out_l[start + lag2 + i];
+        dot2 += r * t;
+        target2_sum_sq += t * t;
+    }
+    double sim2 = (ref_norm > 1.0e-9 && target2_sum_sq > 1.0e-9) ? (dot2 / (ref_norm * sqrt(target2_sum_sq))) : 0.0;
+
+    // Similarity at +4.0s
+    int lag4 = (int)(4.0f * 44100.0f);
+    double dot4 = 0.0, target4_sum_sq = 0.0;
+    for (int i = 0; i < len; i++) {
+        double r = out_l[start + i];
+        double t = out_l[start + lag4 + i];
+        dot4 += r * t;
+        target4_sum_sq += t * t;
+    }
+    double sim4 = (ref_norm > 1.0e-9 && target4_sum_sq > 1.0e-9) ? (dot4 / (ref_norm * sqrt(target4_sum_sq))) : 0.0;
+
+    free(in); free(out_l); free(out_r);
+
+    CHECK(sim2 < 0.40, "Tail similarity at ~2.0s must be low (<0.40) to prevent periodic ring loop");
+    CHECK(sim4 < 0.40, "Tail similarity at ~4.0s must be low (<0.40) to prevent periodic ring loop");
+
+    printf("PASS (sim@2s=%.4f, sim@4s=%.4f)\n", sim2, sim4);
+    return 0;
+}
+
 int main(void) {
     setvbuf(stdout, NULL, _IONBF, 0);
     printf("===================================================================\n");
-    printf(" M4B: Bounded Granular Feedback Path Validation Suite\n");
+    printf(" M4B.1: Bounded Granular Feedback & Safety Contract Suite\n");
     printf("===================================================================\n");
 
     if (test_no_input_regression()) return 1;
@@ -974,7 +1323,13 @@ int main(void) {
     if (test_cpu_benchmark()) return 1;
     if (test_int16_quantization_behavior()) return 1;
     if (test_tail_class_distribution_m4b()) return 1;
+    if (test_freeze_bitexact_lock()) return 1;
+    if (test_autohold_aperture_law_and_freeze_sweep()) return 1;
+    if (test_feedback_to_retained_ratio_and_ring_saturation()) return 1;
+    if (test_smooth_knee_safety_repeated_bursts()) return 1;
+    if (test_autocorrelation_periodicity()) return 1;
 
-    printf("\nAll M4B validation tests PASSED successfully.\n");
+    printf("\nAll M4B.1 validation tests PASSED successfully.\n");
     return 0;
 }
+

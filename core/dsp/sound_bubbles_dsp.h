@@ -77,6 +77,8 @@ typedef enum {
 #define BUBBLES_FEEDBACK_SAFE_BOUND         0.650f
 #define BUBBLES_FEEDBACK_MAX_GAIN           0.650f
 #define BUBBLES_FEEDBACK_ENERGY_SAFETY_TH   0.280f
+#define BUBBLES_FEEDBACK_HOLD_APERTURE_MAX  0.150f
+#define BUBBLES_FEEDBACK_WRITE_APERTURE_MAX 0.280f
 
 // --- Enums ---
 
@@ -520,6 +522,7 @@ typedef struct {
     float feedback_gain_target;
     float feedback_gain_smooth_coef;
     float feedback_energy;
+    float feedback_safety_threshold;
     float feedback_energy_att_coef;
     float feedback_energy_rel_coef;
     Filter1Pole_t feedback_hpf;
@@ -528,6 +531,9 @@ typedef struct {
     float last_write_input;
     float last_write_feedback;
     float last_write_retained;
+    float feedback_write_aperture;
+    uint32_t ring_softclip_count;
+    uint32_t ring_clamp_count;
 
     // Product-facing macro state. Targets are written by bubble_engine_set_parameter();
     // current values are slewed at control-rate before being mapped to raw DSP fields.
@@ -639,6 +645,13 @@ void SoundBubbles_GetLastWriteContributions(const SoundBubblesEngine_t* engine,
                                             float* out_input,
                                             float* out_feedback,
                                             float* out_retained);
+float SoundBubbles_GetFeedbackWriteAperture(const SoundBubblesEngine_t* engine);
+float SoundBubbles_GetFeedbackSafetyThreshold(const SoundBubblesEngine_t* engine);
+void SoundBubbles_SetFeedbackSafetyThreshold(SoundBubblesEngine_t* engine, float threshold);
+void SoundBubbles_GetRingSaturationCounts(const SoundBubblesEngine_t* engine,
+                                         uint32_t* out_softclip,
+                                         uint32_t* out_clamp);
+void SoundBubbles_ResetRingSaturationCounts(SoundBubblesEngine_t* engine);
 
 #if defined(BUBBLES_INTERPOLATION_TELEMETRY) || defined(BUBBLES_BUILD_PROCESSOR_TESTS)
 // Test/telemetry-only: number of samples rendered through each interpolation
