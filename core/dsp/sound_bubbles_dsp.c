@@ -117,11 +117,14 @@ const BubbleQualityProfileLimits_t BUBBLE_QUALITY_PROFILE_LIMITS[BUBBLE_QUALITY_
 #define REVERSE_SCALE_FREEZE    2.10f
 
 // --- M4A Auto-Hold & Phrase Anchor Tail Architecture ---
+#ifndef BUBBLES_AUTO_HOLD_ATTACK_SECONDS
 #define BUBBLES_AUTO_HOLD_ATTACK_SECONDS       0.080f
 #define BUBBLES_AUTO_HOLD_BASE_RELEASE_SECONDS 2.200f
 #define BUBBLES_AUTO_HOLD_MAX_RETENTION        0.965f
 #define BUBBLES_AUTO_HOLD_THRESHOLD            0.015f
+#define BUBBLES_AUTO_HOLD_ATTACK_PEAK          0.850f
 #define BUBBLES_ANCHOR_MAX_MIX                 0.600f
+#endif
 
 #if !defined(BUBBLES_QUALITY_ESP32_SAFE) && !defined(BUBBLES_QUALITY_WASM_FULL)
 #define BUBBLES_QUALITY_STANDARD 1
@@ -372,6 +375,7 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     engine->master_wet_gain = 1.0f;
     float init_amount = Clamp01(engine->config.freeze_amount);
     engine->smoothed_freeze = (init_amount > 0.0f) ? init_amount : ((engine->config.freeze_enabled != 0) ? 1.0f : 0.0f);
+    engine->auto_hold_state = AUTO_HOLD_IDLE;
     engine->auto_hold_amount = 0.0f;
     engine->auto_hold_target = 0.0f;
     engine->recent_phrase_active = 0;
@@ -838,6 +842,7 @@ static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_
         engine->phrase_anchor_valid = true;
         engine->phrase_anchor_age = 0;
         engine->recent_phrase_active = 1;
+        engine->auto_hold_state = AUTO_HOLD_IDLE;
         engine->auto_hold_target = 0.0f;
 
     } else if (engine->burst_timer_ticks > 0) {
@@ -846,51 +851,61 @@ static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_
             engine->engine_state = ENGINE_STATE_ATTACK_ONGOING;
         }
         engine->recent_phrase_active = 1;
+        engine->auto_hold_state = AUTO_HOLD_IDLE;
         engine->auto_hold_target = 0.0f;
     } else {
         if (engine->env_follower_state > engine->config.sustain_thresh) {
             engine->engine_state = ENGINE_STATE_SUSTAIN_BODY;
-            if (prev_state == ENGINE_STATE_SILENCE || prev_state == ENGINE_STATE_SPARSE_DECAY) {
+            if (prev_state == ENGINE_STATE_SILENCE || prev_state == ENGINE_STATE_SPARSE_DECAY || prev_env < engine->config.tracking_thresh) {
                 engine->phrase_anchor_write_ptr = engine->write_ptr;
                 engine->phrase_anchor_valid = true;
                 engine->phrase_anchor_age = 0;
             }
             engine->recent_phrase_active = 1;
+            engine->auto_hold_state = AUTO_HOLD_IDLE;
             engine->auto_hold_target = 0.0f;
-        } else if (engine->env_follower_state > engine->config.tracking_thresh) {
-            engine->engine_state = ENGINE_STATE_SPARSE_DECAY;
-            if (engine->recent_phrase_active) {
-                if (engine->auto_hold_amount < 0.85f && engine->auto_hold_target >= 0.0f) {
-                    engine->auto_hold_target = 1.0f;
-                } else {
-                    engine->auto_hold_target = 0.0f;
-                }
-            }
-        } else if (engine->smoothed_freeze > 0.05f) {
-            // Active freeze sustains the cloud across quiet input (M3)
-            engine->engine_state = ENGINE_STATE_SUSTAIN_BODY;
         } else {
-            engine->engine_state = ENGINE_STATE_SILENCE;
+            if (engine->env_follower_state > engine->config.tracking_thresh) {
+                engine->engine_state = ENGINE_STATE_SPARSE_DECAY;
+            } else if (engine->smoothed_freeze > 0.05f) {
+                // Active freeze sustains the cloud across quiet input (M3)
+                engine->engine_state = ENGINE_STATE_SUSTAIN_BODY;
+            } else {
+                engine->engine_state = ENGINE_STATE_SILENCE;
+            }
+
+            // M4A.1: Auto-Hold State Machine (single monotonic cycle per phrase)
             if (engine->recent_phrase_active && engine->phrase_anchor_valid) {
-                if (engine->auto_hold_amount < 0.85f && engine->auto_hold_target >= 0.5f) {
-                    // Let auto-hold attack reach full retention
-                    engine->auto_hold_target = 1.0f;
-                } else if (engine->auto_hold_amount < 0.15f) {
-                    // Entered silence directly after phrase: start auto-hold attack
-                    engine->auto_hold_target = 1.0f;
-                } else if (engine->auto_hold_amount > BUBBLES_AUTO_HOLD_THRESHOLD) {
-                    // Peak reached; enter release phase towards 0.0
-                    engine->auto_hold_target = 0.0f;
-                } else {
-                    // Auto-hold released to silence; idle
-                    engine->auto_hold_target = 0.0f;
-                    engine->auto_hold_amount = 0.0f;
-                    engine->recent_phrase_active = 0;
-                    engine->phrase_anchor_valid = false;
+                switch (engine->auto_hold_state) {
+                    case AUTO_HOLD_IDLE:
+                        engine->auto_hold_state = AUTO_HOLD_ATTACK;
+                        engine->auto_hold_target = 1.0f;
+                        break;
+
+                    case AUTO_HOLD_ATTACK:
+                        if (engine->auto_hold_amount >= BUBBLES_AUTO_HOLD_ATTACK_PEAK) {
+                            engine->auto_hold_state = AUTO_HOLD_RELEASE;
+                            engine->auto_hold_target = 0.0f;
+                        } else {
+                            engine->auto_hold_target = 1.0f;
+                        }
+                        break;
+
+                    case AUTO_HOLD_RELEASE:
+                        engine->auto_hold_target = 0.0f;
+                        if (engine->auto_hold_amount <= BUBBLES_AUTO_HOLD_THRESHOLD) {
+                            engine->auto_hold_amount = 0.0f;
+                            engine->auto_hold_target = 0.0f;
+                            engine->auto_hold_state = AUTO_HOLD_IDLE;
+                            engine->recent_phrase_active = 0;
+                            engine->phrase_anchor_valid = false;
+                        }
+                        break;
                 }
             } else {
                 engine->auto_hold_target = 0.0f;
                 engine->auto_hold_amount = 0.0f;
+                engine->auto_hold_state = AUTO_HOLD_IDLE;
                 engine->recent_phrase_active = 0;
                 engine->phrase_anchor_valid = false;
             }
@@ -1119,10 +1134,13 @@ static int Scheduler_SpawnBurstMode(SoundBubblesEngine_t* engine, BubbleSpawnSou
             // grain inside the burst. The class draw and every read decision in
             // Voice_SpawnInit reuse this exact provenance.
             SharedSpawnId_t base = Scheduler_NextSpawnId(engine, source);
+            bool tail_mode = (engine->engine_state == ENGINE_STATE_SILENCE &&
+                              engine->auto_hold_amount > BUBBLES_AUTO_HOLD_THRESHOLD &&
+                              engine->phrase_anchor_valid);
             for (int i = 0; i < burst_count; i++) {
                 SharedSpawnId_t id = base;
                 id.child_index = (uint32_t)i;
-                BubbleClass_t c = (i == 0) ? BUBBLE_CLASS_MICRO_ATTACK : Scheduler_SelectClassForState(engine, id);
+                BubbleClass_t c = (!tail_mode && i == 0) ? BUBBLE_CLASS_MICRO_ATTACK : Scheduler_SelectClassForState(engine, id);
                 if (Voice_RequestSpawn(engine, c, 0, id)) { engine->metrics_tick_spawn_count++; spawned++; }
             }
             break;
@@ -2448,9 +2466,19 @@ static float LookupWindow(float phase, WindowType_t type) {
     }
 }
 
+AutoHoldState_t SoundBubbles_GetAutoHoldState(const SoundBubblesEngine_t* engine) {
+    if (engine == NULL) return AUTO_HOLD_IDLE;
+    return engine->auto_hold_state;
+}
+
 float SoundBubbles_GetAutoHoldAmount(const SoundBubblesEngine_t* engine) {
     if (engine == NULL) return 0.0f;
     return engine->auto_hold_amount;
+}
+
+float SoundBubbles_GetAutoHoldTarget(const SoundBubblesEngine_t* engine) {
+    if (engine == NULL) return 0.0f;
+    return engine->auto_hold_target;
 }
 
 int32_t SoundBubbles_GetPhraseAnchorWritePtr(const SoundBubblesEngine_t* engine) {

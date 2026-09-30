@@ -88,7 +88,7 @@ static float calc_db(float rms) {
 // 1. No-input test (Section 26)
 // ---------------------------------------------------------------------------
 static int test_no_input(void) {
-    printf("[1/9] test_no_input... ");
+    printf("[1/12] test_no_input... ");
     static int16_t delay[MAX_BUFFER_SAMPLES];
     BubbleEngineConfig_t config;
     bubble_engine_default_config(&config);
@@ -130,7 +130,7 @@ static int test_no_input(void) {
 // 2 & 3. Tail survival and decay slope (Sections 22 & 23)
 // ---------------------------------------------------------------------------
 static int test_tail_survival_and_decay_slope(void) {
-    printf("[2/9] test_tail_survival_and_decay_slope... ");
+    printf("[2/12] test_tail_survival_and_decay_slope... ");
     static int16_t delay_m4a[MAX_BUFFER_SAMPLES];
     static int16_t delay_base[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
@@ -266,7 +266,7 @@ static int test_tail_survival_and_decay_slope(void) {
 // 4. Spectral identity test (Section 24)
 // ---------------------------------------------------------------------------
 static int test_spectral_identity(void) {
-    printf("[3/9] test_spectral_identity... ");
+    printf("[3/12] test_spectral_identity... ");
     static int16_t delay[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
     const int block_size = 64;
@@ -349,7 +349,7 @@ static int test_spectral_identity(void) {
 // 5. Phrase anchor test (Section 25)
 // ---------------------------------------------------------------------------
 static int test_phrase_anchor_progression(void) {
-    printf("[4/9] test_phrase_anchor_progression... ");
+    printf("[4/12] test_phrase_anchor_progression... ");
     static int16_t delay[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
 
@@ -410,7 +410,7 @@ static int test_phrase_anchor_progression(void) {
 // 6. Infinite-tail prevention (Section 27)
 // ---------------------------------------------------------------------------
 static int test_infinite_tail_prevention(void) {
-    printf("[5/9] test_infinite_tail_prevention... ");
+    printf("[5/12] test_infinite_tail_prevention... ");
     static int16_t delay[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
 
@@ -469,7 +469,7 @@ static int test_infinite_tail_prevention(void) {
 // 7. Freeze interaction regression (Section 28)
 // ---------------------------------------------------------------------------
 static int test_freeze_interaction(void) {
-    printf("[6/9] test_freeze_interaction... ");
+    printf("[6/12] test_freeze_interaction... ");
     static int16_t delay[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
 
@@ -553,7 +553,7 @@ static int test_freeze_interaction(void) {
 // 8. Stereo coherence (Section 29)
 // ---------------------------------------------------------------------------
 static int test_stereo_coherence(void) {
-    printf("[7/9] test_stereo_coherence... ");
+    printf("[7/12] test_stereo_coherence... ");
     static int16_t delay_l[MAX_BUFFER_SAMPLES];
     static int16_t delay_r[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
@@ -619,7 +619,7 @@ static int test_stereo_coherence(void) {
 // 9. CPU & voice scaling benchmark (Section 30)
 // ---------------------------------------------------------------------------
 static int test_cpu_and_voice_limits(void) {
-    printf("[8/9] test_cpu_and_voice_limits... ");
+    printf("[8/12] test_cpu_and_voice_limits... ");
     static int16_t delay[MAX_BUFFER_SAMPLES];
     const int voice_limits[4] = {8, 16, 24, 32};
     const float sample_rates[3] = {44100.0f, 48000.0f, 96000.0f};
@@ -668,6 +668,429 @@ static int test_cpu_and_voice_limits(void) {
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// 9. Full cycle, monotonicity & anchor lifetime test (M4A.1 - Sections 6, 7, 8, 13, 15)
+// ---------------------------------------------------------------------------
+static int test_autohold_full_cycle_and_monotonicity(void) {
+    printf("[9/12] test_autohold_full_cycle_and_monotonicity... ");
+    static int16_t delay[MAX_BUFFER_SAMPLES];
+    const float sample_rate = 44100.0f;
+    BubbleEngineConfig_t config;
+    bubble_engine_default_config(&config);
+    config.sample_rate = sample_rate;
+    config.memory_mix = 0.0f; // Base release: 2.2s (no MEMORY modulation)
+
+    BubbleEngine_t engine;
+    SoundBubbles_Init(&engine, delay, &config);
+
+    const int block_size = 32; // exactly 1 control tick per block
+    float in[32];
+    float out_l[32], out_r[32];
+
+    // Stimulate with 500ms tone at 440 Hz
+    int tone_samples = (int)(0.5f * sample_rate);
+    int tone_blocks = tone_samples / block_size;
+    for (int b = 0; b < tone_blocks; b++) {
+        fill_harmonic_tone(in, block_size, 440.0f, sample_rate, 0.85f);
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+    }
+
+    CHECK(SoundBubbles_GetPhraseAnchorValid(&engine), "Anchor must be valid after tone");
+    CHECK(engine.recent_phrase_active == 1, "recent_phrase_active must be 1 after tone");
+
+    // Feed silence for 15 seconds
+    memset(in, 0, sizeof(in));
+    int silence_samples = (int)(15.0f * sample_rate);
+    int silence_blocks = silence_samples / block_size;
+
+    AutoHoldState_t prev_state = SoundBubbles_GetAutoHoldState(&engine);
+    float prev_amount = SoundBubbles_GetAutoHoldAmount(&engine);
+
+    int count_idle_to_attack = 0;
+    int count_attack_to_release = 0;
+    int count_release_to_idle = 0;
+    int count_release_to_attack = 0;
+
+    int release_start_tick = -1;
+    int release_end_tick = -1;
+    bool anchor_invalidated_at_release_end = false;
+    uint32_t anchor_age_at_invalidation = 0;
+
+    for (int b = 0; b < silence_blocks; b++) {
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+
+        AutoHoldState_t cur_state = SoundBubbles_GetAutoHoldState(&engine);
+        float cur_amount = SoundBubbles_GetAutoHoldAmount(&engine);
+        float cur_target = SoundBubbles_GetAutoHoldTarget(&engine);
+        bool anchor_valid = SoundBubbles_GetPhraseAnchorValid(&engine);
+
+        // Detect state transitions
+        if (prev_state == AUTO_HOLD_IDLE && cur_state == AUTO_HOLD_ATTACK) {
+            count_idle_to_attack++;
+        }
+        if (prev_state == AUTO_HOLD_ATTACK && cur_state == AUTO_HOLD_RELEASE) {
+            count_attack_to_release++;
+            release_start_tick = b;
+        }
+        if (prev_state == AUTO_HOLD_RELEASE && cur_state == AUTO_HOLD_IDLE) {
+            count_release_to_idle++;
+            release_end_tick = b;
+            anchor_invalidated_at_release_end = !anchor_valid;
+            anchor_age_at_invalidation = SoundBubbles_GetPhraseAnchorAge(&engine);
+        }
+        if (prev_state == AUTO_HOLD_RELEASE && cur_state == AUTO_HOLD_ATTACK) {
+            count_release_to_attack++;
+        }
+
+        // Monotonicity check during RELEASE
+        if (cur_state == AUTO_HOLD_RELEASE) {
+            CHECK(cur_target == 0.0f, "Target must remain 0.0 in RELEASE");
+            if (prev_state == AUTO_HOLD_RELEASE) {
+                CHECK(cur_amount <= prev_amount + 1e-6f, "Auto-hold amount must be monotonic decreasing during RELEASE");
+            }
+        }
+
+        // Once in IDLE, amount and target must be 0
+        if (cur_state == AUTO_HOLD_IDLE && count_release_to_idle > 0) {
+            CHECK(cur_amount == 0.0f, "Auto-hold amount must remain 0.0 once settled in IDLE");
+            CHECK(cur_target == 0.0f, "Auto-hold target must remain 0.0 once settled in IDLE");
+            CHECK(!anchor_valid, "Anchor must remain invalid after release completes");
+            CHECK(engine.metrics_last_block.spawn_count == 0, "No spawns must occur in silence once IDLE");
+        }
+
+        prev_state = cur_state;
+        prev_amount = cur_amount;
+    }
+
+    CHECK(count_idle_to_attack == 1, "Must transition IDLE -> ATTACK exactly once");
+    CHECK(count_attack_to_release == 1, "Must transition ATTACK -> RELEASE exactly once");
+    CHECK(count_release_to_idle == 1, "Must transition RELEASE -> IDLE exactly once");
+    CHECK(count_release_to_attack == 0, "Must NEVER transition RELEASE -> ATTACK without new phrase");
+
+    CHECK(release_start_tick >= 0 && release_end_tick > release_start_tick, "Release must start and end");
+    float release_duration_sec = (float)(release_end_tick - release_start_tick) * (float)block_size / sample_rate;
+
+    printf("Release: %.2f s (theoretical: ~8.88s) ... ", release_duration_sec);
+    CHECK(release_duration_sec >= 7.5f && release_duration_sec <= 10.0f, "Release duration must be in expected range (7.5-10.0s)");
+
+    // Anchor lifetime: verified that release ended naturally before the 10s fallback timeout
+    CHECK(anchor_invalidated_at_release_end, "Anchor must be invalidated when Auto-Hold release completes");
+    float anchor_age_sec = (float)anchor_age_at_invalidation / sample_rate;
+    CHECK(anchor_age_sec < 10.0f, "Anchor invalidation must occur before the 10s defensive fallback");
+
+    printf("PASS\n");
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// 10. Phrase restart test (M4A.1 - Section 14)
+// ---------------------------------------------------------------------------
+static int test_autohold_phrase_restart(void) {
+    printf("[10/12] test_autohold_phrase_restart... ");
+    static int16_t delay[MAX_BUFFER_SAMPLES];
+    const float sample_rate = 44100.0f;
+    BubbleEngineConfig_t config;
+    bubble_engine_default_config(&config);
+    config.sample_rate = sample_rate;
+
+    BubbleEngine_t engine;
+    SoundBubbles_Init(&engine, delay, &config);
+
+    const int block_size = 32;
+    float in[32];
+    float out_l[32], out_r[32];
+
+    // Phrase A: 500ms tone at 330 Hz
+    int phrase_a_samples = (int)(0.5f * sample_rate);
+    for (int i = 0; i < phrase_a_samples; i += block_size) {
+        fill_harmonic_tone(in, block_size, 330.0f, sample_rate, 0.85f);
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+    }
+    CHECK(SoundBubbles_GetPhraseAnchorValid(&engine), "Phrase A anchor must be valid");
+    int32_t anchor_a = SoundBubbles_GetPhraseAnchorWritePtr(&engine);
+
+    // Let Phrase A tail enter RELEASE (run ~1.5s of silence)
+    memset(in, 0, sizeof(in));
+    int silence_samples = (int)(1.5f * sample_rate);
+    for (int i = 0; i < silence_samples; i += block_size) {
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+    }
+
+    CHECK(SoundBubbles_GetAutoHoldState(&engine) == AUTO_HOLD_RELEASE, "Auto-hold must be in RELEASE during Phrase A tail");
+    float amount_before_b = SoundBubbles_GetAutoHoldAmount(&engine);
+    CHECK(amount_before_b > 0.20f && amount_before_b < 0.85f, "Amount must be in mid-release");
+    CHECK(SoundBubbles_GetPhraseAnchorWritePtr(&engine) == anchor_a, "Anchor write ptr must still be anchor A");
+
+    // Phrase B arrives: 500ms tone at 660 Hz
+    int phrase_b_samples = (int)(0.5f * sample_rate);
+    for (int i = 0; i < phrase_b_samples; i += block_size) {
+        fill_harmonic_tone(in, block_size, 660.0f, sample_rate, 0.85f);
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+    }
+
+    // Check rearm and new anchor
+    CHECK(SoundBubbles_GetPhraseAnchorValid(&engine), "Phrase B anchor must be valid");
+    int32_t anchor_b = SoundBubbles_GetPhraseAnchorWritePtr(&engine);
+    CHECK(anchor_b != anchor_a, "Phrase B must capture new anchor write pointer distinct from anchor A");
+    CHECK(SoundBubbles_GetAutoHoldState(&engine) == AUTO_HOLD_IDLE, "Auto-hold state must reset to IDLE during Phrase B");
+
+    // Phrase B tail: run silence until Phrase B tail completes
+    int phrase_b_tail_samples = (int)(15.0f * sample_rate);
+    memset(in, 0, sizeof(in));
+
+    int count_b_attack = 0;
+    int count_b_release = 0;
+    int count_b_idle = 0;
+    AutoHoldState_t prev_b_state = AUTO_HOLD_IDLE;
+
+    for (int i = 0; i < phrase_b_tail_samples; i += block_size) {
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+        AutoHoldState_t cur = SoundBubbles_GetAutoHoldState(&engine);
+        if (prev_b_state == AUTO_HOLD_IDLE && cur == AUTO_HOLD_ATTACK) count_b_attack++;
+        if (prev_b_state == AUTO_HOLD_ATTACK && cur == AUTO_HOLD_RELEASE) count_b_release++;
+        if (prev_b_state == AUTO_HOLD_RELEASE && cur == AUTO_HOLD_IDLE) count_b_idle++;
+        prev_b_state = cur;
+    }
+
+    CHECK(count_b_attack == 1, "Phrase B tail must trigger ATTACK exactly once");
+    CHECK(count_b_release == 1, "Phrase B tail must transition to RELEASE exactly once");
+    CHECK(count_b_idle == 1, "Phrase B tail must settle to IDLE exactly once");
+
+    printf("PASS (rearm verified, anchor A=%d -> anchor B=%d)\n", (int)anchor_a, (int)anchor_b);
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// 11. SPRAY tail class distribution test (M4A.1 - Sections 10, 11, 12, 16)
+// ---------------------------------------------------------------------------
+static int test_spray_tail_class_distribution(void) {
+    printf("[11/12] test_spray_tail_class_distribution... ");
+    static int16_t delay[MAX_BUFFER_SAMPLES];
+    const float sample_rate = 44100.0f;
+    BubbleEngineConfig_t config;
+    bubble_engine_default_config(&config);
+    config.sample_rate = sample_rate;
+    config.burst_mode = BUBBLE_BURST_MODE_SPRAY;
+    config.active_voice_limit = 32;
+    config.density_sustain = 80.0f; // High density to ensure abundant tail activity
+
+    BubbleEngine_t engine;
+    SoundBubbles_Init(&engine, delay, &config);
+
+    const int block_size = 32;
+    float in[32];
+    float out_l[32], out_r[32];
+
+    // Stimulate with 500ms tone to establish phrase anchor & auto hold
+    int stim_samples = (int)(0.5f * sample_rate);
+    for (int i = 0; i < stim_samples; i += block_size) {
+        fill_harmonic_tone(in, block_size, 440.0f, sample_rate, 0.85f);
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+    }
+
+    // Run 500ms of silence so envelope follower completely decays to silence and Auto-Hold is in tail mode
+    memset(in, 0, sizeof(in));
+    for (int i = 0; i < (int)(0.5f * sample_rate); i += block_size) {
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+    }
+
+    CHECK(engine.engine_state == ENGINE_STATE_SILENCE, "Engine must be in SILENCE");
+    CHECK(SoundBubbles_GetAutoHoldAmount(&engine) > BUBBLES_AUTO_HOLD_THRESHOLD, "Auto-hold must be active");
+    CHECK(SoundBubbles_GetPhraseAnchorValid(&engine), "Phrase anchor must be valid");
+
+    // Track spawned voices during 3.0s of tail
+    int tail_samples = (int)(3.0f * sample_rate);
+    int total_tail_spawns = 0;
+    int micro_count = 0;
+    int short_count = 0;
+    int sustain_count = 0;
+    int child0_micro_count = 0;
+    int child0_total_count = 0;
+
+    for (int i = 0; i < tail_samples; i += block_size) {
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+        uint32_t current_tick = engine.scheduler_tick;
+        for (int s = 0; s < engine.active_voice_limit; s++) {
+            BubbleVoice_t* v = &engine.voices[s];
+            if (v->state != VOICE_STATE_INACTIVE && v->spawn_id.tick == current_tick) {
+                total_tail_spawns++;
+                if (v->bubble_class == BUBBLE_CLASS_MICRO_ATTACK) micro_count++;
+                else if (v->bubble_class == BUBBLE_CLASS_SHORT_INTERMEDIATE) short_count++;
+                else if (v->bubble_class == BUBBLE_CLASS_SUSTAIN_BODY) sustain_count++;
+
+                if (v->spawn_id.child_index == 0) {
+                    child0_total_count++;
+                    if (v->bubble_class == BUBBLE_CLASS_MICRO_ATTACK) {
+                        child0_micro_count++;
+                    }
+                }
+            }
+        }
+    }
+
+    CHECK(total_tail_spawns > 50, "Tail must generate sufficient spawns for statistical validation");
+    float micro_pct = (float)micro_count / (float)total_tail_spawns * 100.0f;
+    float short_pct = (float)short_count / (float)total_tail_spawns * 100.0f;
+    float sustain_pct = (float)sustain_count / (float)total_tail_spawns * 100.0f;
+    float child0_micro_pct = (child0_total_count > 0) ? ((float)child0_micro_count / (float)child0_total_count * 100.0f) : 0.0f;
+
+    printf("\n    SPRAY tail classes (%d spawns): MICRO=%.1f%%, SHORT=%.1f%%, SUSTAIN=%.1f%%, child0_MICRO=%.1f%%\n    ",
+           total_tail_spawns, micro_pct, short_pct, sustain_pct, child0_micro_pct);
+
+    CHECK(micro_pct <= 10.0f, "Tail MICRO_ATTACK percentage must be <= 10%");
+    CHECK(child0_micro_pct < 20.0f, "Child 0 must NOT be forcibly MICRO_ATTACK in tail mode (expected ~5%, got < 20%)");
+    CHECK(short_pct >= 25.0f && short_pct <= 45.0f, "Tail SHORT percentage must be in range ~30-40%");
+    CHECK(sustain_pct >= 50.0f && sustain_pct <= 75.0f, "Tail SUSTAIN percentage must be in range ~60-70%");
+
+    // Verify Section 12: Outside tail mode (active phrase sustain), child 0 is preserved as MICRO_ATTACK
+    BubbleEngine_t engine_live;
+    SoundBubbles_Init(&engine_live, delay, &config);
+    int live_child0_total = 0;
+    int live_child0_micro = 0;
+    for (int b = 0; b < 200; b++) {
+        fill_harmonic_tone(in, block_size, 440.0f, sample_rate, 0.85f);
+        SoundBubbles_ProcessBlock(&engine_live, in, out_l, out_r, block_size);
+        uint32_t live_tick = engine_live.scheduler_tick;
+        for (int s = 0; s < engine_live.active_voice_limit; s++) {
+            BubbleVoice_t* v = &engine_live.voices[s];
+            if (v->state != VOICE_STATE_INACTIVE && v->spawn_id.tick == live_tick) {
+                if (v->spawn_id.child_index == 0) {
+                    live_child0_total++;
+                    if (v->bubble_class == BUBBLE_CLASS_MICRO_ATTACK) {
+                        live_child0_micro++;
+                    }
+                }
+            }
+        }
+    }
+    CHECK(live_child0_total > 0, "Live phrase must produce spawns");
+    CHECK(live_child0_micro == live_child0_total, "Outside tail mode, child 0 of SPRAY must be 100% MICRO_ATTACK");
+
+    printf("PASS\n");
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// 12. Click suppression test (M4A.1 - Section 17)
+// ---------------------------------------------------------------------------
+static int test_click_suppression(void) {
+    printf("[12/12] test_click_suppression... ");
+    static int16_t delay[MAX_BUFFER_SAMPLES];
+    const float sample_rate = 44100.0f;
+    BubbleEngineConfig_t config;
+    bubble_engine_default_config(&config);
+    config.sample_rate = sample_rate;
+
+    BubbleEngine_t engine;
+    SoundBubbles_Init(&engine, delay, &config);
+
+    const int block_size = 64;
+    float in[64];
+    float out_l[64], out_r[64];
+
+    // Stimulate with 500ms tone
+    int stim_samples = (int)(0.5f * sample_rate);
+    for (int i = 0; i < stim_samples; i += block_size) {
+        fill_harmonic_tone(in, block_size, 440.0f, sample_rate, 0.85f);
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+    }
+
+    // Measure delta around ATTACK -> RELEASE and RELEASE -> IDLE
+    memset(in, 0, sizeof(in));
+    float max_delta_attack_to_release = 0.0f;
+    float max_delta_release_to_idle = 0.0f;
+    float prev_sample = out_l[block_size - 1];
+
+    AutoHoldState_t prev_st = SoundBubbles_GetAutoHoldState(&engine);
+    int total_tail_blocks = (int)(15.0f * sample_rate) / block_size;
+
+    for (int b = 0; b < total_tail_blocks; b++) {
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+        AutoHoldState_t cur_st = SoundBubbles_GetAutoHoldState(&engine);
+
+        for (int k = 0; k < block_size; k++) {
+            float delta = fabsf(out_l[k] - prev_sample);
+            if (prev_st == AUTO_HOLD_ATTACK || cur_st == AUTO_HOLD_RELEASE) {
+                if (delta > max_delta_attack_to_release) max_delta_attack_to_release = delta;
+            }
+            if (prev_st == AUTO_HOLD_RELEASE && cur_st == AUTO_HOLD_IDLE) {
+                if (delta > max_delta_release_to_idle) max_delta_release_to_idle = delta;
+            }
+            prev_sample = out_l[k];
+        }
+        prev_st = cur_st;
+    }
+
+    // Test Phrase restart delta (Phrase A -> tail -> Phrase B onset)
+    SoundBubbles_Init(&engine, delay, &config);
+    for (int i = 0; i < stim_samples; i += block_size) {
+        fill_harmonic_tone(in, block_size, 440.0f, sample_rate, 0.85f);
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+    }
+    memset(in, 0, sizeof(in));
+    for (int i = 0; i < (int)(1.0f * sample_rate); i += block_size) {
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+    }
+    // Phrase B starts (phase-continuous across blocks)
+    prev_sample = out_l[block_size - 1];
+    float max_delta_phrase_restart = 0.0f;
+    for (int b = 0; b < 20; b++) {
+        for (int k = 0; k < block_size; k++) {
+            float t = (float)(b * block_size + k) / sample_rate;
+            float s = 0.60f * sinf(2.0f * M_PI * 660.0f * t)
+                    + 0.30f * sinf(2.0f * M_PI * 1320.0f * t)
+                    + 0.10f * sinf(2.0f * M_PI * 1980.0f * t);
+            float ramp = fminf(1.0f, t / 0.005f);
+            in[k] = 0.85f * s * ramp;
+        }
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+        for (int k = 0; k < block_size; k++) {
+            float delta = fabsf(out_l[k] - prev_sample);
+            if (delta > max_delta_phrase_restart) max_delta_phrase_restart = delta;
+            prev_sample = out_l[k];
+        }
+    }
+
+    // Test Freeze release during tail
+    SoundBubbles_Init(&engine, delay, &config);
+    for (int i = 0; i < stim_samples; i += block_size) {
+        fill_harmonic_tone(in, block_size, 440.0f, sample_rate, 0.85f);
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+    }
+    memset(in, 0, sizeof(in));
+    for (int i = 0; i < (int)(0.5f * sample_rate); i += block_size) {
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+    }
+    config.freeze_amount = 0.8f;
+    SoundBubbles_UpdateConfig(&engine, &config);
+    for (int i = 0; i < 30; i++) {
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+    }
+    config.freeze_amount = 0.0f;
+    SoundBubbles_UpdateConfig(&engine, &config);
+    prev_sample = out_l[block_size - 1];
+    float max_delta_freeze_release = 0.0f;
+    for (int b = 0; b < 30; b++) {
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+        for (int k = 0; k < block_size; k++) {
+            float delta = fabsf(out_l[k] - prev_sample);
+            if (delta > max_delta_freeze_release) max_delta_freeze_release = delta;
+            prev_sample = out_l[k];
+        }
+    }
+
+    printf("deltas: [ATTACK->REL: %.4f, REL->IDLE: %.4f, Restart: %.4f, FreezeRel: %.4f] ... ",
+           max_delta_attack_to_release, max_delta_release_to_idle, max_delta_phrase_restart, max_delta_freeze_release);
+
+    CHECK(max_delta_attack_to_release < 0.25f, "ATTACK -> RELEASE transition must be click-free");
+    CHECK(max_delta_release_to_idle < 0.05f, "RELEASE -> IDLE transition must be click-free");
+    CHECK(max_delta_phrase_restart < 0.35f, "Phrase restart transition must be click-free");
+    CHECK(max_delta_freeze_release < 0.20f, "Freeze release transition must be click-free");
+
+    printf("PASS\n");
+    return 0;
+}
+
 int main(void) {
     printf("===================================================================\n");
     printf(" M4A: Auto-Hold & Phrase Anchor Tail Architecture Validation\n");
@@ -681,6 +1104,10 @@ int main(void) {
     if (test_freeze_interaction() != 0) return 1;
     if (test_stereo_coherence() != 0) return 1;
     if (test_cpu_and_voice_limits() != 0) return 1;
+    if (test_autohold_full_cycle_and_monotonicity() != 0) return 1;
+    if (test_autohold_phrase_restart() != 0) return 1;
+    if (test_spray_tail_class_distribution() != 0) return 1;
+    if (test_click_suppression() != 0) return 1;
 
     printf("\nAll M4A validation tests PASSED successfully.\n");
     return 0;

@@ -63,6 +63,14 @@ typedef enum {
 #define BUBBLES_MICRODETUNE_SUSTAIN_CENTS 6.0f
 #define BUBBLES_MICRODETUNE_FREEZE_CENTS  8.0f
 
+// --- M4A Auto-Hold & Phrase Anchor Tail Architecture ---
+#define BUBBLES_AUTO_HOLD_ATTACK_SECONDS       0.080f
+#define BUBBLES_AUTO_HOLD_BASE_RELEASE_SECONDS 2.200f
+#define BUBBLES_AUTO_HOLD_MAX_RETENTION        0.965f
+#define BUBBLES_AUTO_HOLD_THRESHOLD            0.015f
+#define BUBBLES_AUTO_HOLD_ATTACK_PEAK          0.850f
+#define BUBBLES_ANCHOR_MAX_MIX                 0.600f
+
 // --- Enums ---
 
 typedef enum {
@@ -72,6 +80,12 @@ typedef enum {
     ENGINE_STATE_SUSTAIN_BODY,        // 70% Body / 30% Short
     ENGINE_STATE_SPARSE_DECAY         // 100% Body
 } EngineState_t;
+
+typedef enum {
+    AUTO_HOLD_IDLE = 0,
+    AUTO_HOLD_ATTACK,
+    AUTO_HOLD_RELEASE
+} AutoHoldState_t;
 
 typedef enum {
     VOICE_STATE_INACTIVE = 0,
@@ -481,6 +495,7 @@ typedef struct {
     float smoothed_freeze;
 
     // Auto-Hold & Phrase Anchor Tail Architecture (M4A)
+    AutoHoldState_t auto_hold_state;
     float auto_hold_amount;
     float auto_hold_target;
     float auto_hold_attack_coef;
@@ -584,7 +599,9 @@ BubbleInterpolationMode_t SoundBubbles_InterpolationModeForProfile(BubbleQuality
 BubbleInterpolationMode_t SoundBubbles_GetInterpolationMode(const SoundBubblesEngine_t* engine);
 
 // M4A Auto-Hold & Phrase Anchor inspection helpers
+AutoHoldState_t SoundBubbles_GetAutoHoldState(const SoundBubblesEngine_t* engine);
 float SoundBubbles_GetAutoHoldAmount(const SoundBubblesEngine_t* engine);
+float SoundBubbles_GetAutoHoldTarget(const SoundBubblesEngine_t* engine);
 int32_t SoundBubbles_GetPhraseAnchorWritePtr(const SoundBubblesEngine_t* engine);
 bool SoundBubbles_GetPhraseAnchorValid(const SoundBubblesEngine_t* engine);
 uint32_t SoundBubbles_GetPhraseAnchorAge(const SoundBubblesEngine_t* engine);
