@@ -37,7 +37,29 @@ Use filas lock-free, double buffering ou snapshots atômicos para transferir con
 | Bloco interno | 32 frames | Igual a `BUBBLES_BLOCK_SIZE`; cerca de 0,73 ms a 44,1 kHz. |
 | Entrada do core | mono float | Some/converta entradas de codec antes do core. |
 | Saída do core | estéreo float | Converta para formato do codec depois do core. |
-| Delay buffer | 88.200 amostras `int16_t` | Caller-owned; 2 segundos a 44,1 kHz. |
+| Delay buffer | 88.200 amostras `BubbleRingSample_t` | Caller-owned; 2 segundos a 44,1 kHz (172,3 KiB em `int16_t`). |
+
+## Ring Buffer Storage Backend & Memória (`BUBBLES_RING_FLOAT`)
+
+A partir da milestone M4C, o armazenamento do ring buffer é configurado em tempo de compilação:
+
+- **Alvos Embarcados (`MCU_SAFE`, `MCU_PLUS`, ESP32)**:
+  - Definem `BUBBLES_RING_FLOAT=0` (padrão automático em `BUBBLES_TARGET_MCU` ou `ESP_PLATFORM`).
+  - O tipo `BubbleRingSample_t` é `int16_t` (2 bytes por amostra).
+  - Escrita com TPDF dither (~1 LSB) via gerador PRNG dedicado e desacoplado (`ring_dither_rng`), eliminando distorção de truncamento em caudas baixas sem afetar o determinismo musical.
+- **Alvos Desktop / WASM**:
+  - Definem `BUBBLES_RING_FLOAT=1`.
+  - O tipo `BubbleRingSample_t` é `float` (4 bytes por amostra).
+
+### Distinção Crítica: Samples vs Bytes
+
+Para alocação correta de memória caller-owned pelo firmware:
+
+- `SoundBubbles_RequiredBufferSamples(sample_rate)`: retorna a contagem de **amostras** (ex: 88.200 amostras para 2 s a 44,1 kHz).
+- `SoundBubbles_RequiredBufferBytes(sample_rate)`: retorna o tamanho exato em **bytes** (`samples * sizeof(BubbleRingSample_t)`).
+
+> [!WARNING]
+> Nunca assuma `bytes == samples * 2` ou `bytes == samples * 4` hardcoded no firmware. Utilize sempre `SoundBubbles_RequiredBufferBytes(sample_rate)` ou `bubble_engine_required_buffer_bytes(sample_rate)` para alocar o buffer estático/DMA.
 
 ## Seleção de perfil
 

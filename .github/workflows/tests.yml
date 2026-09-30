@@ -56,6 +56,18 @@ jobs:
       - name: Run core, preset, performance, and static tests
         run: python -m pytest -q tests --ignore=tests/dsp/test_offline_wasm_parity.py
 
+      - name: Validate M4C Float and Int16 Storage Backends
+        run: |
+          gcc -O2 -Wall -Wextra -std=c11 -DBUBBLES_RING_FLOAT=1 -Icore -Icore/dsp -Icore/engine scripts/m4c_1_freeze_probe.c core/engine/bubble_engine.c core/engine/bubble_macro_map.c -lm -o /tmp/probe_float
+          gcc -O2 -Wall -Wextra -std=c11 -DBUBBLES_RING_FLOAT=0 -Icore -Icore/dsp -Icore/engine scripts/m4c_1_freeze_probe.c core/engine/bubble_engine.c core/engine/bubble_macro_map.c -lm -o /tmp/probe_int16
+          /tmp/probe_float --determinism
+          /tmp/probe_int16 --determinism --dither
+          /tmp/probe_float --freeze-lock
+          /tmp/probe_int16 --freeze-lock --dither
+          /tmp/probe_int16 --dither-isolation
+          /tmp/probe_float --block-invariance
+          /tmp/probe_int16 --block-invariance --dither
+
   wasm-parity:
     name: Offline C and WASM parity
     runs-on: ubuntu-latest

@@ -54,6 +54,24 @@ O motor usa PRNG determinístico para decisões que afetam som: classe, duraçã
 - Seed `0` pode ser normalizada internamente para uma seed fixa não-zero.
 - Diferenças de ponto flutuante entre compiladores/targets podem causar pequenas diferenças numéricas; testes de paridade devem comparar tolerâncias adequadas por backend.
 
+## Ring Storage Backend & Dither Isolation (M4C)
+
+O buffer de delay circular suporta abstração compile-time de armazenamento (`BUBBLES_RING_FLOAT`):
+
+- **Leitura Normalizada**: `Ring_ReadNormalizedSample(buffer, index)` mapeia tanto `float` quanto `int16_t` uniformemente para a faixa `[-1.0, 1.0]`. A fórmula Hermite de 4 pontos opera diretamente sobre essas amostras normalizadas sem bifurcações condicionais.
+- **Escrita Float (`BUBBLES_RING_FLOAT=1`)**:
+  - Escrita direta em ponto flutuante de 32 bits.
+  - Flush defensivo de subnormais (`fabsf(val) < 1.0e-15f -> 0.0f`) para evitar degradação de performance por subnormais/denormais IEEE 754 em caudas longas de feedback.
+- **Escrita Int16 (`BUBBLES_RING_FLOAT=0`)**:
+  - Conversão saturada com escala simétrica: `[-1.0, 1.0] -> [-32767, +32767]`.
+  - TPDF dither (~1 LSB triangular) adicionado antes do arredondamento explícito (`lrintf`), prevenindo harmônicos espúrios de quantização e colapso de sinal em níveis baixos (-72 a -96 dBFS).
+  - Proteção de silêncio: amostras nulas ou sub-audíveis não recebem dither.
+- **Isolamento de Streams PRNG**:
+  - O dither utiliza o registrador `ring_dither_rng` (Xorshift32 rápido), com seed derivado deterministicamente na inicialização.
+  - O stream do dither é estritamente desacoplado dos geradores musicais (`rng_state` e `shared_event_seed`). Habilitar/desabilitar dither não altera nenhuma decisão musical (classes, onsets, pan, pitch ou `SharedSpawnId`).
+- **Freeze Write-Lock**:
+  - Quando `Freeze=1.0`, nenhuma escrita ocorre no ring buffer. O write pointer, as amostras do ring e o estado do `ring_dither_rng` permanecem 100% inalterados e bit-exatos.
+
 ## Contrato de tempo real
 
 O hot path do DSP deve permanecer compatível com callback de áudio:

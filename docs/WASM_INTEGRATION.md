@@ -22,6 +22,27 @@ metrics copied to JS outside hard real-time work where possible
 4. Escolher perfil (`WEB_STANDARD` por padrão em UI comum; `WEB_ULTRA` para render offline/alto desempenho).
 5. Processar blocos com ponteiros para buffers mono/stereo.
 
+## Float Ring Memory Footprint no WASM (`BUBBLES_RING_FLOAT=1`)
+
+No ambiente WebAudio/WASM, o backend do ring buffer opera nativamente em ponto flutuante de 32 bits (`BUBBLES_RING_FLOAT=1`), eliminando ruído de quantização em caudas regenerativas.
+
+### Requisitos de Memória Linear
+
+| Sample Rate | Amostras (`samples`) | Tamanho em Bytes (`bytes`) | Tamanho em KiB | Elementos `Float32Array` |
+|:---:|:---:|:---:|:---:|:---:|
+| 44.100 Hz | 88.200 | 352.800 B | 344,5 KiB | 88.200 floats |
+| 48.000 Hz | 96.000 | 384.000 B | 375,0 KiB | 96.000 floats |
+| 88.200 Hz | 176.400 | 705.600 B | 689,1 KiB | 176.400 floats |
+| 96.000 Hz | 192.000 | 768.000 B | 750,0 KiB | 192.000 floats |
+
+O wrapper em JavaScript aloca a memória linear do ring buffer usando `bubble_engine_required_buffer_bytes(sample_rate)`:
+
+```javascript
+const ringBytes = wasmExports.bubble_engine_required_buffer_bytes(sampleRate);
+const ringBufferPtr = wasmExports.malloc(ringBytes);
+wasmExports.bubble_engine_init(enginePtr, ringBufferPtr, configPtr);
+```
+
 ## AudioWorklet e tempo real
 
 O thread de áudio do navegador tem restrições similares a embarcado:

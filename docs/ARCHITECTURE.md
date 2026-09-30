@@ -44,6 +44,24 @@ O macro map traduz controles musicais normalizados (`density`, `bloom`, `motion`
 
 `bubble_engine_process(engine, in_mono, out_left, out_right, num_samples)` é o caminho de áudio. Ele consome amostras mono, atualiza o buffer de delay caller-owned e renderiza saída estéreo. O design assume blocos pequenos; `BUBBLES_BLOCK_SIZE` é o quantum de controle interno.
 
+### 6. Ring Storage Backend Specialization (M4C)
+
+O armazenamento do ring buffer granular é desacoplado do processamento do DSP e especializado em tempo de compilação:
+
+```text
+JUCE / VST / Desktop / WebAudio (WASM)
+  └─► BUBBLES_RING_FLOAT=1  ──►  BubbleRingSample_t = float (32-bit IEEE 754)
+
+Embedded MCU (ESP32, ARM Cortex-M)
+  └─► BUBBLES_RING_FLOAT=0  ──►  BubbleRingSample_t = int16_t (Q15 saturado + TPDF Dither)
+```
+
+- **Desacoplamento do Perfil de Qualidade**: `QUALITY_PROFILE` (`MCU_SAFE`, `MCU_PLUS`, `WEB_STANDARD`, `WEB_ULTRA`) controla dinamicamente limite de vozes, tipo de interpolação (linear vs Hermite) e orçamentos de grãos. O formato de armazenamento do ring (`BUBBLES_RING_FLOAT`) é estritamente uma propriedade da build/alvo e **nunca** muda por preset ou troca de cena.
+- **Abstração Centralizada**: O acesso ao buffer de delay ocorre unicamente através de helpers inlined (`Ring_ReadNormalizedSample`, `Ring_ReadSample`, `Ring_WriteSample`, `Ring_ClearBuffer`), evitando bifurcações condicionais no hot path DSP.
+- **API de Memória Explícita**:
+  - `SoundBubbles_RequiredBufferSamples(sr)` / `bubble_engine_required_buffer_samples(sr)`: retorna a contagem de amostras.
+  - `SoundBubbles_RequiredBufferBytes(sr)` / `bubble_engine_required_buffer_bytes(sr)`: retorna a contagem exata de bytes (`samples * sizeof(BubbleRingSample_t)`).
+
 ## Contrato de tempo real
 
 Dentro do caminho de áudio (`process` e funções chamadas por ele):
