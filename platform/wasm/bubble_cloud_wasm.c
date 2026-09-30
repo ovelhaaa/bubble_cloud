@@ -3,14 +3,17 @@
 #include <stdlib.h>
 #include "../../core/engine/bubble_engine.h"
 
+_Static_assert(sizeof(BubbleRingSample_t) == 4, "WASM web platform must use float ring storage");
+_Static_assert(BUBBLES_RING_FLOAT == 1, "WASM web platform requires float ring backend");
+
 static BubbleEngine_t engine;
-static int16_t* delay_buffer = NULL;
+static BubbleRingSample_t* delay_buffer = NULL;
 
 EMSCRIPTEN_KEEPALIVE
 void wasm_init(float sample_rate) {
     if (delay_buffer == NULL) {
         int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(sample_rate);
-        delay_buffer = (int16_t*)calloc(buffer_size, sizeof(int16_t));
+        delay_buffer = (BubbleRingSample_t*)calloc(buffer_size, sizeof(BubbleRingSample_t));
         if (delay_buffer == NULL) {
             return;
         }

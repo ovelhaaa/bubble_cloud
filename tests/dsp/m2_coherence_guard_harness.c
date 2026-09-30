@@ -52,7 +52,7 @@
 
 #define DELAY_SAMPLES 192000
 
-static void zero_delay(int16_t* delay) {
+static void zero_delay(BubbleRingSample_t* delay) {
     memset(delay, 0, (size_t)DELAY_SAMPLES * sizeof(delay[0]));
 }
 
@@ -128,8 +128,8 @@ static float legacy_shared_draw(uint32_t seed, uint32_t tick, uint32_t* running_
 // --- 1. Shared decisions ignore temporary coherence divergence (test A) ---
 
 static int test_shared_decisions_ignore_coherence_divergence(void) {
-    static int16_t delay_l[DELAY_SAMPLES];
-    static int16_t delay_r[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_l[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_r[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0xC0FFEEu);
     zero_delay(delay_l);
@@ -183,8 +183,8 @@ static int test_shared_decisions_ignore_coherence_divergence(void) {
 // --- 2. Unequal spawn count reconverges (test B) --------------------------
 
 static int test_unequal_spawn_count_reconverges(void) {
-    static int16_t delay_l[DELAY_SAMPLES];
-    static int16_t delay_r[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_l[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_r[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0x51EEDu);
     zero_delay(delay_l);
@@ -246,8 +246,8 @@ static int test_unequal_spawn_count_reconverges(void) {
 // --- 3. Long stereo divergence keeps event identity (test C) --------------
 
 static int test_long_stereo_divergence_keeps_event_identity(void) {
-    static int16_t delay_l[DELAY_SAMPLES];
-    static int16_t delay_r[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_l[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_r[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0x10E6E1u);
     zero_delay(delay_l);
@@ -301,8 +301,8 @@ static int test_long_stereo_divergence_keeps_event_identity(void) {
 // --- 4. Determinism of the shared decision (test D) -----------------------
 
 static int test_shared_event_decision_determinism(void) {
-    static int16_t delay_a[DELAY_SAMPLES];
-    static int16_t delay_b[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_a[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_b[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0x0D37E1u);
     zero_delay(delay_a);
@@ -334,8 +334,8 @@ static int test_shared_event_decision_determinism(void) {
 // --- 5. Channel-local decisions stay decorrelated (test E) ----------------
 
 static int test_channel_local_decisions_stay_decorrelated(void) {
-    static int16_t delay_l[DELAY_SAMPLES];
-    static int16_t delay_r[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_l[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_r[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0xDEC011u);
     zero_delay(delay_l);
@@ -492,7 +492,7 @@ typedef struct {
 } GuardScenario;
 
 static int run_guard_scenario(const GuardScenario* scenario, float sample_rate, int smart_start) {
-    static int16_t delay[DELAY_SAMPLES];
+    static BubbleRingSample_t delay[DELAY_SAMPLES];
     zero_delay(delay);
 
     EngineConfig_t cfg;
@@ -603,7 +603,7 @@ static int test_smart_start_cannot_invalidate_guard(void) {
     // Explicitly reproduce the pre-M2.2 hazard: a safe forward-pitch offset is
     // lowered by Smart Start into the forbidden [guard, forward_min) band, and
     // only the final clamp prevents that offset from reaching `read_ptr_float`.
-    static int16_t delay[DELAY_SAMPLES];
+    static BubbleRingSample_t delay[DELAY_SAMPLES];
     for (int r = 0; r < 4; r++) {
         const float sample_rate = sample_rates[r];
         zero_delay(delay);
@@ -638,8 +638,8 @@ static int test_smart_start_cannot_invalidate_guard(void) {
 // --- 9. Determinism of a fixed-seed spawn sequence ------------------------
 
 static int test_fixed_seed_spawn_sequence_is_deterministic(void) {
-    static int16_t delay_a[DELAY_SAMPLES];
-    static int16_t delay_b[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_a[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_b[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0x0D37E1u);
     cfg.pitch_mode = BUBBLE_PITCH_MODE_SHIMMER;
@@ -672,8 +672,8 @@ static int test_fixed_seed_spawn_sequence_is_deterministic(void) {
 // --- 10. Same-tick derived asymmetry does not shift a common spawn ---------
 
 static int test_same_tick_asymmetry_does_not_shift_common_spawns(void) {
-    static int16_t delay_l[DELAY_SAMPLES];
-    static int16_t delay_r[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_l[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_r[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0xA5C11Du);
     zero_delay(delay_l);
@@ -732,7 +732,7 @@ static int test_same_tick_asymmetry_does_not_shift_common_spawns(void) {
 // --- 11. Saturated spawns preserve their full identity in the queue ------
 
 static int test_pending_spawn_queue_preserves_identity(void) {
-    static int16_t delay[DELAY_SAMPLES];
+    static BubbleRingSample_t delay[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0xB0BAC1u);
     cfg.active_voice_limit = 4;
@@ -768,7 +768,7 @@ static int test_pending_spawn_queue_preserves_identity(void) {
 
     // The shared decision of the materialized grain must equal a direct draw with
     // the original identity, i.e. it was not recomputed from the later tick.
-    static int16_t delay_other[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_other[DELAY_SAMPLES];
     zero_delay(delay_other);
     BubbleEngine_t other;
     bubble_engine_init(&other, delay_other, &cfg);
@@ -807,8 +807,8 @@ static int test_droplet_identity_is_parent_derived_and_collision_free(void) {
 
     // Same parent + generation on both channels => same shared droplet decision,
     // and a droplet does not consume a top-level event index.
-    static int16_t delay_l[DELAY_SAMPLES];
-    static int16_t delay_r[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_l[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_r[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0xD20F1Eu);
     zero_delay(delay_l);
@@ -833,8 +833,8 @@ static int test_droplet_identity_is_parent_derived_and_collision_free(void) {
 // --- 13. Long same-tick asymmetric multi-spawn stress ------------------------
 
 static int test_long_asymmetric_multispawn_stress(void) {
-    static int16_t delay_l[DELAY_SAMPLES];
-    static int16_t delay_r[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_l[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_r[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0x57E55u);
     zero_delay(delay_l);
@@ -905,8 +905,8 @@ static int test_long_asymmetric_multispawn_stress(void) {
 // identity. Under the removed M2.3 per-channel top-level counter the extra moved
 // every later primary ordinal, so B diverged (proven by the legacy block).
 static int test_real_same_tick_top_level_asymmetry(void) {
-    static int16_t delay_l[DELAY_SAMPLES];
-    static int16_t delay_r[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_l[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_r[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0x7241Du);
     zero_delay(delay_l);
@@ -966,8 +966,8 @@ static int test_real_same_tick_top_level_asymmetry(void) {
 //   R: density A, density B
 // Density B must align despite the extra STRUM processed in L.
 static int test_cross_source_asymmetry(void) {
-    static int16_t delay_l[DELAY_SAMPLES];
-    static int16_t delay_r[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_l[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_r[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0xC205E0u);
     zero_delay(delay_l);
@@ -1005,8 +1005,8 @@ static int test_cross_source_asymmetry(void) {
 //   R: common event, common event
 // The later common event must align.
 static int test_burst_asymmetry(void) {
-    static int16_t delay_l[DELAY_SAMPLES];
-    static int16_t delay_r[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_l[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_r[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0xB0577u);
     zero_delay(delay_l);
@@ -1090,8 +1090,8 @@ static int stress_cmp(const void* pa, const void* pb) {
 }
 
 static int test_long_real_scheduler_stress(void) {
-    static int16_t delay_l[DELAY_SAMPLES];
-    static int16_t delay_r[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_l[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_r[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0x57E5Eu);
     cfg.tempo_sync_enabled = 0;

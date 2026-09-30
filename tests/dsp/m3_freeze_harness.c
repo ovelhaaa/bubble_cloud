@@ -46,7 +46,7 @@ static int test_write_retention_curve(void) {
     const float test_levels[5] = {0.0f, 0.25f, 0.50f, 0.75f, 1.0f};
     float measured_renewal[5] = {0.0f};
     const int test_samples = 2048; // 64 control blocks
-    static int16_t delay[88200];
+    static BubbleRingSample_t delay[88200];
     float in[2048];
     float out_l[2048];
     float out_r[2048];
@@ -55,11 +55,14 @@ static int test_write_retention_curve(void) {
         in[i] = 0.85f; // Constant test probe
     }
 
+    const BubbleRingSample_t kBaseline = (BubbleRingSample_t)(BUBBLES_RING_SAMPLE_IS_FLOAT ? -0.5f : -10000);
+    const double kBaselineDouble = (double)(BUBBLES_RING_SAMPLE_IS_FLOAT ? -0.5 : -10000.0);
+
     for (int lvl = 0; lvl < 5; lvl++) {
         float f_val = test_levels[lvl];
-        // Pre-fill delay buffer with a distinct baseline (-10000)
+        // Pre-fill delay buffer with a distinct baseline
         for (int i = 0; i < 88200; i++) {
-            delay[i] = -10000;
+            delay[i] = kBaseline;
         }
 
         BubbleEngineConfig_t config;
@@ -72,9 +75,9 @@ static int test_write_retention_curve(void) {
         BubbleEngine_t engine;
         SoundBubbles_Init(&engine, delay, &config);
 
-        // Pre-fill delay buffer AFTER Init (Init clears buffer to 0) with distinct baseline (-10000)
+        // Pre-fill delay buffer AFTER Init (Init clears buffer to 0) with distinct baseline
         for (int i = 0; i < 88200; i++) {
-            delay[i] = -10000;
+            delay[i] = kBaseline;
         }
         engine.smoothed_freeze = f_val;
 
@@ -86,7 +89,7 @@ static int test_write_retention_curve(void) {
         int samples_to_check = (f_val >= 0.999f) ? test_samples : test_samples;
         for (int i = 0; i < samples_to_check; i++) {
             int idx = (start_write_ptr + i) % 88200;
-            total_delta += fabs((double)delay[idx] - (-10000.0));
+            total_delta += fabs((double)delay[idx] - kBaselineDouble);
         }
         measured_renewal[lvl] = (float)total_delta;
     }
@@ -121,8 +124,8 @@ static int test_write_retention_curve(void) {
 // Test B: Freeze full stability over extended render (tens of seconds)
 // ---------------------------------------------------------------------------
 static int test_freeze_full_stability(void) {
-    static int16_t delay[88200];
-    static int16_t snapshot_delay[88200];
+    static BubbleRingSample_t delay[88200];
+    static BubbleRingSample_t snapshot_delay[88200];
     const int total_samples = 44100 * 25; // 25 seconds of continuous freeze!
     float in[BUBBLES_BLOCK_SIZE];
     float out_l[BUBBLES_BLOCK_SIZE];
@@ -137,7 +140,7 @@ static int test_freeze_full_stability(void) {
 
     // Pre-populate buffer with rich signal AFTER init (which zeroes delay)
     for (int i = 0; i < 88200; i++) {
-        delay[i] = (int16_t)(sinf((float)i * 0.05f) * 16000.0f);
+        delay[i] = (BubbleRingSample_t)(BUBBLES_RING_SAMPLE_IS_FLOAT ? (sinf((float)i * 0.05f) * 0.488f) : (sinf((float)i * 0.05f) * 16000.0f));
     }
     memcpy(snapshot_delay, delay, sizeof(delay));
 
@@ -190,7 +193,7 @@ static int test_freeze_full_stability(void) {
 // Test C: Unfreeze recovery
 // ---------------------------------------------------------------------------
 static int test_unfreeze_recovery(void) {
-    static int16_t delay[88200];
+    static BubbleRingSample_t delay[88200];
     memset(delay, 0, sizeof(delay));
 
     BubbleEngineConfig_t config;
@@ -248,7 +251,7 @@ static int test_unfreeze_recovery(void) {
 // Test D: Sweep discontinuity & Click-Free Automation
 // ---------------------------------------------------------------------------
 static int test_freeze_sweep_discontinuity(void) {
-    static int16_t delay[88200];
+    static BubbleRingSample_t delay[88200];
     memset(delay, 0, sizeof(delay));
 
     BubbleEngineConfig_t config;
@@ -324,8 +327,8 @@ static int test_freeze_sweep_discontinuity(void) {
 // Test E: Determinism
 // ---------------------------------------------------------------------------
 static int test_freeze_determinism(void) {
-    static int16_t delay1[88200];
-    static int16_t delay2[88200];
+    static BubbleRingSample_t delay1[88200];
+    static BubbleRingSample_t delay2[88200];
     const int total_blocks = 128;
     float in[BUBBLES_BLOCK_SIZE];
     float out_l1[BUBBLES_BLOCK_SIZE * 128];
@@ -376,7 +379,7 @@ static int test_freeze_determinism(void) {
 // Test F: State restore
 // ---------------------------------------------------------------------------
 static int test_freeze_state_restore(void) {
-    static int16_t delay[88200];
+    static BubbleRingSample_t delay[88200];
     memset(delay, 0, sizeof(delay));
 
     BubbleEngineConfig_t config;
@@ -410,7 +413,7 @@ static int test_freeze_state_restore(void) {
 // Test G: MIDI freeze mode semantics
 // ---------------------------------------------------------------------------
 static int test_freeze_midi_modes(void) {
-    static int16_t delay[88200];
+    static BubbleRingSample_t delay[88200];
     memset(delay, 0, sizeof(delay));
 
     BubbleEngineConfig_t config;
@@ -456,7 +459,7 @@ static int test_freeze_midi_modes(void) {
 static int test_freeze_sr_block_invariance_matrix(void) {
     const float sample_rates[4] = {44100.0f, 48000.0f, 88200.0f, 96000.0f};
     const int block_sizes[6] = {32, 64, 127, 256, 512, 2048};
-    static int16_t delay[192000];
+    static BubbleRingSample_t delay[192000];
     float in[2048];
     float out_l[2048];
     float out_r[2048];
@@ -511,7 +514,7 @@ static int test_freeze_threshold_boundary_continuity(void) {
     const int total_blocks = 160;
     const int total_samples = total_blocks * BUBBLES_BLOCK_SIZE;
 
-    static int16_t delay[88200];
+    static BubbleRingSample_t delay[88200];
     float in[BUBBLES_BLOCK_SIZE];
     float out_l[BUBBLES_BLOCK_SIZE];
     float out_r[BUBBLES_BLOCK_SIZE];
@@ -525,9 +528,11 @@ static int test_freeze_threshold_boundary_continuity(void) {
         BubbleEngine_t engine;
         bubble_engine_init(&engine, delay, &config);
 
-        // Pre-fill delay buffer with baseline (-10000) to measure memory renewal
+        // Pre-fill delay buffer with baseline to measure memory renewal
+        const BubbleRingSample_t kBaseline = (BubbleRingSample_t)(BUBBLES_RING_SAMPLE_IS_FLOAT ? -0.5f : -10000);
+        const double kBaselineDouble = (double)(BUBBLES_RING_SAMPLE_IS_FLOAT ? -0.5 : -10000.0);
         for (int i = 0; i < 88200; i++) {
-            delay[i] = -10000;
+            delay[i] = kBaseline;
         }
 
         bubble_engine_set_parameter(&engine, BUBBLE_PARAM_FREEZE, f);
@@ -576,7 +581,7 @@ static int test_freeze_threshold_boundary_continuity(void) {
         double total_delta = 0.0;
         for (int i = 0; i < 2048; i++) {
             int idx = (initial_write_ptr + i) % 88200;
-            total_delta += fabs((double)delay[idx] - (-10000.0));
+            total_delta += fabs((double)delay[idx] - kBaselineDouble);
         }
         measured_renewal[k] = (float)total_delta;
 

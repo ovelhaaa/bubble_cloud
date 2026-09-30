@@ -81,7 +81,7 @@ static int trace_same(const OnsetRecord* a, int a_count, const OnsetRecord* b, i
 
 // --- Helpers --------------------------------------------------------------
 
-static void zero_delay(int16_t* delay) {
+static void zero_delay(BubbleRingSample_t* delay) {
     memset(delay, 0, (size_t)DELAY_SAMPLES * sizeof(delay[0]));
 }
 
@@ -105,7 +105,7 @@ static SharedSpawnId_t make_id(uint32_t tick, BubbleSpawnSource_t source, uint32
 // --- 1. Determinism, bounds and non-trivial spread ------------------------
 
 static int test_onset_delay_is_deterministic_and_bounded(void) {
-    static int16_t delay[DELAY_SAMPLES];
+    static BubbleRingSample_t delay[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0x51E5D17u);
     zero_delay(delay);
@@ -147,7 +147,7 @@ static int test_onset_delay_is_deterministic_and_bounded(void) {
 // --- 2. RHYTHM / STRUM stay sample-exact ----------------------------------
 
 static int test_rhythm_and_strum_are_sample_exact(void) {
-    static int16_t delay[DELAY_SAMPLES];
+    static BubbleRingSample_t delay[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0x0B1A7u);
     zero_delay(delay);
@@ -171,8 +171,8 @@ static int test_rhythm_and_strum_are_sample_exact(void) {
 // --- 3. Stereo coherence --------------------------------------------------
 
 static int test_onset_is_shared_between_stereo_engines(void) {
-    static int16_t delay_l[DELAY_SAMPLES];
-    static int16_t delay_r[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_l[DELAY_SAMPLES];
+    static BubbleRingSample_t delay_r[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0xA11CEu);
     zero_delay(delay_l);
@@ -229,7 +229,7 @@ static int test_onset_is_shared_between_stereo_engines(void) {
 // --- 4. Droplets use their own derived identity ---------------------------
 
 static int test_droplet_child_onset_uses_derived_identity(void) {
-    static int16_t delay[DELAY_SAMPLES];
+    static BubbleRingSample_t delay[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0xD20B1E7u);
     zero_delay(delay);
@@ -258,7 +258,7 @@ static int test_droplet_child_onset_uses_derived_identity(void) {
 // --- 5. Burst children spread within a tick -------------------------------
 
 static int test_burst_children_spread_within_tick(void) {
-    static int16_t delay[DELAY_SAMPLES];
+    static BubbleRingSample_t delay[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0xB0257u);
     cfg.burst_mode = BUBBLE_BURST_MODE_SPRAY;
@@ -321,7 +321,7 @@ static int test_burst_children_spread_within_tick(void) {
 // --- 6. Real high-density run: spawn count and spread ---------------------
 
 static int test_high_density_spawn_count_and_spread(void) {
-    static int16_t delay[DELAY_SAMPLES];
+    static BubbleRingSample_t delay[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0xDEC0DEu);
     cfg.density_burst = 400.0f;
@@ -378,7 +378,7 @@ static int test_high_density_spawn_count_and_spread(void) {
 
 static void render_engine(uint32_t seed, int host_block, float* out_l, float* out_r, int total_samples,
                           OnsetRecord* records, int* record_count) {
-    static int16_t delay[DELAY_SAMPLES];
+    static BubbleRingSample_t delay[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, seed);
     cfg.density_burst = 120.0f;
@@ -457,7 +457,7 @@ static int test_bit_determinism_and_block_size_independence(void) {
 
 static int test_sample_rate_matrix(void) {
     const float rates[4] = {44100.0f, 48000.0f, 88200.0f, 96000.0f};
-    static int16_t delay[DELAY_SAMPLES];
+    static BubbleRingSample_t delay[DELAY_SAMPLES];
 
     for (int r = 0; r < 4; r++) {
         float sr = rates[r];
@@ -532,7 +532,7 @@ static int test_sample_rate_matrix(void) {
 // --- 9. Timing by source --------------------------------------------------
 
 static int test_timing_by_source(void) {
-    static int16_t delay[DELAY_SAMPLES];
+    static BubbleRingSample_t delay[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0x5002C3u);
     zero_delay(delay);
@@ -591,7 +591,7 @@ static int test_timing_by_source(void) {
 // --- 10. Pending queue qualification --------------------------------------
 
 static int test_pending_queue_qualification(void) {
-    static int16_t delay[DELAY_SAMPLES];
+    static BubbleRingSample_t delay[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0x0E0E0Eu);
     cfg.active_voice_limit = 2;
@@ -656,7 +656,7 @@ static int test_pending_queue_qualification(void) {
 // --- 11. Guard validity for delayed grains near the write head ------------
 
 static int test_delayed_onset_keeps_guard_valid(void) {
-    static int16_t delay[DELAY_SAMPLES];
+    static BubbleRingSample_t delay[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0x6A2Du);
     // A deliberately guard-adjacent attack region plus forward pitch so the guard
@@ -715,7 +715,7 @@ static int test_delayed_onset_keeps_guard_valid(void) {
 // --- 12. Extended guard qualification across pitch/direction/interpolators -
 
 static int test_guard_qualification_extended(void) {
-    static int16_t delay[DELAY_SAMPLES];
+    static BubbleRingSample_t delay[DELAY_SAMPLES];
     const float sr = 48000.0f;
     const int32_t buffer = (int32_t)SoundBubbles_RequiredBufferSamples(sr);
     const int32_t max_guarded = buffer - BUBBLES_GUARD_ZONE_SAMPLES - 1;
@@ -810,7 +810,7 @@ static int test_guard_qualification_extended(void) {
 // --- 13. Machine-gun boundary concentration metric ------------------------
 
 static int test_machine_gun_boundary_concentration(void) {
-    static int16_t delay[DELAY_SAMPLES];
+    static BubbleRingSample_t delay[DELAY_SAMPLES];
     EngineConfig_t cfg;
     base_config(&cfg, 0xC0FFEEu);
     cfg.density_burst = 350.0f;

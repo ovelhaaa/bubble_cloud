@@ -137,7 +137,7 @@ static double calc_spectral_centroid(const float* buffer, int start, int count, 
 // ---------------------------------------------------------------------------
 static int test_no_input_regression(void) {
     printf("[1/12] test_no_input_regression (30s silence)... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     BubbleEngineConfig_t config;
     bubble_engine_default_config(&config);
     config.sample_rate = 44100.0f;
@@ -181,9 +181,9 @@ static int test_no_input_regression(void) {
 // ---------------------------------------------------------------------------
 static int test_qualification_abc(void) {
     printf("[2/12] test_qualification_abc (Baseline vs M4A vs M4B across 12s)... ");
-    static int16_t delay_m4b[MAX_BUFFER_SAMPLES];
-    static int16_t delay_m4a[MAX_BUFFER_SAMPLES];
-    static int16_t delay_base[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay_m4b[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay_m4a[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay_base[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
     const int block_size = 64;
     const int total_samples = (((int)(12.5f * sample_rate) + block_size - 1) / block_size) * block_size;
@@ -310,7 +310,7 @@ static int test_qualification_abc(void) {
 // ---------------------------------------------------------------------------
 static int test_runaway_extreme(void) {
     printf("[3/12] test_runaway_extreme (MEMORY=0.85, BLOOM=0.85, DENSITY=60, 60s silence)... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
     const int block_size = 64;
 
@@ -408,7 +408,7 @@ static int test_runaway_extreme(void) {
 // ---------------------------------------------------------------------------
 static int test_impulse_stability(void) {
     printf("[4/12] test_impulse_stability (single impulse -> 25s envelope tracking)... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
     const int block_size = 64;
     const int total_samples = (int)(25.0f * sample_rate);
@@ -470,7 +470,7 @@ static int test_impulse_stability(void) {
 // ---------------------------------------------------------------------------
 static int test_spectral_darkening(void) {
     printf("[5/12] test_spectral_darkening (centroid tail 1-3s vs tail 6-9s)... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
     const int block_size = 64;
     const int total_samples = (((int)(10.0f * sample_rate) + block_size - 1) / block_size) * block_size;
@@ -523,8 +523,8 @@ static int test_spectral_darkening(void) {
 // ---------------------------------------------------------------------------
 static int test_low_frequency_buildup(void) {
     printf("[6/12] test_low_frequency_buildup (energy < 120 Hz check in long tail)... ");
-    static int16_t delay_m4b[MAX_BUFFER_SAMPLES];
-    static int16_t delay_m4a[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay_m4b[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay_m4a[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
     const int block_size = 64;
     const int total_samples = (((int)(8.0f * sample_rate) + block_size - 1) / block_size) * block_size;
@@ -595,7 +595,7 @@ static int test_low_frequency_buildup(void) {
 // ---------------------------------------------------------------------------
 static int test_harmonic_identity(void) {
     printf("[7/12] test_harmonic_identity (440Hz harmonic-to-noise ratio in tail)... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
     const int block_size = 64;
     const int total_samples = (((int)(6.0f * sample_rate) + block_size - 1) / block_size) * block_size;
@@ -660,7 +660,7 @@ static int test_harmonic_identity(void) {
 // ---------------------------------------------------------------------------
 static int test_feedback_write_bounds(void) {
     printf("[8/12] test_feedback_write_bounds (input, feedback, retained bounded terms)... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
     const int block_size = 32;
     const int total_samples = (((int)(4.0f * sample_rate) + block_size - 1) / block_size) * block_size;
@@ -712,7 +712,7 @@ static int test_feedback_write_bounds(void) {
 // ---------------------------------------------------------------------------
 static int test_freeze_regression(void) {
     printf("[9/12] test_freeze_regression (Freeze 0.3, 0.7, 1.0, write lock, click-free release)... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
     const int block_size = 64;
 
@@ -783,7 +783,7 @@ static int test_freeze_regression(void) {
 // ---------------------------------------------------------------------------
 static int test_cpu_benchmark(void) {
     printf("[10/12] test_cpu_benchmark (M4A vs M4B at 8/16/24/32 voices @ 44.1/48/96 kHz)... \n");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     const int voice_counts[4] = {8, 16, 24, 32};
     const float sample_rates[3] = {44100.0f, 48000.0f, 96000.0f};
     const int block_size = 64;
@@ -848,7 +848,7 @@ static int test_cpu_benchmark(void) {
 // ---------------------------------------------------------------------------
 static int test_int16_quantization_behavior(void) {
     printf("[11/12] test_int16_quantization_behavior (document dead-zone & LSB retention)... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
     const int block_size = 64;
 
@@ -867,13 +867,16 @@ static int test_int16_quantization_behavior(void) {
     float out_r[64];
     for (int k = 0; k < block_size; k++) in[k] = 3.1e-5f;
 
-    SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
-    float lsb_old = (float)engine.delay_buffer[engine.write_ptr] * (1.0f / 32767.0f);
+    float lsb_old = Ring_ReadNormalizedSample(engine.delay_buffer, engine.write_ptr);
     (void)lsb_old;
 
-    // Verify int16 delay buffer stores within valid int16 bounds
+    // Verify delay buffer stores within valid bounds
     for (int i = 0; i < 100; i++) {
+#if BUBBLES_RING_FLOAT
+        CHECK(engine.delay_buffer[i] >= -1.0f && engine.delay_buffer[i] <= 1.0f, "Delay buffer values must stay in [-1, 1] range");
+#else
         CHECK(engine.delay_buffer[i] >= -32767 && engine.delay_buffer[i] <= 32767, "Delay buffer values must stay in int16 range");
+#endif
     }
 
     printf("PASS (int16 resolution 1 LSB = 3.05e-5 confirmed)\n");
@@ -885,7 +888,7 @@ static int test_int16_quantization_behavior(void) {
 // ---------------------------------------------------------------------------
 static int test_tail_class_distribution_m4b(void) {
     printf("[12/12] test_tail_class_distribution_m4b (verify tail classes unaffected by feedback)... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
     const int block_size = 32;
 
@@ -959,13 +962,12 @@ static int test_tail_class_distribution_m4b(void) {
 // ---------------------------------------------------------------------------
 // 13. Freeze Bit-Exact Ring Lock (M4B.1 Section 18)
 // ---------------------------------------------------------------------------
-static uint32_t hash_delay_buffer_samples(const int16_t* buf, int32_t count) {
+static uint32_t hash_delay_buffer_samples(const BubbleRingSample_t* buf, int32_t count) {
     uint32_t hash = 2166136261u;
-    for (int32_t i = 0; i < count; i++) {
-        uint16_t val = (uint16_t)buf[i];
-        hash ^= (val & 0xFF);
-        hash *= 16777619u;
-        hash ^= (val >> 8);
+    const uint8_t* byte_buf = (const uint8_t*)buf;
+    size_t byte_count = (size_t)count * sizeof(BubbleRingSample_t);
+    for (size_t i = 0; i < byte_count; i++) {
+        hash ^= byte_buf[i];
         hash *= 16777619u;
     }
     return hash;
@@ -973,7 +975,7 @@ static uint32_t hash_delay_buffer_samples(const int16_t* buf, int32_t count) {
 
 static int test_freeze_bitexact_lock(void) {
     printf("[13/17] test_freeze_bitexact_lock (byte/sample hash invariance during Freeze=1.0)... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     BubbleEngineConfig_t config;
     bubble_engine_default_config(&config);
     config.sample_rate = 44100.0f;
@@ -1026,7 +1028,7 @@ static int test_freeze_bitexact_lock(void) {
 // ---------------------------------------------------------------------------
 static int test_autohold_aperture_law_and_freeze_sweep(void) {
     printf("[14/17] test_autohold_aperture_law_and_freeze_sweep (monotonic freeze closure, bounded hold regen)... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     BubbleEngineConfig_t config;
     bubble_engine_default_config(&config);
     config.sample_rate = 44100.0f;
@@ -1097,7 +1099,7 @@ static int test_autohold_aperture_law_and_freeze_sweep(void) {
 // ---------------------------------------------------------------------------
 static int test_feedback_to_retained_ratio_and_ring_saturation(void) {
     printf("[15/17] test_feedback_to_retained_ratio_and_ring_saturation (ratio & saturation metrics)... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     BubbleEngineConfig_t config;
     bubble_engine_default_config(&config);
     config.sample_rate = 44100.0f;
@@ -1170,7 +1172,7 @@ static int test_feedback_to_retained_ratio_and_ring_saturation(void) {
 // ---------------------------------------------------------------------------
 static int test_smooth_knee_safety_repeated_bursts(void) {
     printf("[16/17] test_smooth_knee_safety_repeated_bursts (repeated tone bursts, smooth gain modulation)... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     BubbleEngineConfig_t config;
     bubble_engine_default_config(&config);
     config.sample_rate = 44100.0f;
@@ -1234,7 +1236,7 @@ static int test_smooth_knee_safety_repeated_bursts(void) {
 // ---------------------------------------------------------------------------
 static int test_autocorrelation_periodicity(void) {
     printf("[17/17] test_autocorrelation_periodicity (autocorrelation at ~2.0s and ~4.0s < 0.40)... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     BubbleEngineConfig_t config;
     bubble_engine_default_config(&config);
     config.sample_rate = 44100.0f;

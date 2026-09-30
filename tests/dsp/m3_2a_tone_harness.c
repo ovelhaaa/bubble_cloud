@@ -38,7 +38,7 @@
 static const double kTestFreqs[] = {100.0, 220.0, 440.0, 1000.0, 2000.0, 4000.0, 6000.0, 10000.0};
 #define TEST_FREQ_COUNT ((int)(sizeof(kTestFreqs) / sizeof(kTestFreqs[0])))
 
-static void init_memory(int16_t* delay, int samples) {
+static void init_memory(BubbleRingSample_t* delay, int samples) {
     memset(delay, 0, (size_t)samples * sizeof(delay[0]));
 }
 
@@ -81,7 +81,7 @@ static int configure_sustain(EngineConfig_t* cfg, float sample_rate) {
 // 1 + 2: per-frequency bus gain and band continuity
 // ---------------------------------------------------------------------------
 static int test_bus_gain_table_and_band_continuity(void) {
-    static int16_t delay[192000];
+    static BubbleRingSample_t delay[192000];
     init_memory(delay, 192000);
     EngineConfig_t cfg;
     configure_sustain(&cfg, 48000.0f);
@@ -168,7 +168,7 @@ static double render_applied_cutoff(BubbleEngine_t* engine, float freq, int bloc
 }
 
 static int test_dynamic_sustain_cutoff(void) {
-    static int16_t delay[192000];
+    static BubbleRingSample_t delay[192000];
     init_memory(delay, 192000);
     EngineConfig_t cfg;
     configure_sustain(&cfg, 48000.0f);
@@ -202,7 +202,7 @@ static int test_dynamic_sustain_cutoff(void) {
 // 4: control-rate smoothing bound (no abrupt step / zipper)
 // ---------------------------------------------------------------------------
 static int test_cutoff_smoothing_is_bounded(void) {
-    static int16_t delay[192000];
+    static BubbleRingSample_t delay[192000];
     init_memory(delay, 192000);
     EngineConfig_t cfg;
     configure_sustain(&cfg, 48000.0f);
@@ -251,7 +251,7 @@ static int test_cutoff_smoothing_is_bounded(void) {
 // ---------------------------------------------------------------------------
 static int test_sample_rate_invariance(void) {
     const float rates[4] = {44100.0f, 48000.0f, 88200.0f, 96000.0f};
-    static int16_t delay[192000];
+    static BubbleRingSample_t delay[192000];
     for (int r = 0; r < 4; r++) {
         init_memory(delay, 192000);
         EngineConfig_t cfg;

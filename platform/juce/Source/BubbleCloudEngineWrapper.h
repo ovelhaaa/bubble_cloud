@@ -126,8 +126,8 @@ private:
     BubbleEngine_t engineR {};
     EngineConfig_t pendingConfig {};
     
-    std::vector<int16_t> delayBufferL;
-    std::vector<int16_t> delayBufferR;
+    std::vector<BubbleRingSample_t> delayBufferL;
+    std::vector<BubbleRingSample_t> delayBufferR;
 
     // Per-instance spatial split buffers. Each mono instance yields a wet stereo
     // bus plus its own dry mono bus; the wrapper sums wet from both instances

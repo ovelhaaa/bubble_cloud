@@ -283,7 +283,7 @@ void bubble_engine_default_config(BubbleEngineConfig_t* config) {
     config->class_configs[BUBBLE_CLASS_SUSTAIN_BODY].window_type = WINDOW_TYPE_TUKEY_LIKE;
 }
 
-void bubble_engine_init(BubbleEngine_t* engine, int16_t* delay_buffer_memory, const BubbleEngineConfig_t* initial_config) {
+void bubble_engine_init(BubbleEngine_t* engine, BubbleRingSample_t* delay_buffer_memory, const BubbleEngineConfig_t* initial_config) {
     if (engine == NULL || delay_buffer_memory == NULL) {
         return;
     }
@@ -353,7 +353,7 @@ void bubble_engine_reset(BubbleEngine_t* engine) {
     BubbleEnginePreset_t preset;
     BubbleEngineMetricsCallback_t metrics_callback = engine->metrics_callback;
     void* metrics_user_data = engine->metrics_user_data;
-    int16_t* delay_buffer = engine->delay_buffer;
+    BubbleRingSample_t* delay_buffer = engine->delay_buffer;
     float macro_values[BUBBLE_PARAM_MACRO_COUNT];
     float macro_targets[BUBBLE_PARAM_MACRO_COUNT];
     uint32_t macro_dirty_mask = engine->macro_dirty_mask;
@@ -717,4 +717,20 @@ void bubble_engine_set_metrics_callback(BubbleEngine_t* engine, BubbleEngineMetr
     }
 
     SoundBubbles_SetMetricsCallback(engine, callback, user_data);
+}
+
+size_t bubble_engine_required_buffer_samples(float sample_rate) {
+    return SoundBubbles_RequiredBufferSamples(sample_rate);
+}
+
+size_t bubble_engine_required_buffer_bytes(float sample_rate) {
+    return SoundBubbles_RequiredBufferBytes(sample_rate);
+}
+
+void bubble_engine_set_dither_enabled(BubbleEngine_t* engine, bool enabled) {
+    SoundBubbles_SetDitherEnabled(engine, enabled);
+}
+
+bool bubble_engine_get_dither_enabled(const BubbleEngine_t* engine) {
+    return SoundBubbles_GetDitherEnabled(engine);
 }

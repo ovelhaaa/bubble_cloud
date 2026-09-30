@@ -18,7 +18,7 @@
 #define BUBBLES_BUFFER_SIZE_SAMPLES (int)(2 * SAMPLE_RATE)
 
 // Memory for the 2-second delay buffer
-static int16_t delay_buffer_memory[BUBBLES_BUFFER_SIZE_SAMPLES];
+static BubbleRingSample_t delay_buffer_memory[BUBBLES_BUFFER_SIZE_SAMPLES];
 static SoundBubblesEngine_t engine;
 
 // --- Test Vectors ---

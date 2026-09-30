@@ -166,7 +166,11 @@ void bubble_macro_map_resolve(const float macro_values[BUBBLES_MACRO_COUNT],
                               BubbleEngineConfig_t* out_config,
                               float* master_dry_gain,
                               float* master_wet_gain);
-void bubble_engine_init(BubbleEngine_t* engine, int16_t* delay_buffer_memory, const BubbleEngineConfig_t* initial_config);
+void bubble_engine_init(BubbleEngine_t* engine, BubbleRingSample_t* delay_buffer_memory, const BubbleEngineConfig_t* initial_config);
+size_t bubble_engine_required_buffer_samples(float sample_rate);
+size_t bubble_engine_required_buffer_bytes(float sample_rate);
+void bubble_engine_set_dither_enabled(BubbleEngine_t* engine, bool enabled);
+bool bubble_engine_get_dither_enabled(const BubbleEngine_t* engine);
 void bubble_engine_reset(BubbleEngine_t* engine);
 void bubble_engine_reset_motion_phase(BubbleEngine_t* engine);
 // M2 stereo coherence: per-channel decorrelation mask applied on top of the

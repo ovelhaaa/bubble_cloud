@@ -9,6 +9,16 @@ size_t SoundBubbles_RequiredBufferSamples(float sample_rate) {
     return (size_t)(2.0f * sample_rate);
 }
 
+size_t SoundBubbles_RequiredBufferBytes(float sample_rate) {
+    return SoundBubbles_RequiredBufferSamples(sample_rate) * sizeof(BubbleRingSample_t);
+}
+
+#if BUBBLES_RING_FLOAT
+_Static_assert(sizeof(BubbleRingSample_t) == 4, "Float ring sample must be 4 bytes");
+#else
+_Static_assert(sizeof(BubbleRingSample_t) == 2, "Int16 ring sample must be 2 bytes");
+#endif
+
 int32_t SoundBubbles_ReferenceSamplesToSamples(int32_t reference_samples, float sample_rate) {
     if (sample_rate <= 0.0f || !isfinite(sample_rate)) {
         sample_rate = BUBBLES_REFERENCE_SAMPLE_RATE;
@@ -220,10 +230,10 @@ static float ResolveContextReverseProbability(SoundBubblesEngine_t* engine, Bubb
 static float ResolveMicroDetuneCents(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class);
 static inline int32_t WrapIntIndex(int32_t index, int32_t size);
 static inline float WrapFloatIndex(float index, float size);
-static inline float LinearInterpolate(const int16_t* buffer, float index_float, int32_t buffer_size);
-static inline float Hermite4Interpolate(const int16_t* buffer, float index_float, int32_t buffer_size);
+static inline float LinearInterpolate(const BubbleRingSample_t* buffer, float index_float, int32_t buffer_size);
+static inline float Hermite4Interpolate(const BubbleRingSample_t* buffer, float index_float, int32_t buffer_size);
 static inline BubbleInterpolationMode_t ResolveInterpolationMode(BubbleQualityProfile profile);
-static inline float InterpolateSample(SoundBubblesEngine_t* engine, const int16_t* buffer, float index_float, int32_t buffer_size);
+static inline float InterpolateSample(SoundBubblesEngine_t* engine, const BubbleRingSample_t* buffer, float index_float, int32_t buffer_size);
 static inline bool CheckGuardZoneDirectional(int32_t write_ptr, float read_ptr_float, float rate, int32_t buffer_size);
 static float ResolvePitchModeRate(SoundBubblesEngine_t* engine);
 
@@ -339,12 +349,65 @@ static void UpdateFeedbackCoeffs(SoundBubblesEngine_t* engine) {
 static int32_t CountActiveVoices(const SoundBubblesEngine_t* engine);
 static void MotionResetLfo(BubbleMotionLfoState_t* lfo, uint32_t seed);
 
+// --- M4C Ring Buffer Backend Helpers ---
+
+static inline void Ring_ClearBuffer(BubbleRingSample_t* buffer, size_t sample_count) {
+    if (buffer == NULL) return;
+    for (size_t i = 0; i < sample_count; ++i) {
+        buffer[i] = (BubbleRingSample_t)0;
+    }
+}
+
+static inline uint32_t Ring_NextDitherU32(SoundBubblesEngine_t* engine) {
+    uint32_t x = engine->ring_dither_rng;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    engine->ring_dither_rng = x;
+    return x;
+}
+
+static inline int16_t Ring_EncodeInt16(SoundBubblesEngine_t* engine, float x) {
+    // Silence protection: do not add dither to pure zero or below sub-audible threshold
+    if (x == 0.0f || fabsf(x) < 1.0e-9f) {
+        return 0;
+    }
+    float dither = 0.0f;
+    if (engine != NULL && engine->dither_enabled) {
+        // TPDF: difference of two uniform random variables in [0, 1),
+        // resulting in triangular probability density function in (-1, +1) LSB.
+        const float kInv24Bit = 1.0f / 16777216.0f;
+        float r1 = (float)(Ring_NextDitherU32(engine) >> 8) * kInv24Bit;
+        float r2 = (float)(Ring_NextDitherU32(engine) >> 8) * kInv24Bit;
+        dither = r1 - r2;
+    }
+    float scaled = x * 32767.0f + dither;
+    if (scaled > 32767.0f) scaled = 32767.0f;
+    if (scaled < -32767.0f) scaled = -32767.0f;
+    return (int16_t)lrintf(scaled);
+}
+
+static inline void Ring_WriteSample(SoundBubblesEngine_t* engine, int32_t index, float sample_val) {
+#if BUBBLES_RING_FLOAT
+    // Tiny deterministic zeroing threshold (1.0e-15f, approx -300 dBFS),
+    // far below audibility or 32-bit float significant precision,
+    // to prevent IEEE 754 denormal/subnormal state slowdowns in late feedback tails.
+    if (fabsf(sample_val) < 1.0e-15f) {
+        sample_val = 0.0f;
+    }
+    engine->delay_buffer[index] = sample_val;
+#else
+    engine->delay_buffer[index] = Ring_EncodeInt16(engine, sample_val);
+#endif
+}
+
 // --- Initialization & Config ---
 
-void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memory, const EngineConfig_t* initial_config) {
+void SoundBubbles_Init(SoundBubblesEngine_t* engine, BubbleRingSample_t* delay_buffer_memory, const EngineConfig_t* initial_config) {
     InitWindowLUTs();
 
     engine->delay_buffer = delay_buffer_memory;
+    engine->dither_enabled = 1u;
     engine->config = *initial_config;
     ApplyQualityTierDefaults(&engine->config);
     engine->motion_base_config = engine->config;
@@ -441,9 +504,7 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memor
     engine->pending_spawn_count = 0;
 
     int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(engine->config.sample_rate);
-    for (int i = 0; i < buffer_size; i++) {
-        engine->delay_buffer[i] = 0;
-    }
+    Ring_ClearBuffer(engine->delay_buffer, (size_t)buffer_size);
 
     for (int i = 0; i < BUBBLES_MAX_VOICES; i++) {
         engine->voices[i].state = VOICE_STATE_INACTIVE;
@@ -528,6 +589,13 @@ void SoundBubbles_SetRngSeed(SoundBubblesEngine_t* engine, uint32_t seed) {
     // agree on the shared value of the same logical event.
     engine->rng_state = base ^ engine->channel_decorrelation;
     engine->shared_event_seed = base;
+
+    // Dither RNG: independent stream keyed by engine seed + fixed namespace.
+    // Using a distinct constant ensures the dither stream never collides with
+    // the audio PRNG state, and toggling dither never alters musical decisions.
+    uint32_t dither_seed = base ^ 0x54504446u;
+    if (dither_seed == 0u) dither_seed = 0x54504446u;
+    engine->ring_dither_rng = dither_seed;
 }
 
 void SoundBubbles_SetChannelDecorrelation(SoundBubblesEngine_t* engine, uint32_t decorrelation_mask) {
@@ -619,7 +687,7 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
         // incoming live audio with retained memory, locking the head only at full freeze.
         float clamped_sample = fmaxf(-1.0f, fminf(1.0f, dry_sample));
         float live_input_component = clamped_sample * write_gain;
-        float old_sample = (float)engine->delay_buffer[engine->write_ptr] * (1.0f / 32767.0f);
+        float old_sample = Ring_ReadNormalizedSample(engine->delay_buffer, engine->write_ptr);
         float retained_component = old_sample * effective_retention;
 
         // Feedback write aperture (M4B.1)
@@ -650,7 +718,7 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
                 engine->ring_clamp_count++;
             }
             ring_mixed = Clamp(ring_mixed, -1.0f, 1.0f);
-            engine->delay_buffer[engine->write_ptr] = (int16_t)(ring_mixed * 32767.0f);
+            Ring_WriteSample(engine, engine->write_ptr, ring_mixed);
         }
 
         // Zero audio busses
@@ -1961,8 +2029,8 @@ static int32_t RefineReadOffsetSmartStart(const SoundBubblesEngine_t* engine, in
         if (candidate >= (buffer_size - BUBBLES_GUARD_ZONE_SAMPLES)) continue;
         int32_t idx = WrapIntIndex(engine->write_ptr - candidate, buffer_size);
         int32_t prev = WrapIntIndex(idx - 1, buffer_size);
-        float a = (float)engine->delay_buffer[prev];
-        float b = (float)engine->delay_buffer[idx];
+        float a = Ring_ReadNormalizedSample(engine->delay_buffer, prev);
+        float b = Ring_ReadNormalizedSample(engine->delay_buffer, idx);
         if ((a <= 0.0f && b >= 0.0f) || (a >= 0.0f && b <= 0.0f)) {
             return candidate;
         }
@@ -1970,7 +2038,7 @@ static int32_t RefineReadOffsetSmartStart(const SoundBubblesEngine_t* engine, in
         float energy = 0.0f;
         for (int k = -SMART_START_ENERGY_RADIUS; k <= SMART_START_ENERGY_RADIUS; k++) {
             int32_t eidx = WrapIntIndex(idx + k, buffer_size);
-            float s = (float)engine->delay_buffer[eidx];
+            float s = Ring_ReadNormalizedSample(engine->delay_buffer, eidx);
             energy += s * s;
         }
         if (energy < best_energy) {
@@ -2205,13 +2273,13 @@ static inline float WrapFloatIndex(float index, float size) {
     return index;
 }
 
-static inline float LinearInterpolate(const int16_t* buffer, float index_float, int32_t buffer_size) {
+static inline float LinearInterpolate(const BubbleRingSample_t* buffer, float index_float, int32_t buffer_size) {
     int32_t idx_int = (int32_t)index_float;
     float frac = index_float - (float)idx_int;
     int32_t idx_next = (idx_int + 1 == buffer_size) ? 0 : idx_int + 1;
 
-    float val1 = (float)buffer[idx_int] * (1.0f / 32768.0f);
-    float val2 = (float)buffer[idx_next] * (1.0f / 32768.0f);
+    float val1 = Ring_ReadNormalizedSample(buffer, idx_int);
+    float val2 = Ring_ReadNormalizedSample(buffer, idx_next);
     return val1 + frac * (val2 - val1);
 }
 
@@ -2240,7 +2308,7 @@ static inline BubbleInterpolationMode_t ResolveInterpolationMode(BubbleQualityPr
 //   c = -0.5*xm1        + 0.5*x1
 //   d =        x0
 //   y(t) = ((a*t + b)*t + c)*t + d
-static inline float Hermite4Interpolate(const int16_t* buffer, float index_float, int32_t buffer_size) {
+static inline float Hermite4Interpolate(const BubbleRingSample_t* buffer, float index_float, int32_t buffer_size) {
     int32_t idx = (int32_t)index_float;
     float frac = index_float - (float)idx;
 
@@ -2248,11 +2316,10 @@ static inline float Hermite4Interpolate(const int16_t* buffer, float index_float
     int32_t ip1 = (idx + 1 < buffer_size) ? idx + 1 : 0;
     int32_t ip2 = (idx + 2 < buffer_size) ? idx + 2 : idx + 2 - buffer_size;
 
-    const float scale = 1.0f / 32768.0f;
-    float xm1 = (float)buffer[im1] * scale;
-    float x0  = (float)buffer[idx] * scale;
-    float x1  = (float)buffer[ip1] * scale;
-    float x2  = (float)buffer[ip2] * scale;
+    float xm1 = Ring_ReadNormalizedSample(buffer, im1);
+    float x0  = Ring_ReadNormalizedSample(buffer, idx);
+    float x1  = Ring_ReadNormalizedSample(buffer, ip1);
+    float x2  = Ring_ReadNormalizedSample(buffer, ip2);
 
     float a = -0.5f * xm1 + 1.5f * x0 - 1.5f * x1 + 0.5f * x2;
     float b =        xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2;
@@ -2263,7 +2330,7 @@ static inline float Hermite4Interpolate(const int16_t* buffer, float index_float
 
 // Dispatch on the cached profile-derived mode. One well-predicted branch per
 // voice-sample; the path counters exist only in test/telemetry builds.
-static inline float InterpolateSample(SoundBubblesEngine_t* engine, const int16_t* buffer, float index_float, int32_t buffer_size) {
+static inline float InterpolateSample(SoundBubblesEngine_t* engine, const BubbleRingSample_t* buffer, float index_float, int32_t buffer_size) {
 #if defined(BUBBLES_INTERPOLATION_TELEMETRY) || defined(BUBBLES_BUILD_PROCESSOR_TESTS)
     if (engine->interpolation_mode == BUBBLES_INTERPOLATION_HERMITE) {
         engine->interpolation_hermite_samples++;
@@ -2743,4 +2810,15 @@ void SoundBubbles_ResetRingSaturationCounts(SoundBubblesEngine_t* engine) {
         engine->ring_softclip_count = 0u;
         engine->ring_clamp_count = 0u;
     }
+}
+
+void SoundBubbles_SetDitherEnabled(SoundBubblesEngine_t* engine, bool enabled) {
+    if (engine != NULL) {
+        engine->dither_enabled = enabled ? 1u : 0u;
+    }
+}
+
+bool SoundBubbles_GetDitherEnabled(const SoundBubblesEngine_t* engine) {
+    if (engine == NULL) return false;
+    return engine->dither_enabled != 0;
 }

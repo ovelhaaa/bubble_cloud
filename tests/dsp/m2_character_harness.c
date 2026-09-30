@@ -47,7 +47,7 @@ typedef struct {
     int count;
 } SpawnLog;
 
-static void init_memory(int16_t* delay, int samples) {
+static void init_memory(BubbleRingSample_t* delay, int samples) {
     memset(delay, 0, (size_t)samples * sizeof(delay[0]));
 }
 
@@ -100,7 +100,7 @@ static void configure_sustain(EngineConfig_t* cfg, uint32_t seed) {
 }
 
 static int test_memory_distribution_is_recent_weighted_and_not_uniform(void) {
-    static int16_t delay[192000];
+    static BubbleRingSample_t delay[192000];
     static float input[32];
     SpawnLog log;
     log.count = 0;
@@ -172,7 +172,7 @@ static int classify_interval(float raw_rate) {
 }
 
 static int test_sparkle_interval_weights_and_exact_fifth(void) {
-    static int16_t delay[192000];
+    static BubbleRingSample_t delay[192000];
     static float input[32];
     SpawnLog log;
     log.count = 0;
@@ -234,7 +234,7 @@ static int test_sparkle_interval_weights_and_exact_fifth(void) {
 }
 
 static int test_sparkle_zero_has_no_random_pitch(void) {
-    static int16_t delay[192000];
+    static BubbleRingSample_t delay[192000];
     static float input[32];
     SpawnLog log;
     log.count = 0;
@@ -274,7 +274,7 @@ static float class_detune_bound(int bubble_class) {
 }
 
 static int test_microdetune_is_bounded_fixed_and_reproducible(void) {
-    static int16_t delay[192000];
+    static BubbleRingSample_t delay[192000];
     static float input[32];
     SpawnLog log;
     log.count = 0;
@@ -353,7 +353,7 @@ static int state_is_attack_like(int state) {
 }
 
 static int test_reverse_is_context_conditioned(void) {
-    static int16_t delay[192000];
+    static BubbleRingSample_t delay[192000];
     EngineConfig_t cfg;
     bubble_engine_default_config(&cfg);
     cfg.sample_rate = 48000.0f;
@@ -411,8 +411,8 @@ static int test_reverse_is_context_conditioned(void) {
 }
 
 static int test_determinism_same_seed_same_output(void) {
-    static int16_t delay_a[192000];
-    static int16_t delay_b[192000];
+    static BubbleRingSample_t delay_a[192000];
+    static BubbleRingSample_t delay_b[192000];
     static float input[48000];
     static float left_a[48000];
     static float right_a[48000];
@@ -430,7 +430,7 @@ static int test_determinism_same_seed_same_output(void) {
     cfg.density_decay = 10.0f;
 
     for (int pass = 0; pass < 2; pass++) {
-        int16_t* delay = (pass == 0) ? delay_a : delay_b;
+        BubbleRingSample_t* delay = (pass == 0) ? delay_a : delay_b;
         float* left = (pass == 0) ? left_a : left_b;
         float* right = (pass == 0) ? right_a : right_b;
         init_memory(delay, 192000);
@@ -456,7 +456,7 @@ static int test_determinism_same_seed_same_output(void) {
 static int test_sample_rate_and_block_size_matrix(void) {
     const float rates[4] = {44100.0f, 48000.0f, 88200.0f, 96000.0f};
     const int blocks[6] = {32, 64, 127, 256, 512, 2048};
-    static int16_t delay[192000];
+    static BubbleRingSample_t delay[192000];
     static float input[4096];
     static float left[4096];
     static float right[4096];

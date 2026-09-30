@@ -4,6 +4,9 @@
 #include <array>
 #include <cmath>
 
+static_assert(sizeof(BubbleRingSample_t) == 4, "JUCE desktop platform must use float ring storage");
+static_assert(BUBBLES_RING_FLOAT == 1, "JUCE desktop platform requires float ring backend");
+
 namespace
 {
     constexpr std::array<BubbleParameterId, 19> cachedParameterIds {{
@@ -49,8 +52,8 @@ void BubbleCloudEngineWrapper::prepare(double sampleRate, int samplesPerBlock)
     size_t requiredBufferSize = SoundBubbles_RequiredBufferSamples((float)currentSampleRate);
     
     // Allocate buffers
-    delayBufferL.assign(requiredBufferSize, 0);
-    delayBufferR.assign(requiredBufferSize, 0);
+    delayBufferL.assign(requiredBufferSize, (BubbleRingSample_t)0);
+    delayBufferR.assign(requiredBufferSize, (BubbleRingSample_t)0);
     wetLeftFromL.assign((size_t)safeSamplesPerBlock, 0.0f);
     wetRightFromL.assign((size_t)safeSamplesPerBlock, 0.0f);
     dryFromL.assign((size_t)safeSamplesPerBlock, 0.0f);

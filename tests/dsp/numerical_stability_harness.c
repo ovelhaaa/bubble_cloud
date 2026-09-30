@@ -108,7 +108,7 @@ static int run_case(const StabilityPreset* preset, TestVector vector) {
     static float input[TEST_FRAMES];
     static float left[TEST_FRAMES];
     static float right[TEST_FRAMES];
-    static int16_t delay[88200];
+    static BubbleRingSample_t delay[88200];
 
     fill_vector(vector, input, TEST_FRAMES);
     memset(left, 0, sizeof(left));

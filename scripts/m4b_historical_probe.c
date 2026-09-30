@@ -44,7 +44,11 @@ int main(int argc, char** argv) {
     const char* out_csv = (argc > 1) ? argv[1] : NULL;
     const char* out_raw = (argc > 2) ? argv[2] : NULL;
 
+#ifdef BUBBLES_RING_SAMPLE_IS_FLOAT
+    static BubbleRingSample_t delay_buffer[MAX_BUFFER_SAMPLES];
+#else
     static int16_t delay_buffer[MAX_BUFFER_SAMPLES];
+#endif
     const float sample_rate = 44100.0f;
     const int block_size = 64;
     const int total_samples = (((int)(12.5f * sample_rate) + block_size - 1) / block_size) * block_size;

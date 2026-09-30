@@ -409,7 +409,7 @@ static MetricsDigest_t RenderWithMetrics(const EngineConfig_t* config, float mas
     digest.block_count = 0;
 
     int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples((float)sampleRate);
-    int16_t* delay_buffer = (int16_t*)calloc(buffer_size, sizeof(int16_t));
+    BubbleRingSample_t* delay_buffer = (BubbleRingSample_t*)calloc(buffer_size, sizeof(BubbleRingSample_t));
     if (!delay_buffer) {
         ErrorExit("Failed to allocate DSP delay buffer.");
     }

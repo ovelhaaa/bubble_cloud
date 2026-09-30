@@ -89,7 +89,7 @@ static float calc_db(float rms) {
 // ---------------------------------------------------------------------------
 static int test_no_input(void) {
     printf("[1/12] test_no_input... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     BubbleEngineConfig_t config;
     bubble_engine_default_config(&config);
     config.sample_rate = 44100.0f;
@@ -131,8 +131,8 @@ static int test_no_input(void) {
 // ---------------------------------------------------------------------------
 static int test_tail_survival_and_decay_slope(void) {
     printf("[2/12] test_tail_survival_and_decay_slope... ");
-    static int16_t delay_m4a[MAX_BUFFER_SAMPLES];
-    static int16_t delay_base[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay_m4a[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay_base[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
     const int block_size = 64;
     const int total_samples = (((int)(6.5f * sample_rate) + block_size - 1) / block_size) * block_size;
@@ -267,7 +267,7 @@ static int test_tail_survival_and_decay_slope(void) {
 // ---------------------------------------------------------------------------
 static int test_spectral_identity(void) {
     printf("[3/12] test_spectral_identity... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
     const int block_size = 64;
     const int total_samples = (((int)(4.5f * sample_rate) + block_size - 1) / block_size) * block_size;
@@ -350,7 +350,7 @@ static int test_spectral_identity(void) {
 // ---------------------------------------------------------------------------
 static int test_phrase_anchor_progression(void) {
     printf("[4/12] test_phrase_anchor_progression... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
 
     BubbleEngineConfig_t config;
@@ -411,7 +411,7 @@ static int test_phrase_anchor_progression(void) {
 // ---------------------------------------------------------------------------
 static int test_infinite_tail_prevention(void) {
     printf("[5/12] test_infinite_tail_prevention... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
 
     BubbleEngineConfig_t config;
@@ -470,7 +470,7 @@ static int test_infinite_tail_prevention(void) {
 // ---------------------------------------------------------------------------
 static int test_freeze_interaction(void) {
     printf("[6/12] test_freeze_interaction... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
 
     BubbleEngineConfig_t config;
@@ -554,8 +554,8 @@ static int test_freeze_interaction(void) {
 // ---------------------------------------------------------------------------
 static int test_stereo_coherence(void) {
     printf("[7/12] test_stereo_coherence... ");
-    static int16_t delay_l[MAX_BUFFER_SAMPLES];
-    static int16_t delay_r[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay_l[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay_r[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
 
     BubbleEngineConfig_t config;
@@ -620,7 +620,7 @@ static int test_stereo_coherence(void) {
 // ---------------------------------------------------------------------------
 static int test_cpu_and_voice_limits(void) {
     printf("[8/12] test_cpu_and_voice_limits... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     const int voice_limits[4] = {8, 16, 24, 32};
     const float sample_rates[3] = {44100.0f, 48000.0f, 96000.0f};
 
@@ -673,7 +673,7 @@ static int test_cpu_and_voice_limits(void) {
 // ---------------------------------------------------------------------------
 static int test_autohold_full_cycle_and_monotonicity(void) {
     printf("[9/12] test_autohold_full_cycle_and_monotonicity... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
     BubbleEngineConfig_t config;
     bubble_engine_default_config(&config);
@@ -787,7 +787,7 @@ static int test_autohold_full_cycle_and_monotonicity(void) {
 // ---------------------------------------------------------------------------
 static int test_autohold_phrase_restart(void) {
     printf("[10/12] test_autohold_phrase_restart... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
     BubbleEngineConfig_t config;
     bubble_engine_default_config(&config);
@@ -865,7 +865,7 @@ static int test_autohold_phrase_restart(void) {
 // ---------------------------------------------------------------------------
 static int test_spray_tail_class_distribution(void) {
     printf("[11/12] test_spray_tail_class_distribution... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
     BubbleEngineConfig_t config;
     bubble_engine_default_config(&config);
@@ -975,7 +975,7 @@ static int test_spray_tail_class_distribution(void) {
 // ---------------------------------------------------------------------------
 static int test_click_suppression(void) {
     printf("[12/12] test_click_suppression... ");
-    static int16_t delay[MAX_BUFFER_SAMPLES];
+    static BubbleRingSample_t delay[MAX_BUFFER_SAMPLES];
     const float sample_rate = 44100.0f;
     BubbleEngineConfig_t config;
     bubble_engine_default_config(&config);

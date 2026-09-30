@@ -24,10 +24,13 @@ static const char* TAG = "bubble_main";
 
 #define BUBBLE_ESP32_DELAY_BUFFER_SAMPLES (2 * BUBBLE_ESP32_AUDIO_SAMPLE_RATE_HZ)
 
+_Static_assert(sizeof(BubbleRingSample_t) == 2, "ESP32 platform must use 16-bit ring storage");
+_Static_assert(BUBBLES_RING_FLOAT == 0, "ESP32 platform must use int16 ring backend");
+
 #ifdef CONFIG_SPIRAM
-static EXT_RAM_ATTR int16_t s_delay_buffer[BUBBLE_ESP32_DELAY_BUFFER_SAMPLES];
+static EXT_RAM_ATTR BubbleRingSample_t s_delay_buffer[BUBBLE_ESP32_DELAY_BUFFER_SAMPLES];
 #else
-static int16_t s_delay_buffer[BUBBLE_ESP32_DELAY_BUFFER_SAMPLES];
+static BubbleRingSample_t s_delay_buffer[BUBBLE_ESP32_DELAY_BUFFER_SAMPLES];
 #endif
 static BubbleEngine_t s_engine;
 static float s_input_block[BUBBLE_ESP32_AUDIO_BLOCK_FRAMES];

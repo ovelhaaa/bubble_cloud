@@ -17,7 +17,7 @@ HARNESS_SOURCE = r'''
 #define MAX_AVG_BLOCK_US 1000.0
 
 int main(void) {
-    static int16_t delay[88200];
+    static BubbleRingSample_t delay[88200];
     float in[BUBBLES_BLOCK_SIZE];
     float left[BUBBLES_BLOCK_SIZE];
     float right[BUBBLES_BLOCK_SIZE];

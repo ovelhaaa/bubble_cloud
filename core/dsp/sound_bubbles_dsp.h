@@ -6,6 +6,42 @@
 #include <stddef.h>
 #include "../engine/bubble_quality.h"
 
+// --- Ring Buffer Storage Backend (M4C) ---
+// Compile-time storage format:
+//   JUCE / VST / Standalone / Desktop -> float32
+//   WASM / Web                        -> float32
+//   MCU_SAFE / MCU_PLUS (Embedded)    -> int16
+// Build target controls backend; runtime quality profile (MCU_SAFE, MCU_PLUS,
+// WEB_STANDARD, WEB_ULTRA) controls voices, interpolation, and grain budgets.
+#ifndef BUBBLES_RING_FLOAT
+  #if defined(BUBBLES_TARGET_MCU) || defined(ESP_PLATFORM) || defined(__XTENSA__) || defined(BUBBLES_RING_INT16)
+    #define BUBBLES_RING_FLOAT 0
+  #else
+    #define BUBBLES_RING_FLOAT 1
+  #endif
+#endif
+
+#if BUBBLES_RING_FLOAT
+typedef float BubbleRingSample_t;
+#define BUBBLES_RING_SAMPLE_IS_FLOAT 1
+#else
+typedef int16_t BubbleRingSample_t;
+#define BUBBLES_RING_SAMPLE_IS_FLOAT 0
+#endif
+
+// Fast inlined storage read helpers
+static inline float Ring_ReadNormalizedSample(const BubbleRingSample_t* buffer, int32_t index) {
+#if BUBBLES_RING_FLOAT
+    return buffer[index];
+#else
+    return (float)buffer[index] * (1.0f / 32767.0f);
+#endif
+}
+
+static inline BubbleRingSample_t Ring_ReadSample(const BubbleRingSample_t* buffer, int32_t index) {
+    return buffer[index];
+}
+
 // --- System & Algorithmic Constants ---
 #define BUBBLES_BLOCK_SIZE 32
 #define BUBBLES_MAX_VOICES BUBBLE_ENGINE_MAX_VOICES
@@ -394,7 +430,7 @@ typedef void (*SoundBubblesMetricsCallback_t)(const SoundBubblesBlockMetrics_t* 
 // Full DSP Engine State (Memory is caller-owned)
 typedef struct {
     // Buffers (Pointer passed in by caller)
-    int16_t* delay_buffer;
+    BubbleRingSample_t* delay_buffer;
     int32_t write_ptr;
 
     // Voices
@@ -535,6 +571,10 @@ typedef struct {
     uint32_t ring_softclip_count;
     uint32_t ring_clamp_count;
 
+    // Ring storage backend & dither state (M4C)
+    uint32_t ring_dither_rng;
+    uint8_t dither_enabled;
+
     // Product-facing macro state. Targets are written by bubble_engine_set_parameter();
     // current values are slewed at control-rate before being mapped to raw DSP fields.
     float macro_values[BUBBLES_MACRO_COUNT];
@@ -568,12 +608,18 @@ typedef struct {
 #define SOUND_BUBBLES_DEPRECATED
 #endif
 
-// Initialization: Caller provides pre-allocated delay_buffer (allocated via SoundBubbles_RequiredBufferSamples) and initial config.
+// Initialization: Caller provides pre-allocated delay_buffer (allocated via SoundBubbles_RequiredBufferSamples or SoundBubbles_RequiredBufferBytes) and initial config.
 // Determinism contract: same rng_seed + same input samples + same config/params => identical class/read/duration random decisions.
-SOUND_BUBBLES_DEPRECATED void SoundBubbles_Init(SoundBubblesEngine_t* engine, int16_t* delay_buffer_memory, const EngineConfig_t* initial_config);
+SOUND_BUBBLES_DEPRECATED void SoundBubbles_Init(SoundBubblesEngine_t* engine, BubbleRingSample_t* delay_buffer_memory, const EngineConfig_t* initial_config);
 
 // Returns the number of samples required for the delay buffer based on the target sample rate.
 size_t SoundBubbles_RequiredBufferSamples(float sample_rate);
+
+// Returns the number of bytes required for the delay buffer based on the target sample rate
+// and the compiled storage backend (BubbleRingSample_t).
+// Note: samples != bytes. Callers allocating raw memory must use RequiredBufferBytes
+// or multiply RequiredBufferSamples by sizeof(BubbleRingSample_t).
+size_t SoundBubbles_RequiredBufferBytes(float sample_rate);
 
 // Config Update: Safely copy new core engine parameters
 SOUND_BUBBLES_DEPRECATED void SoundBubbles_UpdateConfig(SoundBubblesEngine_t* engine, const EngineConfig_t* new_config);
@@ -652,6 +698,10 @@ void SoundBubbles_GetRingSaturationCounts(const SoundBubblesEngine_t* engine,
                                          uint32_t* out_softclip,
                                          uint32_t* out_clamp);
 void SoundBubbles_ResetRingSaturationCounts(SoundBubblesEngine_t* engine);
+
+// M4C Int16 Dither control (test-only helper, not a public parameter)
+void SoundBubbles_SetDitherEnabled(SoundBubblesEngine_t* engine, bool enabled);
+bool SoundBubbles_GetDitherEnabled(const SoundBubblesEngine_t* engine);
 
 #if defined(BUBBLES_INTERPOLATION_TELEMETRY) || defined(BUBBLES_BUILD_PROCESSOR_TESTS)
 // Test/telemetry-only: number of samples rendered through each interpolation

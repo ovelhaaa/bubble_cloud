@@ -30,7 +30,7 @@ static void capture_metrics(const SoundBubblesBlockMetrics_t* metrics, void* use
     capture->last = *metrics;
 }
 
-static void init_engine(BubbleEngine_t* engine, int16_t* delay, BubbleEngineConfig_t* config) {
+static void init_engine(BubbleEngine_t* engine, BubbleRingSample_t* delay, BubbleEngineConfig_t* config) {
     bubble_engine_default_config(config);
     config->rng_seed = 0x12345678u;
     config->smart_start_enable = 0;
@@ -64,7 +64,7 @@ static int active_voice_count(const BubbleEngine_t* engine) {
 }
 
 static int test_developer_parameter_gate_and_clamping(void) {
-    static int16_t delay[88200];
+    static BubbleRingSample_t delay[88200];
     BubbleEngineConfig_t config;
     BubbleEngine_t engine;
     float value = -1.0f;
@@ -91,7 +91,7 @@ static int test_developer_parameter_gate_and_clamping(void) {
 }
 
 static int test_freeze_stops_memory_writes_and_macro_reaches_freeze(void) {
-    static int16_t delay[88200];
+    static BubbleRingSample_t delay[88200];
     BubbleEngineConfig_t config;
     BubbleEngine_t engine;
     init_engine(&engine, delay, &config);
@@ -99,7 +99,7 @@ static int test_freeze_stops_memory_writes_and_macro_reaches_freeze(void) {
     process_constant(&engine, 0.25f, BUBBLES_BLOCK_SIZE);
     CHECK(engine.write_ptr == BUBBLES_BLOCK_SIZE, "write pointer advances before freeze");
     int frozen_ptr = engine.write_ptr;
-    int16_t before = delay[frozen_ptr];
+    BubbleRingSample_t before = delay[frozen_ptr];
     CHECK(bubble_engine_set_parameter(&engine, BUBBLE_PARAM_DEVELOPER_MODE, 1.0f), "enable developer mode for freeze param");
     CHECK(bubble_engine_set_parameter(&engine, BUBBLE_ENGINE_PARAM_FREEZE_ENABLED, 1.0f), "enable raw freeze");
     process_constant(&engine, 0.75f, BUBBLES_BLOCK_SIZE * 2);
@@ -115,7 +115,7 @@ static int test_freeze_stops_memory_writes_and_macro_reaches_freeze(void) {
 }
 
 static int test_pitch_reverse_and_droplet_spawn_metadata(void) {
-    static int16_t delay[88200];
+    static BubbleRingSample_t delay[88200];
     BubbleEngineConfig_t config;
     BubbleEngine_t engine;
     init_engine(&engine, delay, &config);
@@ -163,7 +163,7 @@ static int test_pitch_reverse_and_droplet_spawn_metadata(void) {
 }
 
 static int test_tempo_patterns_burst_modes_motion_and_metrics(void) {
-    static int16_t delay[88200];
+    static BubbleRingSample_t delay[88200];
     BubbleEngineConfig_t config;
     BubbleEngine_t engine;
     MetricsCapture capture = {0};
@@ -202,7 +202,7 @@ static int test_tempo_patterns_burst_modes_motion_and_metrics(void) {
 }
 
 static int test_host_rhythm_phase_sync_and_fixed_pitch_override(void) {
-    static int16_t delay[88200];
+    static BubbleRingSample_t delay[88200];
     BubbleEngineConfig_t config;
     BubbleEngine_t engine;
     init_engine(&engine, delay, &config);
@@ -242,7 +242,7 @@ static int test_host_rhythm_phase_sync_and_fixed_pitch_override(void) {
 }
 
 static int test_quality_profile_limits_allocation_and_drain(void) {
-    static int16_t delay[88200];
+    static BubbleRingSample_t delay[88200];
     BubbleEngineConfig_t config;
     BubbleEngine_t engine;
     init_engine(&engine, delay, &config);
@@ -311,7 +311,7 @@ static void force_transient_spawn(BubbleEngine_t* engine) {
     bubble_engine_process(engine, in, left, right, BUBBLES_BLOCK_SIZE);
 }
 
-static int init_stealing_engine(BubbleEngine_t* engine, int16_t* delay, BubbleEngineConfig_t* config) {
+static int init_stealing_engine(BubbleEngine_t* engine, BubbleRingSample_t* delay, BubbleEngineConfig_t* config) {
     bubble_engine_default_config(config);
     config->rng_seed = 0x12345678u;
     config->smart_start_enable = 0;
@@ -347,7 +347,7 @@ static int test_region_offsets_and_fade_are_sample_rate_invariant(void) {
     CHECK(bubble_engine_reference_samples_to_samples(441, 88200.0f) == 882,
           "reference offset doubles at 88.2 kHz");
 
-    static int16_t delay[192000];
+    static BubbleRingSample_t delay[192000];
     for (int s = 0; s < 4; s++) {
         BubbleEngine_t engine;
         BubbleEngineConfig_t config;
@@ -362,7 +362,7 @@ static int test_region_offsets_and_fade_are_sample_rate_invariant(void) {
 }
 
 static int test_voice_stealing_prefers_old_sustain_and_protects_young_micro(void) {
-    static int16_t delay[88200];
+    static BubbleRingSample_t delay[88200];
     BubbleEngineConfig_t config;
     BubbleEngine_t engine;
 
@@ -402,7 +402,7 @@ static int test_voice_stealing_prefers_old_sustain_and_protects_young_micro(void
 }
 
 static int test_strum_saturation_does_not_drop_events(void) {
-    static int16_t delay[88200];
+    static BubbleRingSample_t delay[88200];
     BubbleEngineConfig_t config;
     BubbleEngine_t engine;
     init_engine(&engine, delay, &config);
@@ -435,7 +435,7 @@ static int test_strum_saturation_does_not_drop_events(void) {
 }
 
 static int test_spatial_split_keeps_dry_out_of_the_wet_bus(void) {
-    static int16_t delay[88200];
+    static BubbleRingSample_t delay[88200];
     BubbleEngineConfig_t config;
     BubbleEngine_t engine;
     init_engine(&engine, delay, &config);

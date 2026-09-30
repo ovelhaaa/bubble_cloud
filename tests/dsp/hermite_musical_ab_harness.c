@@ -94,7 +94,7 @@ static void metrics_cb(const SoundBubblesBlockMetrics_t* m, void* user) {
 }
 
 static void render(BubbleQualityProfile profile, float sparkle, const float* in, int n, Render_t* out) {
-    static int16_t delay[192000];
+    static BubbleRingSample_t delay[192000];
     memset(delay, 0, sizeof(delay));
     EngineConfig_t cfg;
     bubble_engine_default_config(&cfg);

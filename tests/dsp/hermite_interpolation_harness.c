@@ -41,16 +41,16 @@ static void check(int condition, const char* message) {
 // ---------------------------------------------------------------------------
 // Independent double-precision Catmull-Rom reference (wrap-aware)
 // ---------------------------------------------------------------------------
-static double hermite_reference(const int16_t* buf, double pos, int size) {
+static double hermite_reference(const BubbleRingSample_t* buf, double pos, int size) {
     int idx = (int)pos;
     double frac = pos - (double)idx;
     int im1 = (idx > 0) ? idx - 1 : size - 1;
     int ip1 = (idx + 1 < size) ? idx + 1 : 0;
     int ip2 = (idx + 2 < size) ? idx + 2 : idx + 2 - size;
-    double xm1 = (double)buf[im1] / 32768.0;
-    double x0 = (double)buf[idx] / 32768.0;
-    double x1 = (double)buf[ip1] / 32768.0;
-    double x2 = (double)buf[ip2] / 32768.0;
+    double xm1 = (double)Ring_ReadNormalizedSample(buf, im1);
+    double x0 = (double)Ring_ReadNormalizedSample(buf, idx);
+    double x1 = (double)Ring_ReadNormalizedSample(buf, ip1);
+    double x2 = (double)Ring_ReadNormalizedSample(buf, ip2);
     double a = -0.5 * xm1 + 1.5 * x0 - 1.5 * x1 + 0.5 * x2;
     double b = xm1 - 2.5 * x0 + 2.0 * x1 - 0.5 * x2;
     double c = -0.5 * xm1 + 0.5 * x1;
@@ -62,8 +62,8 @@ static double hermite_reference(const int16_t* buf, double pos, int size) {
 // 1. constant / ramp / sine / wrap
 // ---------------------------------------------------------------------------
 static void test_constant(void) {
-    int16_t buf[256];
-    for (int i = 0; i < 256; i++) buf[i] = 12000;
+    BubbleRingSample_t buf[256];
+    for (int i = 0; i < 256; i++) buf[i] = (BubbleRingSample_t)(BUBBLES_RING_SAMPLE_IS_FLOAT ? (12000.0f / 32768.0f) : 12000);
     double max_err = 0.0;
     for (int i = 0; i < 256; i++) {
         for (int f = 0; f < 10; f++) {
@@ -78,8 +78,8 @@ static void test_constant(void) {
 }
 
 static void test_ramp(void) {
-    int16_t buf[512];
-    for (int i = 0; i < 512; i++) buf[i] = (int16_t)(1000 + 37 * i);
+    BubbleRingSample_t buf[512];
+    for (int i = 0; i < 512; i++) buf[i] = (BubbleRingSample_t)(BUBBLES_RING_SAMPLE_IS_FLOAT ? ((1000.0f + 37.0f * (float)i) / 32768.0f) : (int16_t)(1000 + 37 * i));
     double max_err = 0.0;
     // Interior only: the ramp is not periodic, so the wrap boundary would legitimately
     // break linearity of the four samples. The wrap behavior is covered separately.
@@ -99,7 +99,7 @@ static void test_ramp(void) {
 
 static void test_sine_many_freqs(void) {
     const int size = 2048;
-    int16_t buf[2048];
+    BubbleRingSample_t buf[2048];
     double lin_err = 0.0, herm_err = 0.0;
     long count = 0;
     const double freqs[] = {1.0, 3.0, 7.0, 13.0, 31.0};
@@ -108,7 +108,7 @@ static void test_sine_many_freqs(void) {
         double k = freqs[fi]; // integer periods over the buffer
         for (int i = 0; i < size; i++) {
             double v = sin(2.0 * M_PI * k * (double)i / (double)size);
-            buf[i] = (int16_t)lround(v * 30000.0);
+            buf[i] = (BubbleRingSample_t)(BUBBLES_RING_SAMPLE_IS_FLOAT ? (float)(v * amp) : (int16_t)lround(v * 30000.0));
         }
         for (int i = 0; i < size; i++) {
             for (int f = 0; f < 10; f++) {
@@ -132,9 +132,10 @@ static void test_sine_many_freqs(void) {
 
 static void test_wrap_around(void) {
     const int size = 128;
-    int16_t buf[128];
+    BubbleRingSample_t buf[128];
     for (int i = 0; i < size; i++) {
-        buf[i] = (int16_t)lround(20000.0 * sin(2.0 * M_PI * 3.0 * (double)i / (double)size));
+        double v = sin(2.0 * M_PI * 3.0 * (double)i / (double)size);
+        buf[i] = (BubbleRingSample_t)(BUBBLES_RING_SAMPLE_IS_FLOAT ? (float)(v * (20000.0 / 32768.0)) : (int16_t)lround(20000.0 * v));
     }
     double max_err = 0.0;
     // Positions straddling 0 and size-1 exercise xm1 at size-1 and x2 at 1/0.
@@ -171,7 +172,7 @@ static void test_selection(void) {
     check(SoundBubbles_InterpolationModeForProfile(BUBBLE_QUALITY_PROFILE_WEB_ULTRA) == BUBBLES_INTERPOLATION_HERMITE,
           "WEB_ULTRA -> Hermite");
 
-    static int16_t delay[96000];
+    static BubbleRingSample_t delay[96000];
     EngineConfig_t cfg;
     bubble_engine_default_config(&cfg);
     cfg.sample_rate = 48000.0f;
@@ -276,10 +277,11 @@ static QualityMetrics_t analyse(const float* out, const double* ideal, int n, do
 
 static void test_pitch_and_reverse(void) {
     const int size = 4096;
-    static int16_t src[4096];
+    static BubbleRingSample_t src[4096];
     const double k = 32.0;
     for (int i = 0; i < size; i++) {
-        src[i] = (int16_t)lround(30000.0 * sin(2.0 * M_PI * k * (double)i / (double)size));
+        double v = sin(2.0 * M_PI * k * (double)i / (double)size);
+        src[i] = (BubbleRingSample_t)(BUBBLES_RING_SAMPLE_IS_FLOAT ? (float)(v * (30000.0 / 32768.0)) : (int16_t)lround(30000.0 * v));
     }
     const double fs = 48000.0;
     const double f0 = fs * k / (double)size;
@@ -332,7 +334,7 @@ static void test_pitch_and_reverse(void) {
 // ---------------------------------------------------------------------------
 static void test_overshoot(void) {
     const int size = 2048;
-    static int16_t buf[2048];
+    static BubbleRingSample_t buf[2048];
     long over = 0, total = 0;
     double max_abs = 0.0;
     for (int mode = 0; mode < 3; mode++) {
@@ -345,7 +347,7 @@ static void test_overshoot(void) {
             } else {
                 v = ((i / 64) % 2 == 0) ? 0.9 : -0.9; // sparse alternating
             }
-            buf[i] = (int16_t)lround(v * 32000.0);
+            buf[i] = (BubbleRingSample_t)(BUBBLES_RING_SAMPLE_IS_FLOAT ? (float)(v * (32000.0 / 32768.0)) : (int16_t)lround(v * 32000.0));
         }
         for (int i = 0; i < size; i++) {
             for (int f = 0; f < 10; f++) {
@@ -419,7 +421,7 @@ static void trace_cb(const SoundBubblesBlockMetrics_t* metrics, void* user) {
 }
 
 static void run_trace(BubbleQualityProfile profile, SpawnTrace_t* out, float* out_energy) {
-    static int16_t delay[192000];
+    static BubbleRingSample_t delay[192000];
     memset(delay, 0, sizeof(delay));
     EngineConfig_t cfg;
     bubble_engine_default_config(&cfg);
@@ -473,7 +475,7 @@ static void test_determinism(void) {
 // 8. performance
 // ---------------------------------------------------------------------------
 static double run_perf(BubbleQualityProfile profile, int voice_limit, float sample_rate, int blocks) {
-    static int16_t delay[384000];
+    static BubbleRingSample_t delay[384000];
     memset(delay, 0, sizeof(delay));
     EngineConfig_t cfg;
     bubble_engine_default_config(&cfg);
