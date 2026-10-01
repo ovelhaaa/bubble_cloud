@@ -229,6 +229,22 @@ typedef struct {
     float wet_norm_time_below_0_8;
 } SoundBubblesLimiterHierarchyMetrics_t;
 
+// --- M5C Spectral Memory Evolution Telemetry ---
+typedef struct {
+    float mean_spectral_age;
+    float p10_spectral_age;
+    float p50_spectral_age;
+    float p95_spectral_age;
+    float recent_spectral_age_mean;
+    float mid_spectral_age_mean;
+    float deep_spectral_age_mean;
+    float mean_cutoff_hz;
+    float min_cutoff_hz;
+    float p50_cutoff_hz;
+    float p95_cutoff_hz;
+    float sustain_applied_cutoff_hz;
+} SoundBubblesSpectralMemoryMetrics_t;
+
 // --- Enums ---
 
 typedef enum {
@@ -559,6 +575,11 @@ typedef struct {
     float late_diffuser_feedback_energy;
     float late_diffuser_max_loop_gain;
     float late_diffuser_active_fraction;
+    // M5C Spectral Memory Evolution Telemetry
+    float spectral_memory_age_smoothed;
+    float spectral_memory_age_target;
+    float sustain_cutoff_hz;
+    float spectral_age_p50;
 } SoundBubblesBlockMetrics_t;
 
 typedef void (*SoundBubblesMetricsCallback_t)(const SoundBubblesBlockMetrics_t* metrics, void* user_data);
@@ -817,6 +838,27 @@ typedef struct {
     void* metrics_user_data;
     SoundBubblesBlockMetrics_t metrics_last_block;
     int32_t metrics_tick_spawn_count;
+
+    // M5C Spectral Memory Evolution
+    Filter1Pole_t flat_lpf_l;
+    Filter1Pole_t flat_lpf_r;
+    float flat_age_blend;
+    float spectral_memory_age_smoothed;
+    float spectral_memory_age_target;
+    float freeze_spectral_held_age;
+    bool freeze_spectral_locked;
+
+    // M5C Telemetry Accumulators
+    float recent_spectral_ages[128];
+    float recent_cutoffs_hz[128];
+    int32_t recent_spectral_head;
+    int32_t recent_spectral_count;
+    double win_recent_tier_spectral_age_sum;
+    int32_t win_recent_tier_spectral_age_count;
+    double win_mid_tier_spectral_age_sum;
+    int32_t win_mid_tier_spectral_age_count;
+    double win_deep_tier_spectral_age_sum;
+    int32_t win_deep_tier_spectral_age_count;
 } SoundBubblesEngine_t;
 
 // --- Function Prototypes ---
@@ -959,6 +1001,15 @@ void SoundBubbles_GetDiffuserWindowMetrics(const SoundBubblesEngine_t* engine, S
 
 void SoundBubbles_ResetLimiterHierarchyMetrics(SoundBubblesEngine_t* engine);
 void SoundBubbles_GetLimiterHierarchyMetrics(const SoundBubblesEngine_t* engine, SoundBubblesLimiterHierarchyMetrics_t* out);
+
+// M5C Spectral Memory Evolution inspection helpers
+float SoundBubbles_ComputeGrainSpectralAge(const SoundBubblesEngine_t* engine,
+                                           BubbleClass_t b_class,
+                                           BubbleMemoryTier tier,
+                                           float read_age_ms);
+float SoundBubbles_ComputeGrainCutoffHz(const SoundBubblesEngine_t* engine, float spectral_age);
+void SoundBubbles_ResetSpectralMemoryMetrics(SoundBubblesEngine_t* engine);
+void SoundBubbles_GetSpectralMemoryMetrics(const SoundBubblesEngine_t* engine, SoundBubblesSpectralMemoryMetrics_t* out);
 
 // Single source of truth for runtime tier ranges (Section 17-21)
 void SoundBubbles_ResolveMemoryTierRangeSamples(const SoundBubblesEngine_t* engine,

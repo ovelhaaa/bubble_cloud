@@ -629,6 +629,7 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, BubbleRingSample_t* delay_b
 
     SoundBubbles_ResetDiffuserWindowMetrics(engine);
     SoundBubbles_ResetLimiterHierarchyMetrics(engine);
+    SoundBubbles_ResetSpectralMemoryMetrics(engine);
 
     SoundBubbles_ResetMotionPhase(engine);
     engine->pending_spawn_head = 0;
@@ -656,6 +657,15 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, BubbleRingSample_t* delay_b
         float control_dt = (float)BUBBLES_BLOCK_SIZE / fmaxf(1.0f, engine->config.sample_rate);
         engine->sustain_lpf_smooth_coef = 1.0f - expf(-control_dt / SUSTAIN_LPF_SMOOTH_SECONDS);
     }
+
+    // M5C Spectral Memory Evolution state
+    CalculateFilterCoeffsLPF(&engine->flat_lpf_l, 8000.0f, engine->config.sample_rate);
+    CalculateFilterCoeffsLPF(&engine->flat_lpf_r, 8000.0f, engine->config.sample_rate);
+    engine->flat_age_blend = 0.0f;
+    engine->spectral_memory_age_smoothed = 0.0f;
+    engine->spectral_memory_age_target = 0.0f;
+    engine->freeze_spectral_held_age = 0.0f;
+    engine->freeze_spectral_locked = false;
 
     engine->ducking_lpf.b0 = engine->config.duck_attack_coef;
     engine->ducking_lpf.a1 = 1.0f - engine->config.duck_attack_coef;
@@ -1011,13 +1021,22 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
             sustain_tilt = 1.06f;
         }
 
+        float flat_out_l = bus_flat_l;
+        float flat_out_r = bus_flat_r;
+        if (engine->flat_age_blend > 0.0001f) {
+            float filt_l = Filter1Pole_ProcessLPF(&engine->flat_lpf_l, bus_flat_l);
+            float filt_r = Filter1Pole_ProcessLPF(&engine->flat_lpf_r, bus_flat_r);
+            flat_out_l = bus_flat_l + (filt_l - bus_flat_l) * engine->flat_age_blend;
+            flat_out_r = bus_flat_r + (filt_r - bus_flat_r) * engine->flat_age_blend;
+        }
+
         float wet_sum_l =
             (attack_filtered_l * attack_tilt * engine->class_gain_micro) +
-            (bus_flat_l * engine->class_gain_short) +
+            (flat_out_l * engine->class_gain_short) +
             (sustain_filtered_l * sustain_tilt * engine->class_gain_sustain);
         float wet_sum_r =
             (attack_filtered_r * attack_tilt * engine->class_gain_micro) +
-            (bus_flat_r * engine->class_gain_short) +
+            (flat_out_r * engine->class_gain_short) +
             (sustain_filtered_r * sustain_tilt * engine->class_gain_sustain);
         float wet_drive = fmaxf(0.1f, engine->config.wet_drive);
         float wet_clip_amt = Clamp01(engine->config.wet_clip_amount);
@@ -1408,6 +1427,29 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
             engine->metrics_wet_norm_gain_min = engine->wet_normalization_gain;
             engine->metrics_wet_limiter_gain_min = engine->wet_limiter_gain;
 
+            // M5C Spectral Memory Evolution Telemetry
+            engine->metrics_last_block.spectral_memory_age_smoothed = engine->spectral_memory_age_smoothed;
+            engine->metrics_last_block.spectral_memory_age_target = engine->spectral_memory_age_target;
+            engine->metrics_last_block.sustain_cutoff_hz = engine->sustain_lpf_applied_hz;
+            if (engine->recent_spectral_count > 0) {
+                float sorted_ages[128];
+                int cnt = engine->recent_spectral_count;
+                for (int j = 0; j < cnt; j++) sorted_ages[j] = engine->recent_spectral_ages[j];
+                for (int j = 1; j < cnt; j++) {
+                    float key = sorted_ages[j];
+                    int k = j - 1;
+                    while (k >= 0 && sorted_ages[k] > key) {
+                        sorted_ages[k + 1] = sorted_ages[k];
+                        k--;
+                    }
+                    sorted_ages[k + 1] = key;
+                }
+                int p50_idx = cnt / 2;
+                engine->metrics_last_block.spectral_age_p50 = sorted_ages[p50_idx];
+            } else {
+                engine->metrics_last_block.spectral_age_p50 = 0.0f;
+            }
+
             if (engine->metrics_callback != NULL) {
                 engine->metrics_callback(&engine->metrics_last_block, engine->metrics_user_data);
             }
@@ -1496,6 +1538,11 @@ static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_
         engine->auto_hold_state = AUTO_HOLD_IDLE;
         engine->auto_hold_target = 0.0f;
 
+        // M5C: Reset spectral memory age on transient attack
+        engine->spectral_memory_age_smoothed = 0.0f;
+        engine->spectral_memory_age_target = 0.0f;
+        engine->flat_age_blend = 0.0f;
+
     } else if (engine->burst_timer_ticks > 0) {
         engine->burst_timer_ticks--;
         if (engine->engine_state == ENGINE_STATE_TRANSIENT_BURST && engine->burst_timer_ticks < (engine->config.burst_duration_ticks - 2)) {
@@ -1511,6 +1558,9 @@ static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_
                 engine->phrase_anchor_write_ptr = engine->write_ptr;
                 engine->phrase_anchor_valid = true;
                 engine->phrase_anchor_age = 0;
+                engine->spectral_memory_age_smoothed = 0.0f;
+                engine->spectral_memory_age_target = 0.0f;
+                engine->flat_age_blend = 0.0f;
             }
             engine->recent_phrase_active = 1;
             engine->auto_hold_state = AUTO_HOLD_IDLE;
@@ -2248,6 +2298,26 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     }
     if (used_anchor) {
         engine->spawn_anchor_count++;
+    }
+
+    // M5C Telemetry update
+    float grain_spectral_age = SoundBubbles_ComputeGrainSpectralAge(engine, b_class, v->memory_tier, read_age_ms);
+    float grain_cutoff_hz = SoundBubbles_ComputeGrainCutoffHz(engine, grain_spectral_age);
+    engine->recent_spectral_ages[engine->recent_spectral_head] = grain_spectral_age;
+    engine->recent_cutoffs_hz[engine->recent_spectral_head] = grain_cutoff_hz;
+    engine->recent_spectral_head = (engine->recent_spectral_head + 1) & 127;
+    if (engine->recent_spectral_count < 128) {
+        engine->recent_spectral_count++;
+    }
+    if (v->memory_tier == BUBBLE_MEMORY_RECENT) {
+        engine->win_recent_tier_spectral_age_sum += (double)grain_spectral_age;
+        engine->win_recent_tier_spectral_age_count++;
+    } else if (v->memory_tier == BUBBLE_MEMORY_MID) {
+        engine->win_mid_tier_spectral_age_sum += (double)grain_spectral_age;
+        engine->win_mid_tier_spectral_age_count++;
+    } else {
+        engine->win_deep_tier_spectral_age_sum += (double)grain_spectral_age;
+        engine->win_deep_tier_spectral_age_count++;
     }
 
     if (g_bubble_tier_trace_fn != NULL) {
@@ -3307,13 +3377,106 @@ static float ResolveSustainLpfTargetHz(const SoundBubblesEngine_t* engine) {
     }
     float darkness = Clamp01(engine->config.sustain_darkness);
     float openness = state_open * Lerp(1.0f, 1.0f - SUSTAIN_LPF_WARMTH_DARKEN, darkness);
-    return SUSTAIN_LPF_MIN_HZ + (SUSTAIN_LPF_MAX_HZ - SUSTAIN_LPF_MIN_HZ) * Clamp01(openness);
+    float base_cutoff = SUSTAIN_LPF_MIN_HZ + (SUSTAIN_LPF_MAX_HZ - SUSTAIN_LPF_MIN_HZ) * Clamp01(openness);
+
+    // M5C Spectral Memory Evolution:
+    // When spectral_memory_age_smoothed > 0, gently soften cutoff
+    float age = engine->spectral_memory_age_smoothed;
+    if (age > 0.0f) {
+        float age_modifier = 1.0f - 0.32f * age;
+        float target = base_cutoff * age_modifier;
+        float floor_hz = (engine->config.shimmer_amount > 0.05f) ? 3200.0f : 2800.0f;
+        return fmaxf(target, floor_hz);
+    }
+    return base_cutoff;
 }
 
 // Control-rate sustain LPF tone update. No per-sample or per-voice expf(): the
 // cutoff is slewed once per control tick and the coefficients are refreshed only
 // when the smoothed cutoff actually moved.
 static void UpdateSustainBusTone(SoundBubblesEngine_t* engine) {
+    // M5C Spectral Memory Evolution Target Update
+    // 1. Freeze handling: Freeze locks spectral age at activation, preventing runaway darkening
+    if (engine->smoothed_freeze > 0.5f) {
+        if (!engine->freeze_spectral_locked) {
+            engine->freeze_spectral_locked = true;
+            engine->freeze_spectral_held_age = engine->spectral_memory_age_smoothed;
+        }
+        engine->spectral_memory_age_target = engine->freeze_spectral_held_age;
+    } else {
+        if (engine->freeze_spectral_locked && engine->smoothed_freeze < 0.1f) {
+            engine->freeze_spectral_locked = false;
+        }
+        // 2. Phrase ramp: 0-300ms is strictly 0.0f
+        float phrase_ramp = 0.0f;
+        if (engine->engine_state == ENGINE_STATE_TRANSIENT_BURST || engine->engine_state == ENGINE_STATE_ATTACK_ONGOING) {
+            phrase_ramp = 0.0f;
+        } else if (engine->phrase_anchor_valid) {
+            float phrase_age_ms = (float)engine->phrase_anchor_age * (1000.0f / engine->config.sample_rate);
+            if (phrase_age_ms <= 300.0f) {
+                phrase_ramp = 0.0f;
+            } else if (phrase_age_ms < 1500.0f) {
+                phrase_ramp = (phrase_age_ms - 300.0f) / 1200.0f;
+                if (engine->auto_hold_state != AUTO_HOLD_IDLE) {
+                    phrase_ramp = fmaxf(phrase_ramp, Clamp01(engine->auto_hold_amount));
+                }
+            } else {
+                phrase_ramp = 1.0f;
+            }
+        } else if (engine->auto_hold_state != AUTO_HOLD_IDLE) {
+            phrase_ramp = 1.0f;
+        }
+
+        if (phrase_ramp <= 0.0f) {
+            engine->spectral_memory_age_target = 0.0f;
+        } else {
+            // 3. Base tier from current read age / tail state
+            float read_age_ms = engine->metrics_last_block.mean_read_age_ms;
+            float tier_base = 0.0f;
+            if (read_age_ms <= 0.0f) {
+                tier_base = 0.35f;
+            } else if (read_age_ms < 420.0f) {
+                tier_base = Clamp01((read_age_ms - 35.0f) / (420.0f - 35.0f)) * 0.20f;
+            } else if (read_age_ms < 1100.0f) {
+                tier_base = 0.15f + Clamp01((read_age_ms - 300.0f) / (1100.0f - 300.0f)) * 0.45f;
+            } else {
+                tier_base = 0.40f + Clamp01((read_age_ms - 500.0f) / (1880.0f - 500.0f)) * 0.60f;
+            }
+            if (engine->auto_hold_state != AUTO_HOLD_IDLE) {
+                tier_base = fmaxf(tier_base, 0.45f + 0.35f * Clamp01(engine->auto_hold_amount));
+            } else if (engine->engine_state == ENGINE_STATE_SPARSE_DECAY || engine->engine_state == ENGINE_STATE_SILENCE) {
+                tier_base = fmaxf(tier_base, 0.40f);
+            }
+
+            // 4. Macro biases
+            float mem_reach = 0.25f + 0.75f * Clamp01(engine->config.memory_mix);
+            float warmth_bias = 1.0f + 0.20f * Clamp01(engine->config.wet_clip_amount * 1.8f);
+            float clarity_factor = 1.0f - 0.35f * Clamp01((engine->config.attack_brightness - 0.80f) / 0.85f);
+
+            float target_age = phrase_ramp * tier_base * mem_reach * warmth_bias * clarity_factor;
+            engine->spectral_memory_age_target = Clamp01(target_age);
+        }
+    }
+
+    // Fast drop to 0 on attack / transient burst
+    if (engine->spectral_memory_age_target <= 0.0f &&
+        (engine->engine_state == ENGINE_STATE_TRANSIENT_BURST || engine->engine_state == ENGINE_STATE_ATTACK_ONGOING)) {
+        engine->spectral_memory_age_smoothed = 0.0f;
+    } else {
+        float dt = (float)BUBBLES_BLOCK_SIZE / engine->config.sample_rate;
+        float age_smooth_coef = 1.0f - expf(-dt / 0.120f);
+        engine->spectral_memory_age_smoothed += (engine->spectral_memory_age_target - engine->spectral_memory_age_smoothed) * age_smooth_coef;
+        if (engine->spectral_memory_age_smoothed < 0.0001f) {
+            engine->spectral_memory_age_smoothed = 0.0f;
+        }
+    }
+
+    engine->flat_age_blend = 0.25f * engine->spectral_memory_age_smoothed;
+    if (engine->flat_age_blend > 0.0001f) {
+        UpdateFilterCoeffsLPF(&engine->flat_lpf_l, 7500.0f, engine->config.sample_rate);
+        UpdateFilterCoeffsLPF(&engine->flat_lpf_r, 7500.0f, engine->config.sample_rate);
+    }
+
     float target = ResolveSustainLpfTargetHz(engine);
     float current = engine->sustain_lpf_cutoff_smoothed_hz;
     current += (target - current) * engine->sustain_lpf_smooth_coef;
@@ -3945,4 +4108,157 @@ void SoundBubbles_GetLimiterHierarchyMetrics(const SoundBubblesEngine_t* engine,
         out->wet_norm_gain_median = (float)(engine->win_wet_norm_gain_sum / (double)engine->win_limiter_total_blocks);
         out->wet_norm_time_below_0_8 = (float)engine->win_wet_norm_below_0_8_blocks / (float)engine->win_limiter_total_blocks;
     }
+}
+
+// --- M5C Spectral Memory Evolution Helpers ---
+
+float SoundBubbles_ComputeGrainSpectralAge(const SoundBubblesEngine_t* engine,
+                                           BubbleClass_t b_class,
+                                           BubbleMemoryTier tier,
+                                           float read_age_ms) {
+    if (engine == NULL) return 0.0f;
+    if (b_class == BUBBLE_CLASS_MICRO_ATTACK) return 0.0f;
+    if (engine->engine_state == ENGINE_STATE_TRANSIENT_BURST || engine->engine_state == ENGINE_STATE_ATTACK_ONGOING) {
+        return 0.0f;
+    }
+
+    float phrase_ramp = 0.0f;
+    if (engine->phrase_anchor_valid) {
+        float phrase_age_ms = (float)engine->phrase_anchor_age * (1000.0f / engine->config.sample_rate);
+        if (phrase_age_ms <= 300.0f) {
+            return 0.0f;
+        } else if (phrase_age_ms < 1500.0f) {
+            phrase_ramp = (phrase_age_ms - 300.0f) / 1200.0f;
+            if (engine->auto_hold_state != AUTO_HOLD_IDLE) {
+                phrase_ramp = fmaxf(phrase_ramp, Clamp01(engine->auto_hold_amount));
+            }
+        } else {
+            phrase_ramp = 1.0f;
+        }
+    } else if (engine->auto_hold_state != AUTO_HOLD_IDLE) {
+        phrase_ramp = 1.0f;
+    }
+
+    float tier_base = 0.0f;
+    if (tier == BUBBLE_MEMORY_RECENT) {
+        tier_base = Clamp01((read_age_ms - 35.0f) / (420.0f - 35.0f)) * 0.20f;
+    } else if (tier == BUBBLE_MEMORY_MID) {
+        tier_base = 0.15f + Clamp01((read_age_ms - 300.0f) / (1100.0f - 300.0f)) * 0.45f;
+    } else {
+        tier_base = 0.40f + Clamp01((read_age_ms - 500.0f) / (1880.0f - 500.0f)) * 0.60f;
+    }
+
+    if (b_class == BUBBLE_CLASS_SHORT_INTERMEDIATE) {
+        tier_base *= 0.50f;
+    }
+
+    float mem_reach = 0.25f + 0.75f * Clamp01(engine->config.memory_mix);
+    float warmth_bias = 1.0f + 0.20f * Clamp01(engine->config.wet_clip_amount * 1.8f);
+    float clarity_factor = 1.0f - 0.35f * Clamp01((engine->config.attack_brightness - 0.80f) / 0.85f);
+
+    float age = phrase_ramp * tier_base * mem_reach * warmth_bias * clarity_factor;
+    return Clamp01(age);
+}
+
+float SoundBubbles_ComputeGrainCutoffHz(const SoundBubblesEngine_t* engine, float spectral_age) {
+    if (engine == NULL) return SUSTAIN_LPF_BASE_HZ;
+    float state_open;
+    switch (engine->engine_state) {
+        case ENGINE_STATE_TRANSIENT_BURST: state_open = SUSTAIN_LPF_OPEN_TRANSIENT; break;
+        case ENGINE_STATE_ATTACK_ONGOING:  state_open = SUSTAIN_LPF_OPEN_ATTACK; break;
+        case ENGINE_STATE_SUSTAIN_BODY:    state_open = SUSTAIN_LPF_OPEN_SUSTAIN; break;
+        case ENGINE_STATE_SPARSE_DECAY:    state_open = SUSTAIN_LPF_OPEN_DECAY; break;
+        case ENGINE_STATE_SILENCE:
+        default:                           state_open = SUSTAIN_LPF_OPEN_SILENCE; break;
+    }
+    float darkness = Clamp01(engine->config.sustain_darkness);
+    float openness = state_open * Lerp(1.0f, 1.0f - SUSTAIN_LPF_WARMTH_DARKEN, darkness);
+    float base_cutoff = SUSTAIN_LPF_MIN_HZ + (SUSTAIN_LPF_MAX_HZ - SUSTAIN_LPF_MIN_HZ) * Clamp01(openness);
+
+    if (spectral_age > 0.0f) {
+        float age_mod = 1.0f - 0.32f * spectral_age;
+        float target = base_cutoff * age_mod;
+        float floor_hz = (engine->config.shimmer_amount > 0.05f) ? 3200.0f : 2800.0f;
+        return fmaxf(target, floor_hz);
+    }
+    return base_cutoff;
+}
+
+void SoundBubbles_ResetSpectralMemoryMetrics(SoundBubblesEngine_t* engine) {
+    if (!engine) return;
+    engine->recent_spectral_head = 0;
+    engine->recent_spectral_count = 0;
+    for (int i = 0; i < 128; i++) {
+        engine->recent_spectral_ages[i] = 0.0f;
+        engine->recent_cutoffs_hz[i] = SUSTAIN_LPF_BASE_HZ;
+    }
+    engine->win_recent_tier_spectral_age_sum = 0.0;
+    engine->win_recent_tier_spectral_age_count = 0;
+    engine->win_mid_tier_spectral_age_sum = 0.0;
+    engine->win_mid_tier_spectral_age_count = 0;
+    engine->win_deep_tier_spectral_age_sum = 0.0;
+    engine->win_deep_tier_spectral_age_count = 0;
+}
+
+void SoundBubbles_GetSpectralMemoryMetrics(const SoundBubblesEngine_t* engine, SoundBubblesSpectralMemoryMetrics_t* out) {
+    if (!engine || !out) return;
+    memset(out, 0, sizeof(*out));
+
+    int cnt = engine->recent_spectral_count;
+    if (cnt > 0) {
+        float sorted_ages[128];
+        float sorted_cutoffs[128];
+        double sum_age = 0.0;
+        double sum_cutoff = 0.0;
+        for (int i = 0; i < cnt; i++) {
+            sorted_ages[i] = engine->recent_spectral_ages[i];
+            sorted_cutoffs[i] = engine->recent_cutoffs_hz[i];
+            sum_age += (double)sorted_ages[i];
+            sum_cutoff += (double)sorted_cutoffs[i];
+        }
+        for (int i = 1; i < cnt; i++) {
+            float key = sorted_ages[i];
+            int j = i - 1;
+            while (j >= 0 && sorted_ages[j] > key) {
+                sorted_ages[j + 1] = sorted_ages[j];
+                j--;
+            }
+            sorted_ages[j + 1] = key;
+        }
+        for (int i = 1; i < cnt; i++) {
+            float key = sorted_cutoffs[i];
+            int j = i - 1;
+            while (j >= 0 && sorted_cutoffs[j] > key) {
+                sorted_cutoffs[j + 1] = sorted_cutoffs[j];
+                j--;
+            }
+            sorted_cutoffs[j + 1] = key;
+        }
+
+        out->mean_spectral_age = (float)(sum_age / (double)cnt);
+        out->p10_spectral_age = sorted_ages[(int)(0.10f * (float)(cnt - 1))];
+        out->p50_spectral_age = sorted_ages[(int)(0.50f * (float)(cnt - 1))];
+        out->p95_spectral_age = sorted_ages[(int)(0.95f * (float)(cnt - 1))];
+
+        out->mean_cutoff_hz = (float)(sum_cutoff / (double)cnt);
+        out->min_cutoff_hz = sorted_cutoffs[0];
+        out->p50_cutoff_hz = sorted_cutoffs[(int)(0.50f * (float)(cnt - 1))];
+        out->p95_cutoff_hz = sorted_cutoffs[(int)(0.95f * (float)(cnt - 1))];
+    } else {
+        out->mean_cutoff_hz = engine->sustain_lpf_applied_hz;
+        out->min_cutoff_hz = engine->sustain_lpf_applied_hz;
+        out->p50_cutoff_hz = engine->sustain_lpf_applied_hz;
+        out->p95_cutoff_hz = engine->sustain_lpf_applied_hz;
+    }
+
+    if (engine->win_recent_tier_spectral_age_count > 0) {
+        out->recent_spectral_age_mean = (float)(engine->win_recent_tier_spectral_age_sum / (double)engine->win_recent_tier_spectral_age_count);
+    }
+    if (engine->win_mid_tier_spectral_age_count > 0) {
+        out->mid_spectral_age_mean = (float)(engine->win_mid_tier_spectral_age_sum / (double)engine->win_mid_tier_spectral_age_count);
+    }
+    if (engine->win_deep_tier_spectral_age_count > 0) {
+        out->deep_spectral_age_mean = (float)(engine->win_deep_tier_spectral_age_sum / (double)engine->win_deep_tier_spectral_age_count);
+    }
+    out->sustain_applied_cutoff_hz = engine->sustain_lpf_applied_hz;
 }
