@@ -80,3 +80,41 @@ def test_m4d_sample_rate_and_quality_profiles(m4d_probe_bin: Path) -> None:
 def test_m4d_extreme_stress_resilience(m4d_probe_bin: Path) -> None:
     res = subprocess.run([str(m4d_probe_bin), "--extreme"], capture_output=True, text=True, check=True)
     assert "Extreme Stress" in res.stdout
+
+
+def test_m4d_freeze_qualification_direct_dry_pumping_under_threshold(tmp_path_factory: pytest.TempPathFactory) -> None:
+    compiler = _compiler()
+    temp_dir = tmp_path_factory.mktemp("m4d_freeze")
+    suffix = ".exe" if sys.platform == "win32" else ""
+    bin_path = temp_dir / f"m4d_freeze_probe{suffix}"
+    probe_src = REPO_ROOT / "scripts" / "m4d_freeze_probe.c"
+    cmd = [
+        compiler,
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-std=c11",
+        "-DM4D_CANDIDATE_BUILD=1",
+        f"-I{REPO_ROOT / 'core'}",
+        f"-I{REPO_ROOT / 'core' / 'dsp'}",
+        f"-I{REPO_ROOT / 'core' / 'engine'}",
+        str(probe_src),
+        str(REPO_ROOT / "core" / "dsp" / "sound_bubbles_dsp.c"),
+        str(REPO_ROOT / "core" / "engine" / "bubble_engine.c"),
+        str(REPO_ROOT / "core" / "engine" / "bubble_macro_map.c"),
+        "-lm",
+        "-o",
+        str(bin_path),
+    ]
+    subprocess.run(cmd, cwd=REPO_ROOT, check=True)
+
+    res = subprocess.run([str(bin_path), "--dry-pumping"], capture_output=True, text=True, check=True)
+    # Parse dry_modulation_depth_db
+    mod_depth = None
+    for line in res.stdout.splitlines():
+        if "dry_modulation_depth_db:" in line:
+            mod_depth = float(line.split(":")[1].strip())
+            break
+    assert mod_depth is not None, "dry_modulation_depth_db not found in output"
+    assert mod_depth < 0.25, f"Expected dry modulation depth < 0.25 dB, got {mod_depth} dB"
+
