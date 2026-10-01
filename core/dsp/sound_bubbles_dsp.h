@@ -80,17 +80,51 @@ typedef enum {
 #define BUBBLES_PITCH_RATIO_FIFTH_12TET   1.4983070768766815f
 #define BUBBLES_PITCH_RATIO_OCTAVE_FIFTH  2.9966141537533630f
 
-// Temporal memory tiers: recent body material dominates, deep memory is a rare
-// ghost. The tier is chosen per spawn from a weighted distribution.
-#define BUBBLES_MEMORY_TIER_RECENT 0
-#define BUBBLES_MEMORY_TIER_MEDIUM 1
-#define BUBBLES_MEMORY_TIER_DEEP   2
-#define BUBBLES_MEMORY_TIER_COUNT  3
+// --- M5A Multi-Scale Granular Memory Tiers & Temporal Architecture ---
+typedef enum {
+    BUBBLE_MEMORY_RECENT = 0,
+    BUBBLE_MEMORY_MID = 1,
+    BUBBLE_MEMORY_DEEP = 2,
+    BUBBLE_MEMORY_TIER_COUNT = 3
+} BubbleMemoryTier;
+typedef BubbleMemoryTier BubbleMemoryTier_t;
+
+#define BUBBLES_MEMORY_TIER_RECENT BUBBLE_MEMORY_RECENT
+#define BUBBLES_MEMORY_TIER_MEDIUM BUBBLE_MEMORY_MID
+#define BUBBLES_MEMORY_TIER_MID    BUBBLE_MEMORY_MID
+#define BUBBLES_MEMORY_TIER_DEEP   BUBBLE_MEMORY_DEEP
+#define BUBBLES_MEMORY_TIER_COUNT  BUBBLE_MEMORY_TIER_COUNT
+
+#define BUBBLES_TIER_RECENT_MIN_MS  35.0f
+#define BUBBLES_TIER_RECENT_MAX_MS  420.0f
+#define BUBBLES_TIER_MICRO_MIN_MS   10.0f
+#define BUBBLES_TIER_MICRO_MAX_MS   120.0f
+
+#define BUBBLES_TIER_MID_MIN_MS     320.0f
+#define BUBBLES_TIER_MID_MAX_MS     1050.0f
+
+#define BUBBLES_TIER_DEEP_MIN_MS    850.0f
+#define BUBBLES_TIER_DEEP_MAX_MS    1880.0f
+
 #define BUBBLES_MEMORY_WEIGHT_RECENT 0.60f
 #define BUBBLES_MEMORY_WEIGHT_MEDIUM 0.25f
 #define BUBBLES_MEMORY_WEIGHT_DEEP   0.15f
 // Upper bound on the probability of choosing the deep memory region per spawn.
 #define BUBBLES_MEMORY_DEEP_MAX_SHARE 0.40f
+
+// M5A Anti-Loop Hash Namespaces & Lanes
+#define BUBBLES_SHARED_KIND_MEMORY_TIER   0x4D544952u // 'MTIR'
+#define BUBBLES_SHARED_KIND_MEMORY_REGION 0x4D524547u // 'MREG'
+#define BUBBLES_SHARED_KIND_MEMORY_DRIFT  0x4D445246u // 'MDRF'
+#define BUBBLES_SHARED_KIND_ANCHOR_BLEND  0x414E4348u // 'ANCH'
+
+#define BUBBLES_SHARED_LANE_TIER_ROLL     0xA5A5A5A5u
+#define BUBBLES_SHARED_LANE_TIER_VALUE    0x5A5A5A5Au
+#define BUBBLES_SHARED_LANE_REGION_ROLL   0xB4B4B4B4u
+#define BUBBLES_SHARED_LANE_REGION_VALUE  0x4B4B4B4Bu
+#define BUBBLES_SHARED_LANE_DRIFT         0xD7D7D7D7u
+#define BUBBLES_SHARED_LANE_ANCHOR_ROLL   0xC3C3C3C3u
+#define BUBBLES_SHARED_LANE_ANCHOR_OFFSET 0x3C3C3C3Cu
 
 // Fixed per-grain microdetune limits in cents, chosen at spawn and held for the
 // grain lifetime. Attacks stay almost pure; freeze accepts more ensemble.
@@ -443,6 +477,14 @@ typedef struct {
     float wet_limiter_gain_reduction_db;
     float final_limiter_gain;
     float final_limiter_gain_reduction_db;
+    // M5A Multi-Scale Granular Memory Telemetry
+    int32_t spawn_recent_count;
+    int32_t spawn_mid_count;
+    int32_t spawn_deep_count;
+    float mean_read_age_ms;
+    float p50_read_age_ms;
+    float p95_read_age_ms;
+    float anchor_read_fraction;
 } SoundBubblesBlockMetrics_t;
 
 typedef void (*SoundBubblesMetricsCallback_t)(const SoundBubblesBlockMetrics_t* metrics, void* user_data);
@@ -632,6 +674,16 @@ typedef struct {
     float last_wet_norm_gain;
     float last_wet_limiter_gain;
 
+    // M5A Multi-scale Memory & Anti-Loop Telemetry
+    int32_t spawn_recent_count;
+    int32_t spawn_mid_count;
+    int32_t spawn_deep_count;
+    int32_t spawn_anchor_count;
+    int32_t total_spawn_count;
+    float recent_read_ages_ms[128];
+    int32_t recent_read_ages_head;
+    int32_t recent_read_ages_count;
+
     // Optional per-control-block metrics hook (for offline validation/telemetry)
     SoundBubblesMetricsCallback_t metrics_callback;
     void* metrics_user_data;
@@ -752,6 +804,18 @@ float SoundBubbles_GetWetLimiterGain(const SoundBubblesEngine_t* engine);
 float SoundBubbles_GetWetLimiterGainReductionDb(const SoundBubblesEngine_t* engine);
 float SoundBubbles_GetFinalLimiterGain(const SoundBubblesEngine_t* engine);
 float SoundBubbles_GetFinalLimiterGainReductionDb(const SoundBubblesEngine_t* engine);
+
+// M5A Multi-Scale Granular Memory inspection helpers
+void SoundBubbles_GetMemoryTierCounts(const SoundBubblesEngine_t* engine,
+                                      int32_t* out_recent,
+                                      int32_t* out_mid,
+                                      int32_t* out_deep);
+void SoundBubbles_GetReadAgeTelemetry(const SoundBubblesEngine_t* engine,
+                                      float* out_mean_ms,
+                                      float* out_p50_ms,
+                                      float* out_p95_ms,
+                                      float* out_anchor_fraction);
+void SoundBubbles_ResetMemoryTierTelemetry(SoundBubblesEngine_t* engine);
 
 #if defined(BUBBLES_INTERPOLATION_TELEMETRY) || defined(BUBBLES_BUILD_PROCESSOR_TESTS)
 // Test/telemetry-only: number of samples rendered through each interpolation
