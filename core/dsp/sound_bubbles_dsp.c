@@ -255,6 +255,7 @@ static inline float Filter1Pole_ProcessHPF(Filter1Pole_t* f, float input);
 static void UpdateFeedbackCoeffs(SoundBubblesEngine_t* engine);
 static void UpdateFeedbackTone(SoundBubblesEngine_t* engine);
 static void UpdateFeedbackTarget(SoundBubblesEngine_t* engine);
+static void UpdateLateDiffuserState(SoundBubblesEngine_t* engine);
 
 static float UpdateEnvelope(float prev_state, float input_peak, float attack_coef, float release_coef);
 static void UpdateStateAndDensity(SoundBubblesEngine_t* engine, float block_abs_peak);
@@ -421,6 +422,25 @@ static inline void Ring_WriteSample(SoundBubblesEngine_t* engine, int32_t index,
 #endif
 }
 
+// --- M5B Sparse Late-Tail Diffuser Read/Write Helpers ---
+static inline float Diffuser_ReadSample(const BubbleRingSample_t* buf, int32_t idx) {
+#if BUBBLES_RING_FLOAT
+    return buf[idx];
+#else
+    return (float)buf[idx] * (1.0f / 32767.0f);
+#endif
+}
+
+static inline void Diffuser_WriteSample(BubbleRingSample_t* buf, int32_t idx, float val) {
+#if BUBBLES_RING_FLOAT
+    if (fabsf(val) < 1.0e-15f) val = 0.0f;
+    buf[idx] = val;
+#else
+    float clamped = fmaxf(-1.0f, fminf(1.0f, val));
+    buf[idx] = (int16_t)lrintf(clamped * 32767.0f);
+#endif
+}
+
 // --- Initialization & Config ---
 
 void SoundBubbles_Init(SoundBubblesEngine_t* engine, BubbleRingSample_t* delay_buffer_memory, const EngineConfig_t* initial_config) {
@@ -554,6 +574,51 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, BubbleRingSample_t* delay_b
     for (int i = 0; i < 128; i++) {
         engine->recent_read_ages_ms[i] = 0.0f;
     }
+
+    // M5B Sparse Late-Tail Diffuser Initialization
+    int32_t len0 = (int32_t)lroundf(BUBBLES_LATE_DIFFUSER_DELAY_0_MS * 0.001f * engine->config.sample_rate);
+    int32_t len1 = (int32_t)lroundf(BUBBLES_LATE_DIFFUSER_DELAY_1_MS * 0.001f * engine->config.sample_rate);
+    int32_t len2 = (int32_t)lroundf(BUBBLES_LATE_DIFFUSER_DELAY_2_MS * 0.001f * engine->config.sample_rate);
+    if (len0 < 16) len0 = 16;
+    if (len0 > BUBBLES_LATE_DIFFUSER_CAPACITY_0) len0 = BUBBLES_LATE_DIFFUSER_CAPACITY_0;
+    if (len1 < 16) len1 = 16;
+    if (len1 > BUBBLES_LATE_DIFFUSER_CAPACITY_1) len1 = BUBBLES_LATE_DIFFUSER_CAPACITY_1;
+    if (len2 < 16) len2 = 16;
+    if (len2 > BUBBLES_LATE_DIFFUSER_CAPACITY_2) len2 = BUBBLES_LATE_DIFFUSER_CAPACITY_2;
+    engine->late_diffuser_len[0] = len0;
+    engine->late_diffuser_len[1] = len1;
+    engine->late_diffuser_len[2] = len2;
+
+    memset(engine->late_diffuser_buf0, 0, sizeof(engine->late_diffuser_buf0));
+    memset(engine->late_diffuser_buf1, 0, sizeof(engine->late_diffuser_buf1));
+    memset(engine->late_diffuser_buf2, 0, sizeof(engine->late_diffuser_buf2));
+    engine->late_diffuser_write_idx[0] = 0;
+    engine->late_diffuser_write_idx[1] = 0;
+    engine->late_diffuser_write_idx[2] = 0;
+
+    for (int k = 0; k < BUBBLES_LATE_DIFFUSER_LINES; k++) {
+        CalculateFilterCoeffsLPF(&engine->late_diffuser_lpf[k], BUBBLES_LATE_DIFFUSER_LPF_HZ, engine->config.sample_rate);
+        CalculateFilterCoeffsLPF(&engine->late_diffuser_hpf[k], BUBBLES_LATE_DIFFUSER_HPF_HZ, engine->config.sample_rate);
+    }
+    engine->late_diffuser_amount = 0.0f;
+    engine->late_diffuser_target = 0.0f;
+    engine->late_diffuser_send_gain = 0.0f;
+    engine->late_diffuser_return_gain = 0.0f;
+    engine->late_diffuser_loop_gain = BUBBLES_LATE_DIFFUSER_FEEDBACK_MIN;
+    engine->late_diffuser_internal_energy = 0.0f;
+    engine->late_diffuser_return_l = 0.0f;
+    engine->late_diffuser_return_r = 0.0f;
+    engine->metrics_diffuser_send_accum = 0.0f;
+    engine->metrics_diffuser_return_energy_accum = 0.0f;
+    engine->metrics_diffuser_return_peak_accum = 0.0f;
+    engine->metrics_diffuser_active_samples_accum = 0.0f;
+    engine->metrics_diffuser_samples_accum = 0;
+    engine->metrics_last_block.late_diffuser_send = 0.0f;
+    engine->metrics_last_block.late_diffuser_return_rms = 0.0f;
+    engine->metrics_last_block.late_diffuser_return_peak = 0.0f;
+    engine->metrics_last_block.late_diffuser_feedback_energy = 0.0f;
+    engine->metrics_last_block.late_diffuser_max_loop_gain = BUBBLES_LATE_DIFFUSER_FEEDBACK_MIN;
+    engine->metrics_last_block.late_diffuser_active_fraction = 0.0f;
 
     SoundBubbles_ResetMotionPhase(engine);
     engine->pending_spawn_head = 0;
@@ -934,6 +999,93 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
         float e_coef = (fb_abs > engine->feedback_energy) ? engine->feedback_energy_att_coef : engine->feedback_energy_rel_coef;
         engine->feedback_energy += (fb_abs - engine->feedback_energy) * e_coef;
 
+        // --- M5B Sparse Late-Tail Diffuser ---
+        float diff_send = 0.0f;
+        float diff_ret_l = 0.0f;
+        float diff_ret_r = 0.0f;
+
+        if (engine->late_diffuser_send_gain > 1.0e-5f || engine->late_diffuser_amount > 1.0e-5f || engine->late_diffuser_internal_energy > 1.0e-5f) {
+            // Equal-power mono send from granular wet bus
+            float wet_mono = (wet_sum_l + wet_sum_r) * 0.70710678f;
+            diff_send = wet_mono * engine->late_diffuser_send_gain;
+
+            // Read from circular delay lines
+            float y0 = Diffuser_ReadSample(engine->late_diffuser_buf0, engine->late_diffuser_write_idx[0]);
+            float y1 = Diffuser_ReadSample(engine->late_diffuser_buf1, engine->late_diffuser_write_idx[1]);
+            float y2 = Diffuser_ReadSample(engine->late_diffuser_buf2, engine->late_diffuser_write_idx[2]);
+
+            // Orthogonal sparse mixing matrix (energy-preserving circulation)
+            const float a = 0.70710678f;
+            float v0 = a * (y1 + y2);
+            float v1 = a * (y0 - y2);
+            float v2 = a * (y0 - y1);
+
+            float g_fb = engine->late_diffuser_loop_gain;
+
+            // Sum inputs for each line: send + circulating feedback
+            float in0 = diff_send + g_fb * v0;
+            float in1 = diff_send * 0.7071f + g_fb * v1;
+            float in2 = diff_send * 0.5000f + g_fb * v2;
+
+            // Internal conditioning: HPF -> LPF -> mild soft-clip
+            float hp0 = Filter1Pole_ProcessHPF(&engine->late_diffuser_hpf[0], in0);
+            float lp0 = Filter1Pole_ProcessLPF(&engine->late_diffuser_lpf[0], hp0);
+            float sat0 = SoftClip(lp0, 0.12f);
+
+            float hp1 = Filter1Pole_ProcessHPF(&engine->late_diffuser_hpf[1], in1);
+            float lp1 = Filter1Pole_ProcessLPF(&engine->late_diffuser_lpf[1], hp1);
+            float sat1 = SoftClip(lp1, 0.12f);
+
+            float hp2 = Filter1Pole_ProcessHPF(&engine->late_diffuser_hpf[2], in2);
+            float lp2 = Filter1Pole_ProcessLPF(&engine->late_diffuser_lpf[2], hp2);
+            float sat2 = SoftClip(lp2, 0.12f);
+
+            // Write back to circular delay lines
+            Diffuser_WriteSample(engine->late_diffuser_buf0, engine->late_diffuser_write_idx[0], sat0);
+            Diffuser_WriteSample(engine->late_diffuser_buf1, engine->late_diffuser_write_idx[1], sat1);
+            Diffuser_WriteSample(engine->late_diffuser_buf2, engine->late_diffuser_write_idx[2], sat2);
+
+            // Advance write pointers with wrap
+            if (++engine->late_diffuser_write_idx[0] >= engine->late_diffuser_len[0]) engine->late_diffuser_write_idx[0] = 0;
+            if (++engine->late_diffuser_write_idx[1] >= engine->late_diffuser_len[1]) engine->late_diffuser_write_idx[1] = 0;
+            if (++engine->late_diffuser_write_idx[2] >= engine->late_diffuser_len[2]) engine->late_diffuser_write_idx[2] = 0;
+
+            // Mid-Side inspired stereo return
+            float mid_energy = 0.57735f * (y0 + y1 + y2);
+            float side_energy = 0.70710678f * (y0 - y1);
+            float width_scale = 0.85f + 0.30f * Clamp01(engine->config.stereo_width);
+            float ret_raw_l = mid_energy + side_energy * width_scale;
+            float ret_raw_r = mid_energy - side_energy * width_scale;
+
+            diff_ret_l = ret_raw_l * engine->late_diffuser_return_gain;
+            diff_ret_r = ret_raw_r * engine->late_diffuser_return_gain;
+
+            // Internal energy follower (decay ~300ms)
+            float sum_sq = 0.333333f * (y0 * y0 + y1 * y1 + y2 * y2);
+            float e_rate = 1.0f - expf(-1.0f / (sr * 0.300f));
+            engine->late_diffuser_internal_energy += (sum_sq - engine->late_diffuser_internal_energy) * e_rate;
+        }
+
+        engine->late_diffuser_return_l = diff_ret_l;
+        engine->late_diffuser_return_r = diff_ret_r;
+
+        // Add late-tail return to wet bus PRE-NORMALIZATION
+        wet_sum_l += diff_ret_l;
+        wet_sum_r += diff_ret_r;
+
+        // Telemetry accumulation for diffuser
+        float diff_peak = fmaxf(fabsf(diff_ret_l), fabsf(diff_ret_r));
+        float diff_energy = 0.5f * (diff_ret_l * diff_ret_l + diff_ret_r * diff_ret_r);
+        if (diff_peak > engine->metrics_diffuser_return_peak_accum) {
+            engine->metrics_diffuser_return_peak_accum = diff_peak;
+        }
+        engine->metrics_diffuser_return_energy_accum += diff_energy;
+        engine->metrics_diffuser_send_accum += diff_send * diff_send;
+        if (engine->late_diffuser_amount > 0.05f) {
+            engine->metrics_diffuser_active_samples_accum += 1.0f;
+        }
+        engine->metrics_diffuser_samples_accum++;
+
         // --- M4D Wet Dynamics Architecture ---
         // 1. Stereo energy follower & telemetry (pre-norm)
         float wet_pre_peak = fmaxf(fabsf(wet_sum_l), fabsf(wet_sum_r));
@@ -1035,6 +1187,7 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
             UpdateSustainBusTone(engine);
             UpdateFeedbackTone(engine);
             UpdateFeedbackTarget(engine);
+            UpdateLateDiffuserState(engine);
             Scheduler_RunTick(engine);
 
             engine->metrics_last_block.spawn_count = engine->metrics_tick_spawn_count;
@@ -1097,6 +1250,21 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
             engine->metrics_last_block.wet_limiter_gain_reduction_db = (engine->metrics_wet_limiter_gain_min < 1.0f && engine->metrics_wet_limiter_gain_min > 0.0f) ? -20.0f * log10f(engine->metrics_wet_limiter_gain_min) : 0.0f;
             engine->metrics_last_block.final_limiter_gain = engine->metrics_limiter_gain_min;
             engine->metrics_last_block.final_limiter_gain_reduction_db = (engine->metrics_limiter_gain_min < 1.0f && engine->metrics_limiter_gain_min > 0.0f) ? -20.0f * log10f(engine->metrics_limiter_gain_min) : 0.0f;
+
+            // M5B Sparse Late-Tail Diffuser Telemetry
+            engine->metrics_last_block.late_diffuser_send = engine->late_diffuser_send_gain;
+            float diff_rms = sqrtf(engine->metrics_diffuser_return_energy_accum / fmaxf(1.0f, (float)engine->metrics_diffuser_samples_accum));
+            engine->metrics_last_block.late_diffuser_return_rms = diff_rms;
+            engine->metrics_last_block.late_diffuser_return_peak = engine->metrics_diffuser_return_peak_accum;
+            engine->metrics_last_block.late_diffuser_feedback_energy = engine->late_diffuser_internal_energy;
+            engine->metrics_last_block.late_diffuser_max_loop_gain = engine->late_diffuser_loop_gain;
+            engine->metrics_last_block.late_diffuser_active_fraction = engine->metrics_diffuser_active_samples_accum / fmaxf(1.0f, (float)engine->metrics_diffuser_samples_accum);
+
+            engine->metrics_diffuser_send_accum = 0.0f;
+            engine->metrics_diffuser_return_energy_accum = 0.0f;
+            engine->metrics_diffuser_return_peak_accum = 0.0f;
+            engine->metrics_diffuser_active_samples_accum = 0.0f;
+            engine->metrics_diffuser_samples_accum = 0;
 
             engine->last_wet_pre_norm_peak = engine->metrics_last_block.wet_pre_norm_peak;
             engine->last_wet_pre_norm_rms = engine->metrics_last_block.wet_pre_norm_rms;
@@ -3094,6 +3262,92 @@ static void UpdateFeedbackTarget(SoundBubblesEngine_t* engine) {
     engine->feedback_gain_target = Clamp(nominal, 0.0f, BUBBLES_FEEDBACK_MAX_GAIN);
 }
 
+static void UpdateLateDiffuserState(SoundBubblesEngine_t* engine) {
+    float sr = engine->config.sample_rate;
+    if (sr <= 0.0f) sr = 44100.0f;
+
+    // 1. Context conditioning: state_base
+    float state_base = 0.0f;
+    switch (engine->engine_state) {
+        case ENGINE_STATE_TRANSIENT_BURST:
+        case ENGINE_STATE_ATTACK_ONGOING:
+            state_base = 0.0f;
+            break;
+        case ENGINE_STATE_SUSTAIN_BODY:
+            state_base = 0.25f;
+            break;
+        case ENGINE_STATE_SPARSE_DECAY:
+            state_base = 0.65f;
+            break;
+        case ENGINE_STATE_SILENCE:
+        default:
+            if (engine->auto_hold_amount > BUBBLES_AUTO_HOLD_THRESHOLD) {
+                float hold_norm = (engine->auto_hold_amount - BUBBLES_AUTO_HOLD_THRESHOLD) /
+                                  (1.0f - BUBBLES_AUTO_HOLD_THRESHOLD);
+                state_base = 0.70f + 0.30f * Clamp01(hold_norm);
+            } else {
+                state_base = 0.40f;
+            }
+            break;
+    }
+
+    // 2. Early phrase gating: 0-300ms is strictly 0.0f!
+    float early_gate = 1.0f;
+    if (engine->engine_state == ENGINE_STATE_TRANSIENT_BURST || engine->engine_state == ENGINE_STATE_ATTACK_ONGOING) {
+        early_gate = 0.0f;
+    } else if (engine->phrase_anchor_valid) {
+        float phrase_age_ms = (float)engine->phrase_anchor_age * (1000.0f / sr);
+        if (phrase_age_ms <= 300.0f) {
+            early_gate = 0.0f;
+        } else if (phrase_age_ms < 1000.0f) {
+            early_gate = (phrase_age_ms - 300.0f) / 700.0f;
+        } else {
+            early_gate = 1.0f;
+        }
+    }
+
+    // 3. Macro influences
+    float mem = Clamp01(engine->config.memory_mix);
+    float bloom = Clamp01(engine->config.sustain_diffusion_amount);
+    float f_mem = mem * mem; // Quad curve for MEMORY: near 0 at low, smooth rise
+    float f_bloom = 0.70f + 0.30f * bloom;
+
+    float target = state_base * early_gate * f_mem * f_bloom;
+    engine->late_diffuser_target = Clamp(target, 0.0f, 1.0f);
+
+    // 4. Envelope slewing
+    // Fast release on new attack / transient burst to isolate cross-phrase bleed (Section 29, 30)
+    if (early_gate <= 0.001f || engine->engine_state == ENGINE_STATE_TRANSIENT_BURST) {
+        float fast_rel_coef = 1.0f - expf(-(float)BUBBLES_BLOCK_SIZE / (sr * 0.040f)); // 40 ms decay
+        engine->late_diffuser_amount += (0.0f - engine->late_diffuser_amount) * fast_rel_coef;
+    } else {
+        // Smooth activation envelope (Section 20): attack ~600 ms, release ~2.0 s
+        float dt_blocks = (float)BUBBLES_BLOCK_SIZE / sr;
+        float env_coef = (engine->late_diffuser_target > engine->late_diffuser_amount)
+            ? (1.0f - expf(-dt_blocks / 0.600f))
+            : (1.0f - expf(-dt_blocks / 2.000f));
+        engine->late_diffuser_amount += (engine->late_diffuser_target - engine->late_diffuser_amount) * env_coef;
+    }
+    engine->late_diffuser_amount = Clamp(engine->late_diffuser_amount, 0.0f, 1.0f);
+
+    // 5. Derived gains
+    // Send ceiling: <= 0.25 (nominal max 0.22)
+    engine->late_diffuser_send_gain = engine->late_diffuser_amount * 0.22f;
+
+    // Return ceiling: <= 0.35 (nominal max 0.28)
+    engine->late_diffuser_return_gain = engine->late_diffuser_amount * (0.18f + 0.10f * bloom);
+
+    // Internal loop feedback: 0.20 to 0.50
+    float base_fb = BUBBLES_LATE_DIFFUSER_FEEDBACK_MIN +
+        (BUBBLES_LATE_DIFFUSER_FEEDBACK_MAX - BUBBLES_LATE_DIFFUSER_FEEDBACK_MIN) * (0.6f * mem + 0.4f * bloom);
+
+    // Stability follower (Section 26): reduce loop feedback smoothly if energy exceeds threshold
+    if (engine->late_diffuser_internal_energy > BUBBLES_LATE_DIFFUSER_ENERGY_SAFETY_TH) {
+        base_fb *= (BUBBLES_LATE_DIFFUSER_ENERGY_SAFETY_TH / engine->late_diffuser_internal_energy);
+    }
+    engine->late_diffuser_loop_gain = Clamp(base_fb, 0.0f, BUBBLES_LATE_DIFFUSER_FEEDBACK_CEILING);
+}
+
 static inline float Filter1Pole_ProcessLPF(Filter1Pole_t* f, float input) {
     f->z1 = (input * f->b0) + (f->z1 * f->a1);
     return f->z1;
@@ -3433,4 +3687,30 @@ void SoundBubbles_ResetMemoryTierTelemetry(SoundBubblesEngine_t* engine) {
     engine->metrics_last_block.p50_read_age_ms = 0.0f;
     engine->metrics_last_block.p95_read_age_ms = 0.0f;
     engine->metrics_last_block.anchor_read_fraction = 0.0f;
+}
+
+// --- M5B Sparse Late-Tail Diffusion Inspection Helpers ---
+
+float SoundBubbles_GetLateDiffuserSend(const SoundBubblesEngine_t* engine) {
+    return engine ? engine->late_diffuser_send_gain : 0.0f;
+}
+
+float SoundBubbles_GetLateDiffuserReturnRms(const SoundBubblesEngine_t* engine) {
+    return engine ? engine->metrics_last_block.late_diffuser_return_rms : 0.0f;
+}
+
+float SoundBubbles_GetLateDiffuserReturnPeak(const SoundBubblesEngine_t* engine) {
+    return engine ? engine->metrics_last_block.late_diffuser_return_peak : 0.0f;
+}
+
+float SoundBubbles_GetLateDiffuserFeedbackEnergy(const SoundBubblesEngine_t* engine) {
+    return engine ? engine->late_diffuser_internal_energy : 0.0f;
+}
+
+float SoundBubbles_GetLateDiffuserMaxLoopGain(const SoundBubblesEngine_t* engine) {
+    return engine ? engine->late_diffuser_loop_gain : 0.0f;
+}
+
+float SoundBubbles_GetLateDiffuserAmount(const SoundBubblesEngine_t* engine) {
+    return engine ? engine->late_diffuser_amount : 0.0f;
 }

@@ -51,15 +51,83 @@ static float calc_peak(const float* b, int count) {
 }
 
 static float calc_centroid(const float* x, int n, float sr) {
-    double num = 0.0, den = 0.0;
-    for (int i = 1; i < n; i++) {
-        double diff = (double)x[i] - (double)x[i - 1];
-        double energy = diff * diff;
-        double freq = ((double)i / (double)n) * ((double)sr * 0.5);
-        num += freq * energy;
-        den += energy;
+    if (n <= 1 || sr <= 0.0f) return 0.0f;
+
+    int nfft = 1;
+    while (nfft < n) nfft <<= 1;
+    if (nfft < 128) nfft = 128;
+
+    float* re = (float*)calloc((size_t)nfft, sizeof(float));
+    float* im = (float*)calloc((size_t)nfft, sizeof(float));
+    if (!re || !im) {
+        if (re) free(re);
+        if (im) free(im);
+        return 0.0f;
     }
-    return (den > 1e-12) ? (float)(num / den) : 0.0f;
+
+    // Hann window
+    for (int i = 0; i < n; i++) {
+        float w = 0.5f * (1.0f - cosf(2.0f * (float)M_PI_F * (float)i / (float)(n - 1)));
+        re[i] = x[i] * w;
+    }
+
+    // Cooley-Tukey Radix-2 FFT
+    int j = 0;
+    for (int i = 0; i < nfft - 1; i++) {
+        if (i < j) {
+            float tr = re[i]; re[i] = re[j]; re[j] = tr;
+            float ti = im[i]; im[i] = im[j]; im[j] = ti;
+        }
+        int k = nfft >> 1;
+        while (k <= j) {
+            j -= k;
+            k >>= 1;
+        }
+        j += k;
+    }
+
+    for (int len = 2; len <= nfft; len <<= 1) {
+        float angle = -2.0f * (float)M_PI_F / (float)len;
+        float wlen_r = cosf(angle);
+        float wlen_i = sinf(angle);
+        int half = len >> 1;
+        for (int i = 0; i < nfft; i += len) {
+            float wr = 1.0f;
+            float wi = 0.0f;
+            for (int k = 0; k < half; k++) {
+                float u_r = re[i + k];
+                float u_i = im[i + k];
+                float v_r = re[i + k + half] * wr - im[i + k + half] * wi;
+                float v_i = re[i + k + half] * wi + im[i + k + half] * wr;
+                re[i + k] = u_r + v_r;
+                im[i + k] = u_i + v_i;
+                re[i + k + half] = u_r - v_r;
+                im[i + k + half] = u_i - v_i;
+                float next_wr = wr * wlen_r - wi * wlen_i;
+                float next_wi = wr * wlen_i + wi * wlen_r;
+                wr = next_wr;
+                wi = next_wi;
+            }
+        }
+    }
+
+    // Spectral centroid = sum(freq * magnitude) / sum(magnitude)
+    double sum_weighted = 0.0;
+    double sum_mag = 0.0;
+    int half_fft = nfft >> 1;
+    float bin_hz = sr / (float)nfft;
+
+    for (int k = 1; k <= half_fft; k++) {
+        double mag = sqrt((double)re[k] * (double)re[k] + (double)im[k] * (double)im[k]);
+        double freq = (double)k * (double)bin_hz;
+        sum_weighted += freq * mag;
+        sum_mag += mag;
+    }
+
+    free(re);
+    free(im);
+
+    return (sum_mag > 1e-12) ? (float)(sum_weighted / sum_mag) : 0.0f;
 }
 
 // Normalized cross-correlation between two windows of equal length
@@ -979,11 +1047,100 @@ static int run_tier_trace(void) {
 }
 
 // ---------------------------------------------------------------------------
+// 12. Transition Discontinuity Test (~230-420 ms)
+// ---------------------------------------------------------------------------
+static int run_transition_discontinuity(void) {
+    const int sr = 44100;
+    const int total_samples = (int)(0.600f * (float)sr); // 600 ms = 26460 samples
+    const int block_size = 64;
+
+    printf("TRANSITION_DISCONTINUITY_CSV\n");
+    printf("Source,Region,MaxDiff,RMSDiff,MedianDiff,PeakToMedian\n");
+
+    for (int s = 0; s < 4; s++) {
+        AudioSource_t src = (AudioSource_t)s;
+        const char* src_name = g_source_names[s];
+
+        BubbleEngineConfig_t config;
+        bubble_engine_default_config(&config);
+        config.sample_rate = (float)sr;
+        config.memory_mix = 0.50f;
+        config.sustain_diffusion_enable = 1;
+        config.sustain_diffusion_amount = 0.50f;
+        config.rng_seed = 1u;
+
+        BubbleEngine_t engine;
+        SoundBubbles_Init(&engine, g_delay, &config);
+
+        float in[64], out_l[64], out_r[64];
+        float* out = (float*)malloc((total_samples + block_size) * sizeof(float));
+        int out_idx = 0;
+
+        for (int i = 0; i < total_samples; i += block_size) {
+            for (int k = 0; k < block_size; k++) {
+                float t = (float)(i + k) / (float)sr;
+                in[k] = GenerateSourceSample(src, t);
+            }
+            SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+            for (int k = 0; k < block_size; k++) {
+                if (out_idx < total_samples) {
+                    out[out_idx++] = 0.5f * (out_l[k] + out_r[k]);
+                }
+            }
+        }
+
+        struct {
+            const char* name;
+            int start;
+            int len;
+        } regions[] = {
+            {"150-230ms", (int)(0.150f * sr), (int)(0.080f * sr)},
+            {"230-420ms", (int)(0.230f * sr), (int)(0.190f * sr)},
+            {"420-600ms", (int)(0.420f * sr), (int)(0.180f * sr)}
+        };
+
+        for (size_t r = 0; r < 3; r++) {
+            int st = regions[r].start;
+            int len = regions[r].len;
+            float* diffs = (float*)malloc(len * sizeof(float));
+            float max_diff = 0.0f;
+            double sum_sq = 0.0;
+            for (int j = 0; j < len; j++) {
+                int idx = st + j;
+                float d = (idx > 0) ? fabsf(out[idx] - out[idx - 1]) : 0.0f;
+                diffs[j] = d;
+                if (d > max_diff) max_diff = d;
+                sum_sq += (double)d * (double)d;
+            }
+            float rms_diff = (float)sqrt(sum_sq / (double)len);
+
+            for (int j = 0; j < len - 1; j++) {
+                int min_idx = j;
+                for (int k = j + 1; k < len; k++) {
+                    if (diffs[k] < diffs[min_idx]) min_idx = k;
+                }
+                float tmp = diffs[j]; diffs[j] = diffs[min_idx]; diffs[min_idx] = tmp;
+            }
+            float median_diff = diffs[len / 2];
+            float peak_to_median = (median_diff > 1e-9f) ? (max_diff / median_diff) : 0.0f;
+
+            printf("%s,%s,%.6f,%.6f,%.6f,%.2f\n",
+                   src_name, regions[r].name, max_diff, rms_diff, median_diff, peak_to_median);
+
+            free(diffs);
+        }
+
+        free(out);
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 // Main Dispatcher
 // ---------------------------------------------------------------------------
 int main(int argc, char** argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <distribution|memory_sweep|periodicity|attack_integrity|attack_parity|tier_ranges|tier_trace|cross_phrase|pitch_stress|block_invariance|cpu_benchmark>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <distribution|memory_sweep|periodicity|attack_integrity|attack_parity|tier_ranges|tier_trace|cross_phrase|pitch_stress|block_invariance|cpu_benchmark|transition_discontinuity>\n", argv[0]);
         return 1;
     }
 
@@ -999,6 +1156,7 @@ int main(int argc, char** argv) {
     if (strcmp(mode, "pitch_stress") == 0) return run_pitch_stress();
     if (strcmp(mode, "block_invariance") == 0) return run_block_invariance();
     if (strcmp(mode, "cpu_benchmark") == 0) return run_cpu_benchmark();
+    if (strcmp(mode, "transition_discontinuity") == 0) return run_transition_discontinuity();
 
     fprintf(stderr, "Unknown mode: %s\n", mode);
     return 1;

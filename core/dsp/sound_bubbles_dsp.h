@@ -170,6 +170,26 @@ typedef BubbleMemoryTier BubbleMemoryTier_t;
 #define BUBBLES_WET_LIMITER_CEILING_DB      (-2.0f)
 #define BUBBLES_WET_LIMITER_RELEASE_MS      (60.0f)
 
+// --- M5B Sparse Late-Tail Diffusion Architecture ---
+#define BUBBLES_LATE_DIFFUSER_LINES         3
+#define BUBBLES_LATE_DIFFUSER_DELAY_0_MS    47.3f
+#define BUBBLES_LATE_DIFFUSER_DELAY_1_MS    107.1f
+#define BUBBLES_LATE_DIFFUSER_DELAY_2_MS    181.9f
+
+#define BUBBLES_LATE_DIFFUSER_CAPACITY_0    4800
+#define BUBBLES_LATE_DIFFUSER_CAPACITY_1    10800
+#define BUBBLES_LATE_DIFFUSER_CAPACITY_2    18500
+#define BUBBLES_LATE_DIFFUSER_TOTAL_CAPACITY (BUBBLES_LATE_DIFFUSER_CAPACITY_0 + BUBBLES_LATE_DIFFUSER_CAPACITY_1 + BUBBLES_LATE_DIFFUSER_CAPACITY_2)
+
+#define BUBBLES_LATE_DIFFUSER_HPF_HZ        150.0f
+#define BUBBLES_LATE_DIFFUSER_LPF_HZ        6000.0f
+#define BUBBLES_LATE_DIFFUSER_FEEDBACK_MIN  0.20f
+#define BUBBLES_LATE_DIFFUSER_FEEDBACK_MAX  0.50f
+#define BUBBLES_LATE_DIFFUSER_FEEDBACK_CEILING 0.75f
+#define BUBBLES_LATE_DIFFUSER_SEND_CEILING  0.25f
+#define BUBBLES_LATE_DIFFUSER_RETURN_CEILING 0.35f
+#define BUBBLES_LATE_DIFFUSER_ENERGY_SAFETY_TH 0.30f
+
 // --- Enums ---
 
 typedef enum {
@@ -493,6 +513,13 @@ typedef struct {
     float p50_read_age_ms;
     float p95_read_age_ms;
     float anchor_read_fraction;
+    // M5B Sparse Late-Tail Diffusion Telemetry
+    float late_diffuser_send;
+    float late_diffuser_return_rms;
+    float late_diffuser_return_peak;
+    float late_diffuser_feedback_energy;
+    float late_diffuser_max_loop_gain;
+    float late_diffuser_active_fraction;
 } SoundBubblesBlockMetrics_t;
 
 typedef void (*SoundBubblesMetricsCallback_t)(const SoundBubblesBlockMetrics_t* metrics, void* user_data);
@@ -692,6 +719,29 @@ typedef struct {
     int32_t recent_read_ages_head;
     int32_t recent_read_ages_count;
 
+    // M5B Sparse Late-Tail Diffuser
+    BubbleRingSample_t late_diffuser_buf0[BUBBLES_LATE_DIFFUSER_CAPACITY_0];
+    BubbleRingSample_t late_diffuser_buf1[BUBBLES_LATE_DIFFUSER_CAPACITY_1];
+    BubbleRingSample_t late_diffuser_buf2[BUBBLES_LATE_DIFFUSER_CAPACITY_2];
+    int32_t late_diffuser_len[BUBBLES_LATE_DIFFUSER_LINES];
+    int32_t late_diffuser_write_idx[BUBBLES_LATE_DIFFUSER_LINES];
+    Filter1Pole_t late_diffuser_hpf[BUBBLES_LATE_DIFFUSER_LINES];
+    Filter1Pole_t late_diffuser_lpf[BUBBLES_LATE_DIFFUSER_LINES];
+    float late_diffuser_amount;
+    float late_diffuser_target;
+    float late_diffuser_send_gain;
+    float late_diffuser_return_gain;
+    float late_diffuser_loop_gain;
+    float late_diffuser_internal_energy;
+    float late_diffuser_return_l;
+    float late_diffuser_return_r;
+
+    float metrics_diffuser_send_accum;
+    float metrics_diffuser_return_energy_accum;
+    float metrics_diffuser_return_peak_accum;
+    float metrics_diffuser_active_samples_accum;
+    int32_t metrics_diffuser_samples_accum;
+
     // Optional per-control-block metrics hook (for offline validation/telemetry)
     SoundBubblesMetricsCallback_t metrics_callback;
     void* metrics_user_data;
@@ -824,6 +874,14 @@ void SoundBubbles_GetReadAgeTelemetry(const SoundBubblesEngine_t* engine,
                                       float* out_p95_ms,
                                       float* out_anchor_fraction);
 void SoundBubbles_ResetMemoryTierTelemetry(SoundBubblesEngine_t* engine);
+
+// M5B Sparse Late-Tail Diffusion inspection helpers
+float SoundBubbles_GetLateDiffuserSend(const SoundBubblesEngine_t* engine);
+float SoundBubbles_GetLateDiffuserReturnRms(const SoundBubblesEngine_t* engine);
+float SoundBubbles_GetLateDiffuserReturnPeak(const SoundBubblesEngine_t* engine);
+float SoundBubbles_GetLateDiffuserFeedbackEnergy(const SoundBubblesEngine_t* engine);
+float SoundBubbles_GetLateDiffuserMaxLoopGain(const SoundBubblesEngine_t* engine);
+float SoundBubbles_GetLateDiffuserAmount(const SoundBubblesEngine_t* engine);
 
 // Single source of truth for runtime tier ranges (Section 17-21)
 void SoundBubbles_ResolveMemoryTierRangeSamples(const SoundBubblesEngine_t* engine,
