@@ -156,3 +156,80 @@ def test_m5b_block_size_invariance(cand_m5b_probe: Path):
     assert len(lines) == 6
     rms_vals = [float(l.split(",")[1]) for l in lines]
     assert all(abs(r - rms_vals[0]) < 0.1 for r in rms_vals)
+    # Sample-exact or sub-micro difference vs 64
+    max_diffs = [float(l.split(",")[4]) for l in lines]
+    assert all(d < 1e-5 for d in max_diffs)
+
+
+def test_m5b_diffuser_sanity_and_window_telemetry(cand_m5b_probe: Path):
+    """M5B.1: Diffuser window telemetry must record active return energy (resolving Problem B)."""
+    res = subprocess.run([str(cand_m5b_probe), "diffuser_sanity"], capture_output=True, text=True, check=True)
+    out = res.stdout.strip()
+    assert "DIFFUSER_SANITY:" in out
+    assert "SendMean=" in out
+    assert "ReturnRMS_dB=" in out
+    # Verify return is well above noise floor and not -180 dB
+    assert "-180.00" not in out
+    # Parse metrics
+    parts = dict(kv.split("=") for kv in out.replace("DIFFUSER_SANITY: ", "").split())
+    send_mean = float(parts["SendMean"])
+    ret_rms_db = float(parts["ReturnRMS_dB"])
+    active_pct = float(parts["ActivePct"])
+    assert send_mean > 0.05
+    assert ret_rms_db > -90.0
+    assert active_pct > 50.0
+
+
+def test_m5b_limiter_hierarchy_nominal_and_dense(cand_m5b_probe: Path):
+    """M5B.1: Nominal and Dense scenarios must produce 0.00 dB final limiter GR (resolving Problem D)."""
+    res = subprocess.run([str(cand_m5b_probe), "limiter_scenarios"], capture_output=True, text=True, check=True)
+    out = res.stdout.strip()
+    assert "LIMITER_SCENARIOS_CSV" in out
+    lines = [l for l in out.splitlines() if "," in l and not l.startswith("Scenario")]
+    assert len(lines) == 3
+    # Check Nominal
+    nom_parts = lines[0].split(",")
+    assert nom_parts[0] == "Nominal"
+    assert float(nom_parts[1]) == 0.00  # FinalLimMaxGR_dB
+    assert float(nom_parts[2]) == 0.00  # FinalLimActivePct
+    # Check Dense
+    dense_parts = lines[1].split(",")
+    assert dense_parts[0] == "Dense"
+    assert float(dense_parts[1]) == 0.00  # FinalLimMaxGR_dB
+    assert float(dense_parts[2]) == 0.00  # FinalLimActivePct
+    # Check Extreme
+    ext_parts = lines[2].split(",")
+    assert ext_parts[0] == "Extreme"
+    assert float(ext_parts[1]) < 6.0  # Safe transient control under overload
+
+
+def test_m5b_normalized_tail_continuity_metrics(cand_m5b_probe: Path):
+    """M5B.1: Normalized tail evolution must report finite continuity metrics across 4-12s."""
+    res = subprocess.run([str(cand_m5b_probe), "normalized_tail_evolution"], capture_output=True, text=True, check=True)
+    out = res.stdout.strip()
+    assert "NORMALIZED_TAIL_EVOLUTION_CSV" in out
+    lines = [l for l in out.splitlines() if "," in l and not l.startswith("Source")]
+    assert len(lines) >= 12
+    for l in lines:
+        parts = l.split(",")
+        occ = float(parts[2])
+        crest = float(parts[3])
+        gap = float(parts[4])
+        assert occ >= 0.0
+        assert crest >= 1.0
+        assert 0.0 <= gap <= 100.0
+
+
+def test_m5b_cpu_benchmark_speed(cand_m5b_probe: Path):
+    """M5B.1: CPU benchmark must maintain >= 25x real-time speed across all sample rates."""
+    res = subprocess.run([str(cand_m5b_probe), "cpu_benchmark"], capture_output=True, text=True, check=True)
+    out = res.stdout.strip()
+    assert "CPU_BENCHMARK_CSV" in out
+    lines = [l for l in out.splitlines() if "," in l and not l.startswith("SampleRate") and not l.startswith("State")]
+    bench_lines = [l for l in lines if len(l.split(",")) == 4]
+    assert len(bench_lines) == 12
+    for l in bench_lines:
+        parts = l.split(",")
+        speed = float(parts[3])
+        assert speed >= 25.0, f"Speed dropped below 25x: {speed}"
+

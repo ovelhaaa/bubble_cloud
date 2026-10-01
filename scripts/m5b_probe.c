@@ -13,6 +13,36 @@
 #include "dsp/sound_bubbles_dsp.h"
 #include "engine/bubble_engine.h"
 
+#ifndef M5B_CANDIDATE_BUILD
+typedef struct {
+    float send_mean;
+    float send_max;
+    float return_rms;
+    float return_peak;
+    float internal_energy_mean;
+    float internal_energy_max;
+    float active_fraction;
+    float main_wet_rms;
+    float diffuser_main_ratio_db;
+} SoundBubblesDiffuserWindowMetrics_t;
+
+typedef struct {
+    float wet_norm_gain_min;
+    float wet_norm_gain_median;
+    float wet_norm_active_fraction;
+    float wet_limiter_max_gr_db;
+    float wet_limiter_active_fraction;
+    float final_limiter_max_gr_db;
+    float final_limiter_active_fraction;
+} SoundBubblesLimiterHierarchyMetrics_t;
+
+static inline void SoundBubbles_ResetDiffuserWindowMetrics(BubbleEngine_t* e) { (void)e; }
+static inline void SoundBubbles_GetDiffuserWindowMetrics(const BubbleEngine_t* e, SoundBubblesDiffuserWindowMetrics_t* m) { (void)e; if (m) memset(m, 0, sizeof(*m)); }
+static inline void SoundBubbles_ResetLimiterHierarchyMetrics(BubbleEngine_t* e) { (void)e; }
+static inline void SoundBubbles_GetLimiterHierarchyMetrics(const BubbleEngine_t* e, SoundBubblesLimiterHierarchyMetrics_t* m) { (void)e; if (m) memset(m, 0, sizeof(*m)); }
+static inline float SoundBubbles_GetLateDiffuserFeedbackEnergy(const BubbleEngine_t* e) { (void)e; return 0.0f; }
+#endif
+
 #define MAX_RING_SAMPLES 384000
 #ifndef M_PI_F
 #define M_PI_F 3.14159265358979323846f
@@ -211,29 +241,77 @@ static float calc_spectral_occupancy(const float* x, int n) {
     return 100.0f * (float)active_bins / (float)total_bins;
 }
 
-// Temporal Sparsity: % of 20 ms sub-windows with RMS below threshold
-static float calc_temporal_sparsity(const float* x, int n, float sr) {
-    if (n <= 0 || sr <= 0.0f) return 100.0f;
-    int frame_len = (int)(0.020f * sr); // 20 ms
+// Relative Temporal Continuity Metrics (Sections 10-13)
+typedef struct {
+    float gap_fraction_pct;  // % of 15ms sub-windows below macro_rms - 12 dB
+    float envelope_cv;       // std(sub_rms) / mean(sub_rms)
+    float p10_rms_db;
+    float p50_rms_db;
+    float p90_rms_db;
+} ContinuityMetrics_t;
+
+static ContinuityMetrics_t calc_continuity_metrics(const float* x, int n, float sr, float macro_rms) {
+    ContinuityMetrics_t m;
+    memset(&m, 0, sizeof(m));
+    if (n <= 0 || sr <= 0.0f || macro_rms <= 1e-9f) {
+        m.gap_fraction_pct = 100.0f;
+        m.envelope_cv = 0.0f;
+        m.p10_rms_db = -180.0f;
+        m.p50_rms_db = -180.0f;
+        m.p90_rms_db = -180.0f;
+        return m;
+    }
+
+    int frame_len = (int)(0.015f * sr); // 15 ms sub-windows
     if (frame_len < 16) frame_len = 16;
     int frames = n / frame_len;
-    if (frames <= 0) return 100.0f;
+    if (frames <= 0) {
+        m.gap_fraction_pct = 100.0f;
+        return m;
+    }
 
-    float max_sub_rms = 0.0f;
     float* frame_rms = (float*)malloc(frames * sizeof(float));
+    double sum_rms = 0.0;
+    double sum_sq_rms = 0.0;
     for (int f = 0; f < frames; f++) {
         float r = calc_rms(x + f * frame_len, frame_len);
         frame_rms[f] = r;
-        if (r > max_sub_rms) max_sub_rms = r;
+        sum_rms += (double)r;
+        sum_sq_rms += (double)r * (double)r;
     }
 
-    float threshold = fmaxf(1e-4f, max_sub_rms * 0.0316f); // -30 dB relative to local peak
-    int quiet_frames = 0;
+    // Relative gap threshold: 12 dB below macro-window RMS (0.25118864 * macro_rms)
+    float gap_th = macro_rms * 0.25118864f;
+    int gap_count = 0;
     for (int f = 0; f < frames; f++) {
-        if (frame_rms[f] < threshold) quiet_frames++;
+        if (frame_rms[f] < gap_th) gap_count++;
     }
+    m.gap_fraction_pct = 100.0f * (float)gap_count / (float)frames;
+
+    // Envelope CV = std / mean (lower CV = higher continuity)
+    double mean_rms = sum_rms / (double)frames;
+    if (mean_rms > 1e-12) {
+        double variance = (sum_sq_rms / (double)frames) - (mean_rms * mean_rms);
+        double std_dev = (variance > 0.0) ? sqrt(variance) : 0.0;
+        m.envelope_cv = (float)(std_dev / mean_rms);
+    } else {
+        m.envelope_cv = 0.0f;
+    }
+
+    // Percentiles p10, p50, p90
+    for (int i = 0; i < frames - 1; i++) {
+        int min_idx = i;
+        for (int j = i + 1; j < frames; j++) {
+            if (frame_rms[j] < frame_rms[min_idx]) min_idx = j;
+        }
+        float tmp = frame_rms[i]; frame_rms[i] = frame_rms[min_idx]; frame_rms[min_idx] = tmp;
+    }
+    m.p10_rms_db = to_db(frame_rms[(int)(0.10f * frames)]);
+    m.p50_rms_db = to_db(frame_rms[(int)(0.50f * frames)]);
+    m.p90_rms_db = to_db(frame_rms[(int)(0.90f * frames)]);
+
     free(frame_rms);
-    return 100.0f * (float)quiet_frames / (float)frames;
+    return m;
 }
 
 // Normalized cross-correlation
@@ -499,7 +577,7 @@ static int run_tail_evolution(void) {
     const int block_size = 64;
 
     printf("TAIL_EVOLUTION_CSV\n");
-    printf("Source,Window,RMS_dB,Peak_dB,Centroid_Hz,Flatness,OccupancyPct,CrestFactor,SparsityPct,StereoCorr\n");
+    printf("Source,Window,RMS_dB,Peak_dB,Centroid_Hz,Flatness,OccupancyPct,CrestFactor,GapFractionPct,EnvelopeCV,P50_dB,StereoCorr\n");
 
     for (int s = 0; s < SOURCE_COUNT; s++) {
         AudioSource_t src = (AudioSource_t)s;
@@ -563,15 +641,96 @@ static int run_tail_evolution(void) {
             float flat = calc_spectral_flatness(buf_mono + st, len);
             float occ = calc_spectral_occupancy(buf_mono + st, len);
             float crest = (rms > 1e-9f) ? (peak / rms) : 1.0f;
-            float spar = calc_temporal_sparsity(buf_mono + st, len, (float)sr);
+            ContinuityMetrics_t cm = calc_continuity_metrics(buf_mono + st, len, (float)sr, rms);
             float corr = calc_cross_correlation(buf_l + st, buf_r + st, len);
 
-            printf("%s,%s,%.2f,%.2f,%.1f,%.4f,%.1f,%.2f,%.1f,%.3f\n",
-                   src_name, win_defs[w].name, to_db(rms), to_db(peak), cent, flat, occ, crest, spar, corr);
+            printf("%s,%s,%.2f,%.2f,%.1f,%.4f,%.1f,%.2f,%.1f,%.3f,%.2f,%.3f\n",
+                   src_name, win_defs[w].name, to_db(rms), to_db(peak), cent, flat, occ, crest,
+                   cm.gap_fraction_pct, cm.envelope_cv, cm.p50_rms_db, corr);
         }
 
         free(buf_l);
         free(buf_r);
+        free(buf_mono);
+    }
+    return 0;
+}
+
+static int run_normalized_tail_evolution(void) {
+    const int sr = 44100;
+    const int total_samples = 16 * sr;
+    const int block_size = 64;
+
+    printf("NORMALIZED_TAIL_EVOLUTION_CSV\n");
+    printf("Source,Window,OccupancyPct,CrestFactor,GapFractionPct,EnvelopeCV\n");
+
+    for (int s = 0; s < SOURCE_COUNT; s++) {
+        AudioSource_t src = (AudioSource_t)s;
+        const char* src_name = g_source_names[s];
+
+        BubbleEngineConfig_t config;
+        bubble_engine_default_config(&config);
+        config.sample_rate = (float)sr;
+        config.memory_mix = 0.75f;
+        config.sustain_diffusion_enable = 1;
+        config.sustain_diffusion_amount = 0.70f;
+        config.rng_seed = 42u;
+
+        BubbleEngine_t engine;
+        SoundBubbles_Init(&engine, g_delay, &config);
+        SoundBubbles_SetFeedbackEnabled(&engine, true);
+
+        float in[64], out_l[64], out_r[64];
+        float* buf_mono = (float*)malloc(total_samples * sizeof(float));
+        int out_idx = 0;
+
+        for (int i = 0; i < total_samples; i += block_size) {
+            for (int k = 0; k < block_size; k++) {
+                float t = (float)(i + k) / (float)sr;
+                in[k] = (t < 0.50f) ? GenerateSourceSample(src, t) : 0.0f;
+            }
+            SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+            for (int k = 0; k < block_size; k++) {
+                if (out_idx < total_samples) {
+                    buf_mono[out_idx++] = 0.5f * (out_l[k] + out_r[k]);
+                }
+            }
+        }
+
+        struct {
+            const char* name;
+            int start;
+            int len;
+        } win_defs[] = {
+            {"4-6s",   (int)(4.0f * sr),  (int)(2.0f * sr)},
+            {"6-8s",   (int)(6.0f * sr),  (int)(2.0f * sr)},
+            {"8-12s",  (int)(8.0f * sr),  (int)(4.0f * sr)}
+        };
+
+        for (size_t w = 0; w < sizeof(win_defs)/sizeof(win_defs[0]); w++) {
+            int st = win_defs[w].start;
+            int len = win_defs[w].len;
+
+            float rms = calc_rms(buf_mono + st, len);
+            if (rms > 1e-9f) {
+                float* norm_buf = (float*)malloc(len * sizeof(float));
+                float norm_scale = 0.05f / rms; // Target RMS = 0.05 (-26 dBFS)
+                for (int j = 0; j < len; j++) norm_buf[j] = buf_mono[st + j] * norm_scale;
+
+                float norm_rms = calc_rms(norm_buf, len);
+                float norm_peak = calc_peak(norm_buf, len);
+                float occ = calc_spectral_occupancy(norm_buf, len);
+                float crest = (norm_rms > 1e-9f) ? (norm_peak / norm_rms) : 1.0f;
+                ContinuityMetrics_t cm = calc_continuity_metrics(norm_buf, len, (float)sr, norm_rms);
+
+                printf("%s,%s,%.1f,%.2f,%.1f,%.3f\n",
+                       src_name, win_defs[w].name, occ, crest, cm.gap_fraction_pct, cm.envelope_cv);
+                free(norm_buf);
+            } else {
+                printf("%s,%s,0.0,1.00,100.0,0.000\n", src_name, win_defs[w].name);
+            }
+        }
+
         free(buf_mono);
     }
     return 0;
@@ -864,7 +1023,7 @@ static int run_memory_bloom_sweep(void) {
     const float blooms[] = {0.0f, 0.50f, 1.0f};
 
     printf("MEMORY_BLOOM_SWEEP_CSV\n");
-    printf("Memory,Bloom,LateSend,LateReturnRMS_dB,TailRMS_dB\n");
+    printf("Memory,Bloom,LateSend,LateReturnRMS_dB,TailRMS_dB,ActivePct,DiffRatio_dB\n");
 
     const int sr = 44100;
     const int total_samples = 12 * sr;
@@ -890,6 +1049,9 @@ static int run_memory_bloom_sweep(void) {
 
             for (int i = 0; i < total_samples; i += block_size) {
                 float t = (float)i / (float)sr;
+                if (i == 6 * sr) {
+                    SoundBubbles_ResetDiffuserWindowMetrics(&engine);
+                }
                 for (int k = 0; k < block_size; k++) {
                     float cur_t = t + (float)k / (float)sr;
                     in[k] = (cur_t < 0.5f) ? 0.85f * sinf(2.0f * M_PI_F * 440.0f * cur_t) : 0.0f;
@@ -906,15 +1068,141 @@ static int run_memory_bloom_sweep(void) {
             }
 
             float tail_rms = (tail_count > 0) ? (float)sqrt(tail_energy / (double)tail_count) : 0.0f;
-            float send = 0.0f;
-            float ret_rms = 0.0f;
+            SoundBubblesDiffuserWindowMetrics_t wm;
+            memset(&wm, 0, sizeof(wm));
 #ifdef M5B_CANDIDATE_BUILD
-            send = SoundBubbles_GetLateDiffuserSend(&engine);
-            ret_rms = SoundBubbles_GetLateDiffuserReturnRms(&engine);
+            SoundBubbles_GetDiffuserWindowMetrics(&engine, &wm);
 #endif
-            printf("%.2f,%.2f,%.4f,%.2f,%.2f\n",
-                   memory_mixes[m], blooms[b], send, to_db(ret_rms), to_db(tail_rms));
+            printf("%.2f,%.2f,%.4f,%.2f,%.2f,%.1f,%.2f\n",
+                   memory_mixes[m], blooms[b], wm.send_mean, to_db(wm.return_rms), to_db(tail_rms),
+                   wm.active_fraction * 100.0f, wm.diffuser_main_ratio_db);
         }
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// 8B. Diffuser Sanity Check (Section 6)
+// ---------------------------------------------------------------------------
+static int run_diffuser_sanity(void) {
+    const int sr = 44100;
+    const int total_samples = 8 * sr;
+    const int block_size = 64;
+
+    BubbleEngineConfig_t config;
+    bubble_engine_default_config(&config);
+    config.sample_rate = (float)sr;
+    config.memory_mix = 1.0f;
+    config.sustain_diffusion_enable = 1;
+    config.sustain_diffusion_amount = 1.0f;
+    config.rng_seed = 42u;
+
+    BubbleEngine_t engine;
+    SoundBubbles_Init(&engine, g_delay, &config);
+    SoundBubbles_SetFeedbackEnabled(&engine, true);
+
+    float in[64], out_l[64], out_r[64];
+    for (int i = 0; i < total_samples; i += block_size) {
+        float t = (float)i / (float)sr;
+        if (i == 3 * sr) {
+            SoundBubbles_ResetDiffuserWindowMetrics(&engine);
+        }
+        for (int k = 0; k < block_size; k++) {
+            float cur_t = t + (float)k / (float)sr;
+            in[k] = (cur_t < 0.5f) ? 0.85f * sinf(2.0f * M_PI_F * 440.0f * cur_t) : 0.0f;
+        }
+        SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+    }
+
+    SoundBubblesDiffuserWindowMetrics_t wm;
+    memset(&wm, 0, sizeof(wm));
+#ifdef M5B_CANDIDATE_BUILD
+    SoundBubbles_GetDiffuserWindowMetrics(&engine, &wm);
+#endif
+
+    printf("DIFFUSER_SANITY: SendMean=%.4f ReturnRMS_dB=%.2f ActivePct=%.1f EnergyMean=%.6f ReturnPeak_dB=%.2f MainWetRMS_dB=%.2f DiffRatio_dB=%.2f\n",
+           wm.send_mean, to_db(wm.return_rms), wm.active_fraction * 100.0f, wm.internal_energy_mean,
+           to_db(wm.return_peak), to_db(wm.main_wet_rms), wm.diffuser_main_ratio_db);
+
+    bool ok = (wm.send_mean > 0.05f) &&
+              (wm.return_rms > 1e-6f) &&
+              (wm.active_fraction > 0.50f) &&
+              (wm.internal_energy_mean > 1e-6f);
+    return ok ? 0 : 1;
+}
+
+// ---------------------------------------------------------------------------
+// 8C. Limiter Scenarios (Nominal, Dense, Extreme - Section 31-34)
+// ---------------------------------------------------------------------------
+static int run_limiter_scenarios(void) {
+    const int sr = 44100;
+    const int total_samples = 10 * sr;
+    const int block_size = 64;
+
+    struct {
+        const char* name;
+        float mem;
+        float bloom;
+        float dens;
+        float warmth;
+        float shimmer;
+        float rev;
+    } scens[] = {
+        {"Nominal", 0.50f, 0.50f, 15.0f, 0.0f, 0.0f, 0.0f},
+        {"Dense",   0.80f, 0.80f, 40.0f, 0.0f, 0.0f, 0.0f},
+        {"Extreme", 1.00f, 1.00f, 50.0f, 0.90f, 0.85f, 0.50f}
+    };
+
+    printf("LIMITER_SCENARIOS_CSV\n");
+    printf("Scenario,FinalLimMaxGR_dB,FinalLimActivePct,WetLimMaxGR_dB,WetLimActivePct,WetNormMin,WetNormMedian\n");
+
+    for (size_t s = 0; s < 3; s++) {
+        BubbleEngineConfig_t config;
+        bubble_engine_default_config(&config);
+        config.sample_rate = (float)sr;
+        config.memory_mix = scens[s].mem;
+        config.sustain_diffusion_enable = 1;
+        config.sustain_diffusion_amount = scens[s].bloom;
+        config.density_sustain = scens[s].dens;
+        config.wet_clip_amount = scens[s].warmth;
+        config.shimmer_amount = scens[s].shimmer;
+        if (scens[s].shimmer > 0.0f) config.pitch_mode = BUBBLE_PITCH_MODE_SHIMMER;
+        config.reverse_probability = scens[s].rev;
+        config.rng_seed = 999u;
+
+        BubbleEngine_t engine;
+        SoundBubbles_Init(&engine, g_delay, &config);
+        SoundBubbles_SetFeedbackEnabled(&engine, true);
+        engine.master_dry_gain = 0.55f;
+        engine.master_wet_gain = 0.45f;
+        SoundBubbles_ResetLimiterHierarchyMetrics(&engine);
+
+        float in[64], out_l[64], out_r[64];
+        for (int i = 0; i < total_samples; i += block_size) {
+            for (int k = 0; k < block_size; k++) {
+                float t = (float)(i + k) / (float)sr;
+                if (s == 0) {
+                    // Nominal: single sine at -6 dBFS
+                    in[k] = (t < 1.0f) ? 0.50f * sinf(2.0f * M_PI_F * 440.0f * t) : 0.0f;
+                } else if (s == 1) {
+                    // Dense: single sine at -3 dBFS
+                    in[k] = (t < 1.0f) ? 0.70f * sinf(2.0f * M_PI_F * 440.0f * t) : 0.0f;
+                } else {
+                    // Extreme stress: dual sine exceeding 0 dBFS (peak 1.80)
+                    in[k] = (t < 1.0f) ? 0.90f * (sinf(2.0f * M_PI_F * 440.0f * t) + sinf(2.0f * M_PI_F * 880.0f * t)) : 0.0f;
+                }
+            }
+            SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+        }
+
+        SoundBubblesLimiterHierarchyMetrics_t lm;
+        memset(&lm, 0, sizeof(lm));
+        SoundBubbles_GetLimiterHierarchyMetrics(&engine, &lm);
+
+        printf("%s,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f\n",
+               scens[s].name, lm.final_limiter_max_gr_db, lm.final_limiter_active_fraction * 100.0f,
+               lm.wet_limiter_max_gr_db, lm.wet_limiter_active_fraction * 100.0f,
+               lm.wet_norm_gain_min, lm.wet_norm_gain_median);
     }
     return 0;
 }
@@ -1005,7 +1293,38 @@ static int run_tail_decay(void) {
 static int run_block_invariance(void) {
     const int block_sizes[] = {32, 64, 127, 256, 512, 2048};
     printf("BLOCK_INVARIANCE_CSV\n");
-    printf("BlockSize,RMS_dB,Peak_dB,Centroid_Hz\n");
+    printf("BlockSize,RMS_dB,Peak_dB,Centroid_Hz,MaxDiffVs64,RMSDiffVs64\n");
+
+    const int sr = 44100;
+    const int total_samples = 2 * sr;
+    float* ref_64 = (float*)malloc(total_samples * sizeof(float));
+
+    // Reference with block size 64
+    {
+        BubbleEngineConfig_t config;
+        bubble_engine_default_config(&config);
+        config.sample_rate = 44100.0f;
+        config.memory_mix = 0.70f;
+        config.sustain_diffusion_enable = 1;
+        config.sustain_diffusion_amount = 0.70f;
+        config.rng_seed = 42u;
+
+        BubbleEngine_t engine;
+        SoundBubbles_Init(&engine, g_delay, &config);
+        float in[64], out_l[64], out_r[64];
+        int accum_idx = 0;
+        for (int i = 0; i < total_samples; i += 64) {
+            int cur_bs = (i + 64 <= total_samples) ? 64 : (total_samples - i);
+            for (int k = 0; k < cur_bs; k++) {
+                float t = (float)(i + k) / (float)sr;
+                in[k] = (t < 0.3f) ? 0.85f * sinf(2.0f * M_PI_F * 440.0f * t) : 0.0f;
+            }
+            SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, cur_bs);
+            for (int k = 0; k < cur_bs; k++) {
+                ref_64[accum_idx++] = 0.5f * (out_l[k] + out_r[k]);
+            }
+        }
+    }
 
     for (int b = 0; b < 6; b++) {
         int bs = block_sizes[b];
@@ -1020,8 +1339,6 @@ static int run_block_invariance(void) {
         BubbleEngine_t engine;
         SoundBubbles_Init(&engine, g_delay, &config);
 
-        const int sr = 44100;
-        const int total_samples = 2 * sr;
         float* in = (float*)malloc(bs * sizeof(float));
         float* out_l = (float*)malloc(bs * sizeof(float));
         float* out_r = (float*)malloc(bs * sizeof(float));
@@ -1044,18 +1361,28 @@ static int run_block_invariance(void) {
         float peak = calc_peak(accum, total_samples);
         float cent = calc_centroid(accum, total_samples, (float)sr);
 
-        printf("%d,%.2f,%.2f,%.1f\n", bs, to_db(rms), to_db(peak), cent);
+        float max_diff = 0.0f;
+        double sum_sq_diff = 0.0;
+        for (int j = 0; j < total_samples; j++) {
+            float d = fabsf(accum[j] - ref_64[j]);
+            if (d > max_diff) max_diff = d;
+            sum_sq_diff += (double)d * (double)d;
+        }
+        float rms_diff = (float)sqrt(sum_sq_diff / (double)total_samples);
+
+        printf("%d,%.2f,%.2f,%.1f,%.6f,%.6f\n", bs, to_db(rms), to_db(peak), cent, max_diff, rms_diff);
 
         free(in);
         free(out_l);
         free(out_r);
         free(accum);
     }
+    free(ref_64);
     return 0;
 }
 
 // ---------------------------------------------------------------------------
-// 11. CPU Benchmark
+// 11. CPU Benchmark & Microbenchmarks (Sections 29-30)
 // ---------------------------------------------------------------------------
 static int run_cpu_benchmark(void) {
     const float sample_rates[] = {44100.0f, 48000.0f, 96000.0f};
@@ -1080,7 +1407,7 @@ static int run_cpu_benchmark(void) {
             SoundBubbles_Init(&engine, g_delay, &config);
             SoundBubbles_SetFeedbackEnabled(&engine, true);
 
-            const int test_samples = (int)(2.0f * sr);
+            const int test_samples = (int)(6.0f * sr);
             const int block_size = 64;
             float in[64], out_l[64], out_r[64];
 
@@ -1094,11 +1421,91 @@ static int run_cpu_benchmark(void) {
             }
             clock_t end = clock();
             double time_ms = (double)(end - start) * 1000.0 / (double)CLOCKS_PER_SEC;
-            double audio_time_ms = 2000.0;
+            double audio_time_ms = 6000.0;
             double speed_x = (time_ms > 0.0) ? (audio_time_ms / time_ms) : 999.0;
 
             printf("%.0f,%d,%.2f,%.1f\n", sr, voices, time_ms, speed_x);
         }
+    }
+
+    printf("CPU_STATES_CSV\n");
+    printf("State,TimeMs,SpeedX\n");
+    const float sr = 48000.0f;
+    const int test_samples = (int)(2.0f * sr);
+    const int block_size = 64;
+    float in[64], out_l[64], out_r[64];
+
+    // 1. Active input
+    {
+        BubbleEngineConfig_t config;
+        bubble_engine_default_config(&config);
+        config.sample_rate = sr;
+        config.memory_mix = 0.70f;
+        config.sustain_diffusion_enable = 1;
+        config.sustain_diffusion_amount = 0.70f;
+        BubbleEngine_t engine;
+        SoundBubbles_Init(&engine, g_delay, &config);
+        clock_t st = clock();
+        for (int i = 0; i < test_samples; i += block_size) {
+            for (int k = 0; k < block_size; k++) {
+                float t = (float)(i + k) / sr;
+                in[k] = 0.85f * sinf(2.0f * M_PI_F * 440.0f * t);
+            }
+            SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+        }
+        clock_t ed = clock();
+        double ms = (double)(ed - st) * 1000.0 / (double)CLOCKS_PER_SEC;
+        double audio_ms = (double)test_samples * 1000.0 / (double)sr;
+        printf("Active,%.2f,%.1f\n", ms, (ms > 0.0) ? (audio_ms / ms) : 999.0);
+    }
+
+    // 2. Late Tail
+    {
+        BubbleEngineConfig_t config;
+        bubble_engine_default_config(&config);
+        config.sample_rate = sr;
+        config.memory_mix = 0.70f;
+        config.sustain_diffusion_enable = 1;
+        config.sustain_diffusion_amount = 0.70f;
+        BubbleEngine_t engine;
+        SoundBubbles_Init(&engine, g_delay, &config);
+        for (int i = 0; i < (int)(0.5f * sr); i += block_size) {
+            for (int k = 0; k < block_size; k++) {
+                float t = (float)(i + k) / sr;
+                in[k] = 0.85f * sinf(2.0f * M_PI_F * 440.0f * t);
+            }
+            SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+        }
+        memset(in, 0, sizeof(in));
+        clock_t st = clock();
+        for (int i = 0; i < test_samples; i += block_size) {
+            SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+        }
+        clock_t ed = clock();
+        double ms = (double)(ed - st) * 1000.0 / (double)CLOCKS_PER_SEC;
+        double audio_ms = (double)test_samples * 1000.0 / (double)sr;
+        printf("Tail,%.2f,%.1f\n", ms, (ms > 0.0) ? (audio_ms / ms) : 999.0);
+    }
+
+    // 3. Fully Idle (0 input from beginning)
+    {
+        BubbleEngineConfig_t config;
+        bubble_engine_default_config(&config);
+        config.sample_rate = sr;
+        config.memory_mix = 0.70f;
+        config.sustain_diffusion_enable = 1;
+        config.sustain_diffusion_amount = 0.70f;
+        BubbleEngine_t engine;
+        SoundBubbles_Init(&engine, g_delay, &config);
+        memset(in, 0, sizeof(in));
+        clock_t st = clock();
+        for (int i = 0; i < test_samples; i += block_size) {
+            SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+        }
+        clock_t ed = clock();
+        double ms = (double)(ed - st) * 1000.0 / (double)CLOCKS_PER_SEC;
+        double audio_ms = (double)test_samples * 1000.0 / (double)sr;
+        printf("Idle,%.2f,%.1f\n", ms, (ms > 0.0) ? (audio_ms / ms) : 999.0);
     }
     return 0;
 }
@@ -1108,7 +1515,7 @@ static int run_cpu_benchmark(void) {
 // ---------------------------------------------------------------------------
 int main(int argc, char** argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <attack_parity|transition_discontinuity|tail_evolution|periodicity|runaway_stress_60|runaway_stress_120|metallic_resonance|pitch_preservation|memory_bloom_sweep|silence_startup|tail_decay|block_invariance|cpu_benchmark>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <attack_parity|transition_discontinuity|tail_evolution|normalized_tail_evolution|periodicity|runaway_stress_60|runaway_stress_120|metallic_resonance|pitch_preservation|memory_bloom_sweep|diffuser_sanity|limiter_scenarios|silence_startup|tail_decay|block_invariance|cpu_benchmark>\n", argv[0]);
         return 1;
     }
 
@@ -1116,12 +1523,15 @@ int main(int argc, char** argv) {
     if (strcmp(mode, "attack_parity") == 0) return run_attack_parity(argc, argv);
     if (strcmp(mode, "transition_discontinuity") == 0) return run_transition_discontinuity();
     if (strcmp(mode, "tail_evolution") == 0) return run_tail_evolution();
+    if (strcmp(mode, "normalized_tail_evolution") == 0) return run_normalized_tail_evolution();
     if (strcmp(mode, "periodicity") == 0) return run_periodicity();
     if (strcmp(mode, "runaway_stress_60") == 0) return run_runaway_stress(60);
     if (strcmp(mode, "runaway_stress_120") == 0) return run_runaway_stress(120);
     if (strcmp(mode, "metallic_resonance") == 0) return run_metallic_resonance();
     if (strcmp(mode, "pitch_preservation") == 0) return run_pitch_preservation();
     if (strcmp(mode, "memory_bloom_sweep") == 0) return run_memory_bloom_sweep();
+    if (strcmp(mode, "diffuser_sanity") == 0) return run_diffuser_sanity();
+    if (strcmp(mode, "limiter_scenarios") == 0) return run_limiter_scenarios();
     if (strcmp(mode, "silence_startup") == 0) return run_silence_startup();
     if (strcmp(mode, "tail_decay") == 0) return run_tail_decay();
     if (strcmp(mode, "block_invariance") == 0) return run_block_invariance();

@@ -171,7 +171,14 @@ typedef BubbleMemoryTier BubbleMemoryTier_t;
 #define BUBBLES_WET_LIMITER_RELEASE_MS      (60.0f)
 
 // --- M5B Sparse Late-Tail Diffusion Architecture ---
-#define BUBBLES_LATE_DIFFUSER_LINES         3
+#ifndef BUBBLES_LATE_DIFFUSER_LINES
+  #if defined(BUBBLES_PROFILE_MCU_SAFE)
+    #define BUBBLES_LATE_DIFFUSER_LINES         2
+  #else
+    #define BUBBLES_LATE_DIFFUSER_LINES         3
+  #endif
+#endif
+
 #define BUBBLES_LATE_DIFFUSER_DELAY_0_MS    47.3f
 #define BUBBLES_LATE_DIFFUSER_DELAY_1_MS    107.1f
 #define BUBBLES_LATE_DIFFUSER_DELAY_2_MS    181.9f
@@ -179,7 +186,12 @@ typedef BubbleMemoryTier BubbleMemoryTier_t;
 #define BUBBLES_LATE_DIFFUSER_CAPACITY_0    4800
 #define BUBBLES_LATE_DIFFUSER_CAPACITY_1    10800
 #define BUBBLES_LATE_DIFFUSER_CAPACITY_2    18500
+
+#if BUBBLES_LATE_DIFFUSER_LINES == 2
+#define BUBBLES_LATE_DIFFUSER_TOTAL_CAPACITY (BUBBLES_LATE_DIFFUSER_CAPACITY_0 + BUBBLES_LATE_DIFFUSER_CAPACITY_1)
+#else
 #define BUBBLES_LATE_DIFFUSER_TOTAL_CAPACITY (BUBBLES_LATE_DIFFUSER_CAPACITY_0 + BUBBLES_LATE_DIFFUSER_CAPACITY_1 + BUBBLES_LATE_DIFFUSER_CAPACITY_2)
+#endif
 
 #define BUBBLES_LATE_DIFFUSER_HPF_HZ        150.0f
 #define BUBBLES_LATE_DIFFUSER_LPF_HZ        6000.0f
@@ -189,6 +201,33 @@ typedef BubbleMemoryTier BubbleMemoryTier_t;
 #define BUBBLES_LATE_DIFFUSER_SEND_CEILING  0.25f
 #define BUBBLES_LATE_DIFFUSER_RETURN_CEILING 0.35f
 #define BUBBLES_LATE_DIFFUSER_ENERGY_SAFETY_TH 0.30f
+
+typedef struct {
+    float send_mean;
+    float send_max;
+    float return_rms;
+    float return_peak;
+    float internal_energy_mean;
+    float internal_energy_max;
+    float loop_gain_mean;
+    float loop_gain_max;
+    float active_fraction;
+    float main_wet_rms;
+    float diffuser_return_rms;
+    float diffuser_main_ratio_db;
+} SoundBubblesDiffuserWindowMetrics_t;
+
+typedef struct {
+    float final_limiter_max_gr_db;
+    float final_limiter_p95_gr_db;
+    float final_limiter_p99_gr_db;
+    float final_limiter_active_fraction;
+    float wet_limiter_max_gr_db;
+    float wet_limiter_active_fraction;
+    float wet_norm_gain_min;
+    float wet_norm_gain_median;
+    float wet_norm_time_below_0_8;
+} SoundBubblesLimiterHierarchyMetrics_t;
 
 // --- Enums ---
 
@@ -722,11 +761,18 @@ typedef struct {
     // M5B Sparse Late-Tail Diffuser
     BubbleRingSample_t late_diffuser_buf0[BUBBLES_LATE_DIFFUSER_CAPACITY_0];
     BubbleRingSample_t late_diffuser_buf1[BUBBLES_LATE_DIFFUSER_CAPACITY_1];
+#if BUBBLES_LATE_DIFFUSER_LINES >= 3
     BubbleRingSample_t late_diffuser_buf2[BUBBLES_LATE_DIFFUSER_CAPACITY_2];
+#endif
     int32_t late_diffuser_len[BUBBLES_LATE_DIFFUSER_LINES];
     int32_t late_diffuser_write_idx[BUBBLES_LATE_DIFFUSER_LINES];
     Filter1Pole_t late_diffuser_hpf[BUBBLES_LATE_DIFFUSER_LINES];
     Filter1Pole_t late_diffuser_lpf[BUBBLES_LATE_DIFFUSER_LINES];
+    bool late_diffuser_active;
+    float late_diffuser_energy_decay_coef;
+    float late_diffuser_env_att_coef;
+    float late_diffuser_env_rel_coef;
+    float late_diffuser_fast_rel_coef;
     float late_diffuser_amount;
     float late_diffuser_target;
     float late_diffuser_send_gain;
@@ -741,6 +787,30 @@ typedef struct {
     float metrics_diffuser_return_peak_accum;
     float metrics_diffuser_active_samples_accum;
     int32_t metrics_diffuser_samples_accum;
+
+    // M5B.1 Diffuser Window Accumulators
+    double win_diffuser_send_sum;
+    float win_diffuser_send_max;
+    double win_diffuser_return_energy_sum;
+    float win_diffuser_return_peak;
+    double win_diffuser_energy_sum;
+    float win_diffuser_energy_max;
+    double win_diffuser_loop_gain_sum;
+    float win_diffuser_loop_gain_max;
+    int32_t win_diffuser_active_blocks;
+    int32_t win_diffuser_total_blocks;
+    int64_t win_diffuser_total_samples;
+    double win_main_wet_energy_sum;
+
+    // M5B.1 Limiter Hierarchy Window Accumulators
+    float win_final_limiter_max_gr_db;
+    int32_t win_final_limiter_active_blocks;
+    float win_wet_limiter_max_gr_db;
+    int32_t win_wet_limiter_active_blocks;
+    float win_wet_norm_gain_min;
+    double win_wet_norm_gain_sum;
+    int32_t win_wet_norm_below_0_8_blocks;
+    int32_t win_limiter_total_blocks;
 
     // Optional per-control-block metrics hook (for offline validation/telemetry)
     SoundBubblesMetricsCallback_t metrics_callback;
@@ -882,6 +952,13 @@ float SoundBubbles_GetLateDiffuserReturnPeak(const SoundBubblesEngine_t* engine)
 float SoundBubbles_GetLateDiffuserFeedbackEnergy(const SoundBubblesEngine_t* engine);
 float SoundBubbles_GetLateDiffuserMaxLoopGain(const SoundBubblesEngine_t* engine);
 float SoundBubbles_GetLateDiffuserAmount(const SoundBubblesEngine_t* engine);
+
+// M5B.1 Window Telemetry Helpers
+void SoundBubbles_ResetDiffuserWindowMetrics(SoundBubblesEngine_t* engine);
+void SoundBubbles_GetDiffuserWindowMetrics(const SoundBubblesEngine_t* engine, SoundBubblesDiffuserWindowMetrics_t* out);
+
+void SoundBubbles_ResetLimiterHierarchyMetrics(SoundBubblesEngine_t* engine);
+void SoundBubbles_GetLimiterHierarchyMetrics(const SoundBubblesEngine_t* engine, SoundBubblesLimiterHierarchyMetrics_t* out);
 
 // Single source of truth for runtime tier ranges (Section 17-21)
 void SoundBubbles_ResolveMemoryTierRangeSamples(const SoundBubblesEngine_t* engine,

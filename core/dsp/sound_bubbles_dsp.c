@@ -433,7 +433,6 @@ static inline float Diffuser_ReadSample(const BubbleRingSample_t* buf, int32_t i
 
 static inline void Diffuser_WriteSample(BubbleRingSample_t* buf, int32_t idx, float val) {
 #if BUBBLES_RING_FLOAT
-    if (fabsf(val) < 1.0e-15f) val = 0.0f;
     buf[idx] = val;
 #else
     float clamped = fmaxf(-1.0f, fminf(1.0f, val));
@@ -578,28 +577,36 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, BubbleRingSample_t* delay_b
     // M5B Sparse Late-Tail Diffuser Initialization
     int32_t len0 = (int32_t)lroundf(BUBBLES_LATE_DIFFUSER_DELAY_0_MS * 0.001f * engine->config.sample_rate);
     int32_t len1 = (int32_t)lroundf(BUBBLES_LATE_DIFFUSER_DELAY_1_MS * 0.001f * engine->config.sample_rate);
-    int32_t len2 = (int32_t)lroundf(BUBBLES_LATE_DIFFUSER_DELAY_2_MS * 0.001f * engine->config.sample_rate);
     if (len0 < 16) len0 = 16;
     if (len0 > BUBBLES_LATE_DIFFUSER_CAPACITY_0) len0 = BUBBLES_LATE_DIFFUSER_CAPACITY_0;
     if (len1 < 16) len1 = 16;
     if (len1 > BUBBLES_LATE_DIFFUSER_CAPACITY_1) len1 = BUBBLES_LATE_DIFFUSER_CAPACITY_1;
-    if (len2 < 16) len2 = 16;
-    if (len2 > BUBBLES_LATE_DIFFUSER_CAPACITY_2) len2 = BUBBLES_LATE_DIFFUSER_CAPACITY_2;
     engine->late_diffuser_len[0] = len0;
     engine->late_diffuser_len[1] = len1;
-    engine->late_diffuser_len[2] = len2;
-
     memset(engine->late_diffuser_buf0, 0, sizeof(engine->late_diffuser_buf0));
     memset(engine->late_diffuser_buf1, 0, sizeof(engine->late_diffuser_buf1));
-    memset(engine->late_diffuser_buf2, 0, sizeof(engine->late_diffuser_buf2));
     engine->late_diffuser_write_idx[0] = 0;
     engine->late_diffuser_write_idx[1] = 0;
+
+#if BUBBLES_LATE_DIFFUSER_LINES >= 3
+    int32_t len2 = (int32_t)lroundf(BUBBLES_LATE_DIFFUSER_DELAY_2_MS * 0.001f * engine->config.sample_rate);
+    if (len2 < 16) len2 = 16;
+    if (len2 > BUBBLES_LATE_DIFFUSER_CAPACITY_2) len2 = BUBBLES_LATE_DIFFUSER_CAPACITY_2;
+    engine->late_diffuser_len[2] = len2;
+    memset(engine->late_diffuser_buf2, 0, sizeof(engine->late_diffuser_buf2));
     engine->late_diffuser_write_idx[2] = 0;
+#endif
 
     for (int k = 0; k < BUBBLES_LATE_DIFFUSER_LINES; k++) {
         CalculateFilterCoeffsLPF(&engine->late_diffuser_lpf[k], BUBBLES_LATE_DIFFUSER_LPF_HZ, engine->config.sample_rate);
         CalculateFilterCoeffsLPF(&engine->late_diffuser_hpf[k], BUBBLES_LATE_DIFFUSER_HPF_HZ, engine->config.sample_rate);
     }
+    engine->late_diffuser_active = false;
+    float dt_blocks = (float)BUBBLES_BLOCK_SIZE / engine->config.sample_rate;
+    engine->late_diffuser_energy_decay_coef = 1.0f - expf(-1.0f / (engine->config.sample_rate * 0.300f));
+    engine->late_diffuser_env_att_coef = 1.0f - expf(-dt_blocks / 0.600f);
+    engine->late_diffuser_env_rel_coef = 1.0f - expf(-dt_blocks / 2.000f);
+    engine->late_diffuser_fast_rel_coef = 1.0f - expf(-dt_blocks / 0.040f);
     engine->late_diffuser_amount = 0.0f;
     engine->late_diffuser_target = 0.0f;
     engine->late_diffuser_send_gain = 0.0f;
@@ -619,6 +626,9 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, BubbleRingSample_t* delay_b
     engine->metrics_last_block.late_diffuser_feedback_energy = 0.0f;
     engine->metrics_last_block.late_diffuser_max_loop_gain = BUBBLES_LATE_DIFFUSER_FEEDBACK_MIN;
     engine->metrics_last_block.late_diffuser_active_fraction = 0.0f;
+
+    SoundBubbles_ResetDiffuserWindowMetrics(engine);
+    SoundBubbles_ResetLimiterHierarchyMetrics(engine);
 
     SoundBubbles_ResetMotionPhase(engine);
     engine->pending_spawn_head = 0;
@@ -753,6 +763,35 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
     if (discrete_freeze_lock) {
         engine->smoothed_freeze = 1.0f;
     }
+
+#if defined(BUBBLES_LATE_DIFFUSER_LINES) && (BUBBLES_LATE_DIFFUSER_LINES == 2)
+    int32_t diff_idx0 = engine->late_diffuser_write_idx[0];
+    int32_t diff_idx1 = engine->late_diffuser_write_idx[1];
+#else
+    int32_t diff_idx0 = engine->late_diffuser_write_idx[0];
+    int32_t diff_idx1 = engine->late_diffuser_write_idx[1];
+    int32_t diff_idx2 = engine->late_diffuser_write_idx[2];
+#endif
+
+    float diff_hp_b0 = engine->late_diffuser_hpf[0].b0;
+    float diff_hp_a1 = engine->late_diffuser_hpf[0].a1;
+    float diff_lp_b0 = engine->late_diffuser_lpf[0].b0;
+    float diff_lp_a1 = engine->late_diffuser_lpf[0].a1;
+
+    float diff_hp0_z1 = engine->late_diffuser_hpf[0].z1;
+    float diff_lp0_z1 = engine->late_diffuser_lpf[0].z1;
+    float diff_hp1_z1 = engine->late_diffuser_hpf[1].z1;
+    float diff_lp1_z1 = engine->late_diffuser_lpf[1].z1;
+#if !defined(BUBBLES_LATE_DIFFUSER_LINES) || (BUBBLES_LATE_DIFFUSER_LINES >= 3)
+    float diff_hp2_z1 = engine->late_diffuser_hpf[2].z1;
+    float diff_lp2_z1 = engine->late_diffuser_lpf[2].z1;
+#endif
+
+    float m_diff_peak = engine->metrics_diffuser_return_peak_accum;
+    float m_diff_ret_energy = 0.0f;
+    float m_diff_send_energy = 0.0f;
+    float m_diff_active_samples = 0.0f;
+    double m_win_main_wet_energy = 0.0;
 
     for (int i = 0; i < num_samples; i++) {
         if (i == 0) {
@@ -1004,17 +1043,64 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
         float diff_ret_l = 0.0f;
         float diff_ret_r = 0.0f;
 
-        if (engine->late_diffuser_send_gain > 1.0e-5f || engine->late_diffuser_amount > 1.0e-5f || engine->late_diffuser_internal_energy > 1.0e-5f) {
-            // Equal-power mono send from granular wet bus
+        float main_wet_energy = 0.5f * (wet_sum_l * wet_sum_l + wet_sum_r * wet_sum_r);
+        m_win_main_wet_energy += (double)main_wet_energy;
+
+        if (engine->late_diffuser_active) {
             float wet_mono = (wet_sum_l + wet_sum_r) * 0.70710678f;
             diff_send = wet_mono * engine->late_diffuser_send_gain;
 
-            // Read from circular delay lines
-            float y0 = Diffuser_ReadSample(engine->late_diffuser_buf0, engine->late_diffuser_write_idx[0]);
-            float y1 = Diffuser_ReadSample(engine->late_diffuser_buf1, engine->late_diffuser_write_idx[1]);
-            float y2 = Diffuser_ReadSample(engine->late_diffuser_buf2, engine->late_diffuser_write_idx[2]);
+#if BUBBLES_LATE_DIFFUSER_LINES == 2
+            float y0 = Diffuser_ReadSample(engine->late_diffuser_buf0, diff_idx0);
+            float y1 = Diffuser_ReadSample(engine->late_diffuser_buf1, diff_idx1);
 
-            // Orthogonal sparse mixing matrix (energy-preserving circulation)
+            const float a = 0.70710678f;
+            float v0 = a * (y0 + y1);
+            float v1 = a * (y0 - y1);
+            float g_fb = engine->late_diffuser_loop_gain;
+
+            float in0 = diff_send + g_fb * v0;
+            float in1 = diff_send * 0.7071f + g_fb * v1;
+
+            float lpf_h0 = (in0 * diff_hp_b0) + (diff_hp0_z1 * diff_hp_a1);
+            diff_hp0_z1 = lpf_h0;
+            float hp0 = in0 - lpf_h0;
+            float lp0 = (hp0 * diff_lp_b0) + (diff_lp0_z1 * diff_lp_a1);
+            diff_lp0_z1 = lp0;
+
+            float lpf_h1 = (in1 * diff_hp_b0) + (diff_hp1_z1 * diff_hp_a1);
+            diff_hp1_z1 = lpf_h1;
+            float hp1 = in1 - lpf_h1;
+            float lp1 = (hp1 * diff_lp_b0) + (diff_lp1_z1 * diff_lp_a1);
+            diff_lp1_z1 = lp1;
+
+            float c0 = (lp0 > 1.0f) ? 1.0f : ((lp0 < -1.0f) ? -1.0f : lp0);
+            float sat0 = c0 - 0.04f * (c0 * c0 * c0);
+            float c1 = (lp1 > 1.0f) ? 1.0f : ((lp1 < -1.0f) ? -1.0f : lp1);
+            float sat1 = c1 - 0.04f * (c1 * c1 * c1);
+
+            Diffuser_WriteSample(engine->late_diffuser_buf0, diff_idx0, sat0);
+            Diffuser_WriteSample(engine->late_diffuser_buf1, diff_idx1, sat1);
+
+            if (++diff_idx0 >= engine->late_diffuser_len[0]) diff_idx0 = 0;
+            if (++diff_idx1 >= engine->late_diffuser_len[1]) diff_idx1 = 0;
+
+            float mid_energy = a * (y0 + y1);
+            float side_energy = a * (y0 - y1);
+            float width_scale = 0.85f + 0.30f * Clamp01(engine->config.stereo_width);
+            float ret_raw_l = mid_energy + side_energy * width_scale;
+            float ret_raw_r = mid_energy - side_energy * width_scale;
+
+            diff_ret_l = ret_raw_l * engine->late_diffuser_return_gain;
+            diff_ret_r = ret_raw_r * engine->late_diffuser_return_gain;
+
+            float sum_sq = 0.5f * (y0 * y0 + y1 * y1);
+            engine->late_diffuser_internal_energy += (sum_sq - engine->late_diffuser_internal_energy) * engine->late_diffuser_energy_decay_coef;
+#else
+            float y0 = Diffuser_ReadSample(engine->late_diffuser_buf0, diff_idx0);
+            float y1 = Diffuser_ReadSample(engine->late_diffuser_buf1, diff_idx1);
+            float y2 = Diffuser_ReadSample(engine->late_diffuser_buf2, diff_idx2);
+
             const float a = 0.70710678f;
             float v0 = a * (y1 + y2);
             float v1 = a * (y0 - y2);
@@ -1022,35 +1108,43 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
 
             float g_fb = engine->late_diffuser_loop_gain;
 
-            // Sum inputs for each line: send + circulating feedback
             float in0 = diff_send + g_fb * v0;
             float in1 = diff_send * 0.7071f + g_fb * v1;
             float in2 = diff_send * 0.5000f + g_fb * v2;
 
-            // Internal conditioning: HPF -> LPF -> mild soft-clip
-            float hp0 = Filter1Pole_ProcessHPF(&engine->late_diffuser_hpf[0], in0);
-            float lp0 = Filter1Pole_ProcessLPF(&engine->late_diffuser_lpf[0], hp0);
-            float sat0 = SoftClip(lp0, 0.12f);
+            float lpf_h0 = (in0 * diff_hp_b0) + (diff_hp0_z1 * diff_hp_a1);
+            diff_hp0_z1 = lpf_h0;
+            float hp0 = in0 - lpf_h0;
+            float lp0 = (hp0 * diff_lp_b0) + (diff_lp0_z1 * diff_lp_a1);
+            diff_lp0_z1 = lp0;
 
-            float hp1 = Filter1Pole_ProcessHPF(&engine->late_diffuser_hpf[1], in1);
-            float lp1 = Filter1Pole_ProcessLPF(&engine->late_diffuser_lpf[1], hp1);
-            float sat1 = SoftClip(lp1, 0.12f);
+            float lpf_h1 = (in1 * diff_hp_b0) + (diff_hp1_z1 * diff_hp_a1);
+            diff_hp1_z1 = lpf_h1;
+            float hp1 = in1 - lpf_h1;
+            float lp1 = (hp1 * diff_lp_b0) + (diff_lp1_z1 * diff_lp_a1);
+            diff_lp1_z1 = lp1;
 
-            float hp2 = Filter1Pole_ProcessHPF(&engine->late_diffuser_hpf[2], in2);
-            float lp2 = Filter1Pole_ProcessLPF(&engine->late_diffuser_lpf[2], hp2);
-            float sat2 = SoftClip(lp2, 0.12f);
+            float lpf_h2 = (in2 * diff_hp_b0) + (diff_hp2_z1 * diff_hp_a1);
+            diff_hp2_z1 = lpf_h2;
+            float hp2 = in2 - lpf_h2;
+            float lp2 = (hp2 * diff_lp_b0) + (diff_lp2_z1 * diff_lp_a1);
+            diff_lp2_z1 = lp2;
 
-            // Write back to circular delay lines
-            Diffuser_WriteSample(engine->late_diffuser_buf0, engine->late_diffuser_write_idx[0], sat0);
-            Diffuser_WriteSample(engine->late_diffuser_buf1, engine->late_diffuser_write_idx[1], sat1);
-            Diffuser_WriteSample(engine->late_diffuser_buf2, engine->late_diffuser_write_idx[2], sat2);
+            float c0 = (lp0 > 1.0f) ? 1.0f : ((lp0 < -1.0f) ? -1.0f : lp0);
+            float sat0 = c0 - 0.04f * (c0 * c0 * c0);
+            float c1 = (lp1 > 1.0f) ? 1.0f : ((lp1 < -1.0f) ? -1.0f : lp1);
+            float sat1 = c1 - 0.04f * (c1 * c1 * c1);
+            float c2 = (lp2 > 1.0f) ? 1.0f : ((lp2 < -1.0f) ? -1.0f : lp2);
+            float sat2 = c2 - 0.04f * (c2 * c2 * c2);
 
-            // Advance write pointers with wrap
-            if (++engine->late_diffuser_write_idx[0] >= engine->late_diffuser_len[0]) engine->late_diffuser_write_idx[0] = 0;
-            if (++engine->late_diffuser_write_idx[1] >= engine->late_diffuser_len[1]) engine->late_diffuser_write_idx[1] = 0;
-            if (++engine->late_diffuser_write_idx[2] >= engine->late_diffuser_len[2]) engine->late_diffuser_write_idx[2] = 0;
+            Diffuser_WriteSample(engine->late_diffuser_buf0, diff_idx0, sat0);
+            Diffuser_WriteSample(engine->late_diffuser_buf1, diff_idx1, sat1);
+            Diffuser_WriteSample(engine->late_diffuser_buf2, diff_idx2, sat2);
 
-            // Mid-Side inspired stereo return
+            if (++diff_idx0 >= engine->late_diffuser_len[0]) diff_idx0 = 0;
+            if (++diff_idx1 >= engine->late_diffuser_len[1]) diff_idx1 = 0;
+            if (++diff_idx2 >= engine->late_diffuser_len[2]) diff_idx2 = 0;
+
             float mid_energy = 0.57735f * (y0 + y1 + y2);
             float side_energy = 0.70710678f * (y0 - y1);
             float width_scale = 0.85f + 0.30f * Clamp01(engine->config.stereo_width);
@@ -1060,10 +1154,20 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
             diff_ret_l = ret_raw_l * engine->late_diffuser_return_gain;
             diff_ret_r = ret_raw_r * engine->late_diffuser_return_gain;
 
-            // Internal energy follower (decay ~300ms)
             float sum_sq = 0.333333f * (y0 * y0 + y1 * y1 + y2 * y2);
-            float e_rate = 1.0f - expf(-1.0f / (sr * 0.300f));
-            engine->late_diffuser_internal_energy += (sum_sq - engine->late_diffuser_internal_energy) * e_rate;
+            engine->late_diffuser_internal_energy += (sum_sq - engine->late_diffuser_internal_energy) * engine->late_diffuser_energy_decay_coef;
+#endif
+
+            float al = fabsf(diff_ret_l);
+            float ar = fabsf(diff_ret_r);
+            float diff_peak = (al > ar) ? al : ar;
+            float diff_energy = 0.5f * (diff_ret_l * diff_ret_l + diff_ret_r * diff_ret_r);
+            if (diff_peak > m_diff_peak) {
+                m_diff_peak = diff_peak;
+            }
+            m_diff_ret_energy += diff_energy;
+            m_diff_send_energy += diff_send * diff_send;
+            m_diff_active_samples += 1.0f;
         }
 
         engine->late_diffuser_return_l = diff_ret_l;
@@ -1072,19 +1176,6 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
         // Add late-tail return to wet bus PRE-NORMALIZATION
         wet_sum_l += diff_ret_l;
         wet_sum_r += diff_ret_r;
-
-        // Telemetry accumulation for diffuser
-        float diff_peak = fmaxf(fabsf(diff_ret_l), fabsf(diff_ret_r));
-        float diff_energy = 0.5f * (diff_ret_l * diff_ret_l + diff_ret_r * diff_ret_r);
-        if (diff_peak > engine->metrics_diffuser_return_peak_accum) {
-            engine->metrics_diffuser_return_peak_accum = diff_peak;
-        }
-        engine->metrics_diffuser_return_energy_accum += diff_energy;
-        engine->metrics_diffuser_send_accum += diff_send * diff_send;
-        if (engine->late_diffuser_amount > 0.05f) {
-            engine->metrics_diffuser_active_samples_accum += 1.0f;
-        }
-        engine->metrics_diffuser_samples_accum++;
 
         // --- M4D Wet Dynamics Architecture ---
         // 1. Stereo energy follower & telemetry (pre-norm)
@@ -1260,6 +1351,41 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
             engine->metrics_last_block.late_diffuser_max_loop_gain = engine->late_diffuser_loop_gain;
             engine->metrics_last_block.late_diffuser_active_fraction = engine->metrics_diffuser_active_samples_accum / fmaxf(1.0f, (float)engine->metrics_diffuser_samples_accum);
 
+            // M5B.1 Diffuser Window Accumulation
+            engine->win_diffuser_send_sum += (double)engine->late_diffuser_send_gain;
+            if (engine->late_diffuser_send_gain > engine->win_diffuser_send_max) engine->win_diffuser_send_max = engine->late_diffuser_send_gain;
+            engine->win_diffuser_return_energy_sum += (double)engine->metrics_diffuser_return_energy_accum;
+            if (engine->metrics_diffuser_return_peak_accum > engine->win_diffuser_return_peak) engine->win_diffuser_return_peak = engine->metrics_diffuser_return_peak_accum;
+            engine->win_diffuser_energy_sum += (double)engine->late_diffuser_internal_energy;
+            if (engine->late_diffuser_internal_energy > engine->win_diffuser_energy_max) engine->win_diffuser_energy_max = engine->late_diffuser_internal_energy;
+            engine->win_diffuser_loop_gain_sum += (double)engine->late_diffuser_loop_gain;
+            if (engine->late_diffuser_loop_gain > engine->win_diffuser_loop_gain_max) engine->win_diffuser_loop_gain_max = engine->late_diffuser_loop_gain;
+            if (engine->late_diffuser_active || engine->late_diffuser_amount > 0.05f) engine->win_diffuser_active_blocks++;
+            engine->win_diffuser_total_blocks++;
+            engine->win_diffuser_total_samples += engine->metrics_diffuser_samples_accum;
+
+            // M5B.1 Limiter Hierarchy Window Accumulation
+            if (engine->metrics_last_block.final_limiter_gain_reduction_db > engine->win_final_limiter_max_gr_db) {
+                engine->win_final_limiter_max_gr_db = engine->metrics_last_block.final_limiter_gain_reduction_db;
+            }
+            if (engine->metrics_last_block.final_limiter_gain_reduction_db > 0.01f) {
+                engine->win_final_limiter_active_blocks++;
+            }
+            if (engine->metrics_last_block.wet_limiter_gain_reduction_db > engine->win_wet_limiter_max_gr_db) {
+                engine->win_wet_limiter_max_gr_db = engine->metrics_last_block.wet_limiter_gain_reduction_db;
+            }
+            if (engine->metrics_last_block.wet_limiter_gain_reduction_db > 0.01f) {
+                engine->win_wet_limiter_active_blocks++;
+            }
+            if (engine->metrics_last_block.wet_normalization_gain < engine->win_wet_norm_gain_min) {
+                engine->win_wet_norm_gain_min = engine->metrics_last_block.wet_normalization_gain;
+            }
+            engine->win_wet_norm_gain_sum += (double)engine->metrics_last_block.wet_normalization_gain;
+            if (engine->metrics_last_block.wet_normalization_gain < 0.80f) {
+                engine->win_wet_norm_below_0_8_blocks++;
+            }
+            engine->win_limiter_total_blocks++;
+
             engine->metrics_diffuser_send_accum = 0.0f;
             engine->metrics_diffuser_return_energy_accum = 0.0f;
             engine->metrics_diffuser_return_peak_accum = 0.0f;
@@ -1289,6 +1415,31 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
             engine->block_peak_accum = 0.0f;
         }
     }
+
+#if defined(BUBBLES_LATE_DIFFUSER_LINES) && (BUBBLES_LATE_DIFFUSER_LINES == 2)
+    engine->late_diffuser_write_idx[0] = diff_idx0;
+    engine->late_diffuser_write_idx[1] = diff_idx1;
+#else
+    engine->late_diffuser_write_idx[0] = diff_idx0;
+    engine->late_diffuser_write_idx[1] = diff_idx1;
+    engine->late_diffuser_write_idx[2] = diff_idx2;
+#endif
+
+    engine->metrics_diffuser_return_peak_accum = m_diff_peak;
+    engine->metrics_diffuser_return_energy_accum += m_diff_ret_energy;
+    engine->metrics_diffuser_send_accum += m_diff_send_energy;
+    engine->metrics_diffuser_active_samples_accum += m_diff_active_samples;
+    engine->metrics_diffuser_samples_accum += num_samples;
+    engine->win_main_wet_energy_sum += m_win_main_wet_energy;
+
+    engine->late_diffuser_hpf[0].z1 = diff_hp0_z1;
+    engine->late_diffuser_lpf[0].z1 = diff_lp0_z1;
+    engine->late_diffuser_hpf[1].z1 = diff_hp1_z1;
+    engine->late_diffuser_lpf[1].z1 = diff_lp1_z1;
+#if !defined(BUBBLES_LATE_DIFFUSER_LINES) || (BUBBLES_LATE_DIFFUSER_LINES >= 3)
+    engine->late_diffuser_hpf[2].z1 = diff_hp2_z1;
+    engine->late_diffuser_lpf[2].z1 = diff_lp2_z1;
+#endif
 }
 
 float SoundBubbles_ApplyFinalLimiter(SoundBubblesEngine_t* engine, float* out_left, float* out_right, int num_samples) {
@@ -3318,14 +3469,12 @@ static void UpdateLateDiffuserState(SoundBubblesEngine_t* engine) {
     // 4. Envelope slewing
     // Fast release on new attack / transient burst to isolate cross-phrase bleed (Section 29, 30)
     if (early_gate <= 0.001f || engine->engine_state == ENGINE_STATE_TRANSIENT_BURST) {
-        float fast_rel_coef = 1.0f - expf(-(float)BUBBLES_BLOCK_SIZE / (sr * 0.040f)); // 40 ms decay
-        engine->late_diffuser_amount += (0.0f - engine->late_diffuser_amount) * fast_rel_coef;
+        engine->late_diffuser_amount += (0.0f - engine->late_diffuser_amount) * engine->late_diffuser_fast_rel_coef;
     } else {
         // Smooth activation envelope (Section 20): attack ~600 ms, release ~2.0 s
-        float dt_blocks = (float)BUBBLES_BLOCK_SIZE / sr;
         float env_coef = (engine->late_diffuser_target > engine->late_diffuser_amount)
-            ? (1.0f - expf(-dt_blocks / 0.600f))
-            : (1.0f - expf(-dt_blocks / 2.000f));
+            ? engine->late_diffuser_env_att_coef
+            : engine->late_diffuser_env_rel_coef;
         engine->late_diffuser_amount += (engine->late_diffuser_target - engine->late_diffuser_amount) * env_coef;
     }
     engine->late_diffuser_amount = Clamp(engine->late_diffuser_amount, 0.0f, 1.0f);
@@ -3346,6 +3495,14 @@ static void UpdateLateDiffuserState(SoundBubblesEngine_t* engine) {
         base_fb *= (BUBBLES_LATE_DIFFUSER_ENERGY_SAFETY_TH / engine->late_diffuser_internal_energy);
     }
     engine->late_diffuser_loop_gain = Clamp(base_fb, 0.0f, BUBBLES_LATE_DIFFUSER_FEEDBACK_CEILING);
+
+    // Active flag with hysteresis (Section 24, 25, 26)
+    if (engine->late_diffuser_amount > 1.0e-4f || engine->late_diffuser_send_gain > 1.0e-4f || engine->late_diffuser_internal_energy > 1.0e-6f) {
+        engine->late_diffuser_active = true;
+    } else {
+        engine->late_diffuser_active = false;
+        engine->late_diffuser_internal_energy = 0.0f;
+    }
 }
 
 static inline float Filter1Pole_ProcessLPF(Filter1Pole_t* f, float input) {
@@ -3696,11 +3853,19 @@ float SoundBubbles_GetLateDiffuserSend(const SoundBubblesEngine_t* engine) {
 }
 
 float SoundBubbles_GetLateDiffuserReturnRms(const SoundBubblesEngine_t* engine) {
-    return engine ? engine->metrics_last_block.late_diffuser_return_rms : 0.0f;
+    if (!engine) return 0.0f;
+    if (engine->win_diffuser_total_samples > 0) {
+        return (float)sqrt(engine->win_diffuser_return_energy_sum / (double)engine->win_diffuser_total_samples);
+    }
+    return engine->metrics_last_block.late_diffuser_return_rms;
 }
 
 float SoundBubbles_GetLateDiffuserReturnPeak(const SoundBubblesEngine_t* engine) {
-    return engine ? engine->metrics_last_block.late_diffuser_return_peak : 0.0f;
+    if (!engine) return 0.0f;
+    if (engine->win_diffuser_return_peak > 0.0f) {
+        return engine->win_diffuser_return_peak;
+    }
+    return engine->metrics_last_block.late_diffuser_return_peak;
 }
 
 float SoundBubbles_GetLateDiffuserFeedbackEnergy(const SoundBubblesEngine_t* engine) {
@@ -3713,4 +3878,71 @@ float SoundBubbles_GetLateDiffuserMaxLoopGain(const SoundBubblesEngine_t* engine
 
 float SoundBubbles_GetLateDiffuserAmount(const SoundBubblesEngine_t* engine) {
     return engine ? engine->late_diffuser_amount : 0.0f;
+}
+
+void SoundBubbles_ResetDiffuserWindowMetrics(SoundBubblesEngine_t* engine) {
+    if (!engine) return;
+    engine->win_diffuser_send_sum = 0.0;
+    engine->win_diffuser_send_max = 0.0f;
+    engine->win_diffuser_return_energy_sum = 0.0;
+    engine->win_diffuser_return_peak = 0.0f;
+    engine->win_diffuser_energy_sum = 0.0;
+    engine->win_diffuser_energy_max = 0.0f;
+    engine->win_diffuser_loop_gain_sum = 0.0;
+    engine->win_diffuser_loop_gain_max = 0.0f;
+    engine->win_diffuser_active_blocks = 0;
+    engine->win_diffuser_total_blocks = 0;
+    engine->win_diffuser_total_samples = 0;
+    engine->win_main_wet_energy_sum = 0.0;
+}
+
+void SoundBubbles_GetDiffuserWindowMetrics(const SoundBubblesEngine_t* engine, SoundBubblesDiffuserWindowMetrics_t* out) {
+    if (!engine || !out) return;
+    memset(out, 0, sizeof(*out));
+    if (engine->win_diffuser_total_blocks > 0) {
+        out->send_mean = (float)(engine->win_diffuser_send_sum / (double)engine->win_diffuser_total_blocks);
+        out->internal_energy_mean = (float)(engine->win_diffuser_energy_sum / (double)engine->win_diffuser_total_blocks);
+        out->loop_gain_mean = (float)(engine->win_diffuser_loop_gain_sum / (double)engine->win_diffuser_total_blocks);
+        out->active_fraction = (float)engine->win_diffuser_active_blocks / (float)engine->win_diffuser_total_blocks;
+    }
+    out->send_max = engine->win_diffuser_send_max;
+    out->internal_energy_max = engine->win_diffuser_energy_max;
+    out->loop_gain_max = engine->win_diffuser_loop_gain_max;
+    out->return_peak = engine->win_diffuser_return_peak;
+    if (engine->win_diffuser_total_samples > 0) {
+        out->return_rms = (float)sqrt(engine->win_diffuser_return_energy_sum / (double)engine->win_diffuser_total_samples);
+        out->main_wet_rms = (float)sqrt(engine->win_main_wet_energy_sum / (double)engine->win_diffuser_total_samples);
+    }
+    out->diffuser_return_rms = out->return_rms;
+    if (out->main_wet_rms > 1e-9f && out->diffuser_return_rms > 1e-9f) {
+        out->diffuser_main_ratio_db = 20.0f * log10f(out->diffuser_return_rms / out->main_wet_rms);
+    } else {
+        out->diffuser_main_ratio_db = -180.0f;
+    }
+}
+
+void SoundBubbles_ResetLimiterHierarchyMetrics(SoundBubblesEngine_t* engine) {
+    if (!engine) return;
+    engine->win_final_limiter_max_gr_db = 0.0f;
+    engine->win_final_limiter_active_blocks = 0;
+    engine->win_wet_limiter_max_gr_db = 0.0f;
+    engine->win_wet_limiter_active_blocks = 0;
+    engine->win_wet_norm_gain_min = 1.0f;
+    engine->win_wet_norm_gain_sum = 0.0;
+    engine->win_wet_norm_below_0_8_blocks = 0;
+    engine->win_limiter_total_blocks = 0;
+}
+
+void SoundBubbles_GetLimiterHierarchyMetrics(const SoundBubblesEngine_t* engine, SoundBubblesLimiterHierarchyMetrics_t* out) {
+    if (!engine || !out) return;
+    memset(out, 0, sizeof(*out));
+    out->final_limiter_max_gr_db = engine->win_final_limiter_max_gr_db;
+    out->wet_limiter_max_gr_db = engine->win_wet_limiter_max_gr_db;
+    out->wet_norm_gain_min = engine->win_wet_norm_gain_min;
+    if (engine->win_limiter_total_blocks > 0) {
+        out->final_limiter_active_fraction = (float)engine->win_final_limiter_active_blocks / (float)engine->win_limiter_total_blocks;
+        out->wet_limiter_active_fraction = (float)engine->win_wet_limiter_active_blocks / (float)engine->win_limiter_total_blocks;
+        out->wet_norm_gain_median = (float)(engine->win_wet_norm_gain_sum / (double)engine->win_limiter_total_blocks);
+        out->wet_norm_time_below_0_8 = (float)engine->win_wet_norm_below_0_8_blocks / (float)engine->win_limiter_total_blocks;
+    }
 }
