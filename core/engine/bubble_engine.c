@@ -734,3 +734,31 @@ void bubble_engine_set_dither_enabled(BubbleEngine_t* engine, bool enabled) {
 bool bubble_engine_get_dither_enabled(const BubbleEngine_t* engine) {
     return SoundBubbles_GetDitherEnabled(engine);
 }
+
+float bubble_engine_get_wet_pre_norm_peak(const BubbleEngine_t* engine) {
+    return SoundBubbles_GetWetPreNormPeak(engine);
+}
+
+float bubble_engine_get_wet_pre_norm_rms(const BubbleEngine_t* engine) {
+    return SoundBubbles_GetWetPreNormRms(engine);
+}
+
+float bubble_engine_get_wet_normalization_gain(const BubbleEngine_t* engine) {
+    return SoundBubbles_GetWetNormalizationGain(engine);
+}
+
+float bubble_engine_get_wet_limiter_gain(const BubbleEngine_t* engine) {
+    return SoundBubbles_GetWetLimiterGain(engine);
+}
+
+float bubble_engine_get_wet_limiter_gain_reduction_db(const BubbleEngine_t* engine) {
+    return SoundBubbles_GetWetLimiterGainReductionDb(engine);
+}
+
+float bubble_engine_get_final_limiter_gain(const BubbleEngine_t* engine) {
+    return SoundBubbles_GetFinalLimiterGain(engine);
+}
+
+float bubble_engine_get_final_limiter_gain_reduction_db(const BubbleEngine_t* engine) {
+    return SoundBubbles_GetFinalLimiterGainReductionDb(engine);
+}

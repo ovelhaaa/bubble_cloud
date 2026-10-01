@@ -116,6 +116,18 @@ typedef enum {
 #define BUBBLES_FEEDBACK_HOLD_APERTURE_MAX  0.150f
 #define BUBBLES_FEEDBACK_WRITE_APERTURE_MAX 0.280f
 
+// --- M4D Wet Dynamics & Limiter Decoupling ---
+#define BUBBLES_WET_NORM_ATTACK_SECONDS     0.100f
+#define BUBBLES_WET_NORM_RELEASE_SECONDS    0.600f
+#define BUBBLES_WET_NORM_ENERGY_ATT_SECONDS 0.080f
+#define BUBBLES_WET_NORM_ENERGY_REL_SECONDS 0.500f
+#define BUBBLES_WET_NORM_TARGET_ENERGY      0.200f // (~0.45 RMS)^2
+#define BUBBLES_WET_NORM_GAIN_MIN           0.450f
+#define BUBBLES_WET_NORM_GAIN_MAX           1.000f
+
+#define BUBBLES_WET_LIMITER_CEILING_DB      (-2.0f)
+#define BUBBLES_WET_LIMITER_RELEASE_MS      (60.0f)
+
 // --- Enums ---
 
 typedef enum {
@@ -423,6 +435,14 @@ typedef struct {
     float peak_r;
     int32_t clip_count;
     float limiter_gain;
+    // M4D Wet Dynamics Telemetry
+    float wet_pre_norm_peak;
+    float wet_pre_norm_rms;
+    float wet_normalization_gain;
+    float wet_limiter_gain;
+    float wet_limiter_gain_reduction_db;
+    float final_limiter_gain;
+    float final_limiter_gain_reduction_db;
 } SoundBubblesBlockMetrics_t;
 
 typedef void (*SoundBubblesMetricsCallback_t)(const SoundBubblesBlockMetrics_t* metrics, void* user_data);
@@ -591,6 +611,27 @@ typedef struct {
     int32_t metrics_clip_count_accum;
     float metrics_limiter_gain_min;
 
+    // M4D Wet Dynamics & Limiter Decoupling
+    float wet_norm_energy;
+    float wet_normalization_gain;
+    float wet_norm_target_energy;
+    float wet_norm_energy_att_coef;
+    float wet_norm_energy_rel_coef;
+    float wet_norm_gain_att_coef;
+    float wet_norm_gain_rel_coef;
+    float wet_limiter_gain;
+    float wet_limiter_ceiling_linear;
+    float wet_limiter_release_coef;
+    float metrics_wet_pre_norm_peak_accum;
+    float metrics_wet_pre_norm_energy_accum;
+    int32_t metrics_wet_norm_samples_accum;
+    float metrics_wet_norm_gain_min;
+    float metrics_wet_limiter_gain_min;
+    float last_wet_pre_norm_peak;
+    float last_wet_pre_norm_rms;
+    float last_wet_norm_gain;
+    float last_wet_limiter_gain;
+
     // Optional per-control-block metrics hook (for offline validation/telemetry)
     SoundBubblesMetricsCallback_t metrics_callback;
     void* metrics_user_data;
@@ -702,6 +743,15 @@ void SoundBubbles_ResetRingSaturationCounts(SoundBubblesEngine_t* engine);
 // M4C Int16 Dither control (test-only helper, not a public parameter)
 void SoundBubbles_SetDitherEnabled(SoundBubblesEngine_t* engine, bool enabled);
 bool SoundBubbles_GetDitherEnabled(const SoundBubblesEngine_t* engine);
+
+// M4D Wet Dynamics & Limiter Decoupling inspection helpers
+float SoundBubbles_GetWetPreNormPeak(const SoundBubblesEngine_t* engine);
+float SoundBubbles_GetWetPreNormRms(const SoundBubblesEngine_t* engine);
+float SoundBubbles_GetWetNormalizationGain(const SoundBubblesEngine_t* engine);
+float SoundBubbles_GetWetLimiterGain(const SoundBubblesEngine_t* engine);
+float SoundBubbles_GetWetLimiterGainReductionDb(const SoundBubblesEngine_t* engine);
+float SoundBubbles_GetFinalLimiterGain(const SoundBubblesEngine_t* engine);
+float SoundBubbles_GetFinalLimiterGainReductionDb(const SoundBubblesEngine_t* engine);
 
 #if defined(BUBBLES_INTERPOLATION_TELEMETRY) || defined(BUBBLES_BUILD_PROCESSOR_TESTS)
 // Test/telemetry-only: number of samples rendered through each interpolation

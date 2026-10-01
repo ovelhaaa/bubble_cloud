@@ -64,8 +64,8 @@ def _read_metrics(path: Path) -> list[dict[str, float]]:
 
 
 def test_offline_c_and_wasm_metrics_match_with_defined_tolerance(tmp_path: Path) -> None:
-    if shutil.which("node") is None:
-        pytest.skip("Node.js is required to execute the generated WASM module")
+    if shutil.which("node") is None or shutil.which("emcc") is None:
+        pytest.skip("Node.js and Emscripten (emcc) are required to recompile and test WASM parity against candidate C DSP")
     if not WASM_MODULE.exists():
         pytest.fail("WASM module is not built; run `make wasm` before running parity tests")
 

@@ -198,6 +198,15 @@ bool bubble_engine_set_quality_profile(BubbleEngine_t* engine, BubbleQualityProf
 const BubbleQualityProfileLimits_t* bubble_engine_get_quality_profile_limits(BubbleQualityProfile profile);
 void bubble_engine_set_metrics_callback(BubbleEngine_t* engine, BubbleEngineMetricsCallback_t callback, void* user_data);
 
+// M4D Wet Dynamics inspection helpers
+float bubble_engine_get_wet_pre_norm_peak(const BubbleEngine_t* engine);
+float bubble_engine_get_wet_pre_norm_rms(const BubbleEngine_t* engine);
+float bubble_engine_get_wet_normalization_gain(const BubbleEngine_t* engine);
+float bubble_engine_get_wet_limiter_gain(const BubbleEngine_t* engine);
+float bubble_engine_get_wet_limiter_gain_reduction_db(const BubbleEngine_t* engine);
+float bubble_engine_get_final_limiter_gain(const BubbleEngine_t* engine);
+float bubble_engine_get_final_limiter_gain_reduction_db(const BubbleEngine_t* engine);
+
 #ifdef __cplusplus
 }
 #endif

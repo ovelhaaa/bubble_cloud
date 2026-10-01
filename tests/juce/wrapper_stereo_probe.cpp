@@ -294,15 +294,15 @@ int main()
     //     dual-engine sum must not keep it pinned harder than a single engine. ---
     {
         constexpr int hotBlock = 256;
-        auto runHot = [&](bool dual) {
+        auto runHot = [&](bool dual, float amp = 0.9f) {
             BubbleCloudEngineWrapper wrapper;
             wrapper.prepare(sampleRate, hotBlock);
             wrapper.setParameter(BUBBLE_PARAM_MIX, 1.0f);
             wrapper.setParameter(BUBBLE_PARAM_SPACE, 1.0f);
             renderConstantLeft(wrapper, 64, 0.0f);
 
-            std::vector<float> inLeft((size_t)hotBlock, 0.9f);
-            std::vector<float> inRight((size_t)hotBlock, dual ? 0.9f : 0.0f);
+            std::vector<float> inLeft((size_t)hotBlock, amp);
+            std::vector<float> inRight((size_t)hotBlock, dual ? amp : 0.0f);
             std::vector<float> outLeft((size_t)hotBlock, 0.0f);
             std::vector<float> outRight((size_t)hotBlock, 0.0f);
             for (int i = 0; i < 160; ++i)
@@ -324,11 +324,16 @@ int main()
 
         const auto single = runHot(false);
         const auto dual = runHot(true);
-        std::printf("limiter gain single=%.4f/%.4f dual=%.4f/%.4f (driven/recovered)\n",
-                    single.first, single.second, dual.first, dual.second);
-        if (!(single.first < 0.999f && dual.first < 0.999f))
-            return fail("final limiter did not engage on a hot signal");
-        if (!(single.second > 0.99f && dual.second > 0.99f))
+        const auto emergency = runHot(false, 1.8f);
+        std::printf("limiter gain single=%.4f/%.4f dual=%.4f/%.4f emergency=%.4f/%.4f (driven/recovered)\n",
+                    single.first, single.second, dual.first, dual.second, emergency.first, emergency.second);
+        // M4D: under nominal input, the wet limiter and downward normalization decouple the
+        // wet bus so single-channel wet peaks stay below the final limiter emergency ceiling (-1 dBFS),
+        // leaving the final limiter in standby (single.first >= 0.999f).
+        // Dual-channel summed energy and hot emergency signals cleanly engage the final limiter.
+        if (!(dual.first < 0.999f && emergency.first < 0.999f))
+            return fail("final limiter did not engage on hot dual or emergency signal");
+        if (!(dual.second > 0.99f && emergency.second > 0.99f))
             return fail("final limiter did not recover after the input went silent");
         // M2 intentionally shares attack events and favours recent body material,
         // which raises the wet presence on this synthetic DC-step and makes the

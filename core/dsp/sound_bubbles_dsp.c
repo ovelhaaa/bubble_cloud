@@ -346,6 +346,16 @@ static void UpdateFeedbackCoeffs(SoundBubblesEngine_t* engine) {
     engine->feedback_energy_rel_coef = 1.0f - expf(-1.0f / (sr * 0.300f));
 }
 
+static void UpdateWetDynamicsCoeffs(SoundBubblesEngine_t* engine) {
+    float sr = fmaxf(1.0f, engine->config.sample_rate);
+    engine->wet_norm_energy_att_coef = 1.0f - expf(-1.0f / (sr * BUBBLES_WET_NORM_ENERGY_ATT_SECONDS));
+    engine->wet_norm_energy_rel_coef = 1.0f - expf(-1.0f / (sr * BUBBLES_WET_NORM_ENERGY_REL_SECONDS));
+    engine->wet_norm_gain_att_coef = 1.0f - expf(-1.0f / (sr * BUBBLES_WET_NORM_ATTACK_SECONDS));
+    engine->wet_norm_gain_rel_coef = 1.0f - expf(-1.0f / (sr * BUBBLES_WET_NORM_RELEASE_SECONDS));
+    engine->wet_limiter_ceiling_linear = DbToLinear(BUBBLES_WET_LIMITER_CEILING_DB);
+    engine->wet_limiter_release_coef = 1.0f / fmaxf(1.0f, sr * BUBBLES_WET_LIMITER_RELEASE_MS * 0.001f);
+}
+
 static int32_t CountActiveVoices(const SoundBubblesEngine_t* engine);
 static void MotionResetLfo(BubbleMotionLfoState_t* lfo, uint32_t seed);
 
@@ -498,7 +508,31 @@ void SoundBubbles_Init(SoundBubblesEngine_t* engine, BubbleRingSample_t* delay_b
     engine->metrics_last_block.peak_r = 0.0f;
     engine->metrics_last_block.clip_count = 0;
     engine->metrics_last_block.limiter_gain = 1.0f;
+    engine->metrics_last_block.wet_pre_norm_peak = 0.0f;
+    engine->metrics_last_block.wet_pre_norm_rms = 0.0f;
+    engine->metrics_last_block.wet_normalization_gain = 1.0f;
+    engine->metrics_last_block.wet_limiter_gain = 1.0f;
+    engine->metrics_last_block.wet_limiter_gain_reduction_db = 0.0f;
+    engine->metrics_last_block.final_limiter_gain = 1.0f;
+    engine->metrics_last_block.final_limiter_gain_reduction_db = 0.0f;
     engine->metrics_tick_spawn_count = 0;
+
+    // M4D Wet Dynamics state initialization
+    engine->wet_norm_energy = 0.0f;
+    engine->wet_normalization_gain = 1.0f;
+    engine->wet_norm_target_energy = BUBBLES_WET_NORM_TARGET_ENERGY;
+    engine->wet_limiter_gain = 1.0f;
+    engine->metrics_wet_pre_norm_peak_accum = 0.0f;
+    engine->metrics_wet_pre_norm_energy_accum = 0.0f;
+    engine->metrics_wet_norm_samples_accum = 0;
+    engine->metrics_wet_norm_gain_min = 1.0f;
+    engine->metrics_wet_limiter_gain_min = 1.0f;
+    engine->last_wet_pre_norm_peak = 0.0f;
+    engine->last_wet_pre_norm_rms = 0.0f;
+    engine->last_wet_norm_gain = 1.0f;
+    engine->last_wet_limiter_gain = 1.0f;
+    UpdateWetDynamicsCoeffs(engine);
+
     SoundBubbles_ResetMotionPhase(engine);
     engine->pending_spawn_head = 0;
     engine->pending_spawn_count = 0;
@@ -554,6 +588,7 @@ void SoundBubbles_UpdateConfig(SoundBubblesEngine_t* engine, const EngineConfig_
     DeactivateVoicesAboveActiveLimit(engine);
     UpdateAutoHoldCoeffs(engine);
     UpdateFeedbackCoeffs(engine);
+    UpdateWetDynamicsCoeffs(engine);
     if (rng_seed_changed) {
         SoundBubbles_SetRngSeed(engine, engine->config.rng_seed);
     }
@@ -568,6 +603,7 @@ void SoundBubbles_UpdateRuntimeConfig(SoundBubblesEngine_t* engine, const Engine
     DeactivateVoicesAboveActiveLimit(engine);
     UpdateAutoHoldCoeffs(engine);
     UpdateFeedbackCoeffs(engine);
+    UpdateWetDynamicsCoeffs(engine);
 }
 
 void SoundBubbles_ResetMotionPhase(SoundBubblesEngine_t* engine) {
@@ -869,9 +905,60 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
         float e_coef = (fb_abs > engine->feedback_energy) ? engine->feedback_energy_att_coef : engine->feedback_energy_rel_coef;
         engine->feedback_energy += (fb_abs - engine->feedback_energy) * e_coef;
 
+        // --- M4D Wet Dynamics Architecture ---
+        // 1. Stereo energy follower & telemetry (pre-norm)
+        float wet_pre_peak = fmaxf(fabsf(wet_sum_l), fabsf(wet_sum_r));
+        float wet_pre_energy = 0.5f * (wet_sum_l * wet_sum_l + wet_sum_r * wet_sum_r);
+        if (wet_pre_peak > engine->metrics_wet_pre_norm_peak_accum) {
+            engine->metrics_wet_pre_norm_peak_accum = wet_pre_peak;
+        }
+        engine->metrics_wet_pre_norm_energy_accum += wet_pre_energy;
+        engine->metrics_wet_norm_samples_accum++;
+
+        // Update smoothed energy follower (attack 80 ms, release 500 ms)
+        float norm_e_coef = (wet_pre_energy > engine->wet_norm_energy) ? engine->wet_norm_energy_att_coef : engine->wet_norm_energy_rel_coef;
+        engine->wet_norm_energy += (wet_pre_energy - engine->wet_norm_energy) * norm_e_coef;
+
+        // 2. Downward-only wet normalization
+        float target_norm_gain = 1.0f;
+        if (engine->wet_norm_energy > engine->wet_norm_target_energy) {
+            target_norm_gain = sqrtf(engine->wet_norm_target_energy / engine->wet_norm_energy);
+            if (target_norm_gain < BUBBLES_WET_NORM_GAIN_MIN) target_norm_gain = BUBBLES_WET_NORM_GAIN_MIN;
+        }
+        float norm_g_coef = (target_norm_gain < engine->wet_normalization_gain) ? engine->wet_norm_gain_att_coef : engine->wet_norm_gain_rel_coef;
+        engine->wet_normalization_gain += (target_norm_gain - engine->wet_normalization_gain) * norm_g_coef;
+        if (engine->wet_normalization_gain > BUBBLES_WET_NORM_GAIN_MAX) engine->wet_normalization_gain = BUBBLES_WET_NORM_GAIN_MAX;
+        if (engine->wet_normalization_gain < BUBBLES_WET_NORM_GAIN_MIN) engine->wet_normalization_gain = BUBBLES_WET_NORM_GAIN_MIN;
+        if (engine->wet_normalization_gain < engine->metrics_wet_norm_gain_min) {
+            engine->metrics_wet_norm_gain_min = engine->wet_normalization_gain;
+        }
+
+        float wet_norm_l = wet_sum_l * engine->wet_normalization_gain;
+        float wet_norm_r = wet_sum_r * engine->wet_normalization_gain;
+
+        // 3. Linked wet limiter (ceiling -2.0 dBFS, release 60 ms)
+        float wet_norm_peak = fmaxf(fabsf(wet_norm_l), fabsf(wet_norm_r));
+        float target_lim_gain = 1.0f;
+        if (wet_norm_peak > engine->wet_limiter_ceiling_linear) {
+            target_lim_gain = engine->wet_limiter_ceiling_linear / wet_norm_peak;
+        }
+        if (target_lim_gain < engine->wet_limiter_gain) {
+            engine->wet_limiter_gain = target_lim_gain;
+        } else {
+            engine->wet_limiter_gain += (1.0f - engine->wet_limiter_gain) * engine->wet_limiter_release_coef;
+            if (engine->wet_limiter_gain > 1.0f) engine->wet_limiter_gain = 1.0f;
+        }
+        if (engine->wet_limiter_gain < engine->metrics_wet_limiter_gain_min) {
+            engine->metrics_wet_limiter_gain_min = engine->wet_limiter_gain;
+        }
+
+        float wet_limited_l = wet_norm_l * engine->wet_limiter_gain;
+        float wet_limited_r = wet_norm_r * engine->wet_limiter_gain;
+
+        // 4. MIX (ducking, presence, master_wet_gain)
         float wet_gain = engine->smoothed_ducking_gain * engine->wet_presence_smoothed * engine->master_wet_gain;
-        float wet_mix_l = wet_sum_l * wet_gain;
-        float wet_mix_r = wet_sum_r * wet_gain;
+        float wet_mix_l = wet_limited_l * wet_gain;
+        float wet_mix_r = wet_limited_r * wet_gain;
         float dry_mix = dry_sample * engine->master_dry_gain;
 
         float final_l;
@@ -930,10 +1017,33 @@ static void ProcessBlockInternal(SoundBubblesEngine_t* engine, const float* in_m
             engine->metrics_last_block.peak_r = engine->metrics_peak_r_accum;
             engine->metrics_last_block.clip_count = engine->metrics_clip_count_accum;
             engine->metrics_last_block.limiter_gain = engine->metrics_limiter_gain_min;
+
+            // M4D Wet Dynamics Telemetry
+            float blk_rms = sqrtf(engine->metrics_wet_pre_norm_energy_accum / fmaxf(1.0f, (float)engine->metrics_wet_norm_samples_accum));
+            engine->metrics_last_block.wet_pre_norm_peak = engine->metrics_wet_pre_norm_peak_accum;
+            engine->metrics_last_block.wet_pre_norm_rms = blk_rms;
+            engine->metrics_last_block.wet_normalization_gain = engine->metrics_wet_norm_gain_min;
+            engine->metrics_last_block.wet_limiter_gain = engine->metrics_wet_limiter_gain_min;
+            engine->metrics_last_block.wet_limiter_gain_reduction_db = (engine->metrics_wet_limiter_gain_min < 1.0f && engine->metrics_wet_limiter_gain_min > 0.0f) ? -20.0f * log10f(engine->metrics_wet_limiter_gain_min) : 0.0f;
+            engine->metrics_last_block.final_limiter_gain = engine->metrics_limiter_gain_min;
+            engine->metrics_last_block.final_limiter_gain_reduction_db = (engine->metrics_limiter_gain_min < 1.0f && engine->metrics_limiter_gain_min > 0.0f) ? -20.0f * log10f(engine->metrics_limiter_gain_min) : 0.0f;
+
+            engine->last_wet_pre_norm_peak = engine->metrics_last_block.wet_pre_norm_peak;
+            engine->last_wet_pre_norm_rms = engine->metrics_last_block.wet_pre_norm_rms;
+            engine->last_wet_norm_gain = engine->metrics_last_block.wet_normalization_gain;
+            engine->last_wet_limiter_gain = engine->metrics_last_block.wet_limiter_gain;
+
             engine->metrics_peak_l_accum = 0.0f;
             engine->metrics_peak_r_accum = 0.0f;
             engine->metrics_clip_count_accum = 0;
             engine->metrics_limiter_gain_min = engine->final_limiter_gain;
+
+            engine->metrics_wet_pre_norm_peak_accum = 0.0f;
+            engine->metrics_wet_pre_norm_energy_accum = 0.0f;
+            engine->metrics_wet_norm_samples_accum = 0;
+            engine->metrics_wet_norm_gain_min = engine->wet_normalization_gain;
+            engine->metrics_wet_limiter_gain_min = engine->wet_limiter_gain;
+
             if (engine->metrics_callback != NULL) {
                 engine->metrics_callback(&engine->metrics_last_block, engine->metrics_user_data);
             }
@@ -2821,4 +2931,36 @@ void SoundBubbles_SetDitherEnabled(SoundBubblesEngine_t* engine, bool enabled) {
 bool SoundBubbles_GetDitherEnabled(const SoundBubblesEngine_t* engine) {
     if (engine == NULL) return false;
     return engine->dither_enabled != 0;
+}
+
+// --- M4D Wet Dynamics Inspection Helpers ---
+
+float SoundBubbles_GetWetPreNormPeak(const SoundBubblesEngine_t* engine) {
+    return engine != NULL ? engine->last_wet_pre_norm_peak : 0.0f;
+}
+
+float SoundBubbles_GetWetPreNormRms(const SoundBubblesEngine_t* engine) {
+    return engine != NULL ? engine->last_wet_pre_norm_rms : 0.0f;
+}
+
+float SoundBubbles_GetWetNormalizationGain(const SoundBubblesEngine_t* engine) {
+    return engine != NULL ? engine->wet_normalization_gain : 1.0f;
+}
+
+float SoundBubbles_GetWetLimiterGain(const SoundBubblesEngine_t* engine) {
+    return engine != NULL ? engine->wet_limiter_gain : 1.0f;
+}
+
+float SoundBubbles_GetWetLimiterGainReductionDb(const SoundBubblesEngine_t* engine) {
+    if (engine == NULL || engine->wet_limiter_gain >= 1.0f || engine->wet_limiter_gain <= 0.0f) return 0.0f;
+    return -20.0f * log10f(engine->wet_limiter_gain);
+}
+
+float SoundBubbles_GetFinalLimiterGain(const SoundBubblesEngine_t* engine) {
+    return engine != NULL ? engine->final_limiter_gain : 1.0f;
+}
+
+float SoundBubbles_GetFinalLimiterGainReductionDb(const SoundBubblesEngine_t* engine) {
+    if (engine == NULL || engine->final_limiter_gain >= 1.0f || engine->final_limiter_gain <= 0.0f) return 0.0f;
+    return -20.0f * log10f(engine->final_limiter_gain);
 }
