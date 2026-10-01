@@ -95,16 +95,24 @@ typedef BubbleMemoryTier BubbleMemoryTier_t;
 #define BUBBLES_MEMORY_TIER_DEEP   BUBBLE_MEMORY_DEEP
 #define BUBBLES_MEMORY_TIER_COUNT  BUBBLE_MEMORY_TIER_COUNT
 
-#define BUBBLES_TIER_RECENT_MIN_MS  35.0f
-#define BUBBLES_TIER_RECENT_MAX_MS  420.0f
-#define BUBBLES_TIER_MICRO_MIN_MS   10.0f
-#define BUBBLES_TIER_MICRO_MAX_MS   120.0f
+// Nominal envelope limits for runtime tier resolution (Section 17-21)
+#define BUBBLES_TIER_RECENT_DEFAULT_MIN_MS  35.0f
+#define BUBBLES_TIER_RECENT_DEFAULT_MAX_MS  420.0f
+#define BUBBLES_TIER_MICRO_DEFAULT_MIN_MS   10.0f
+#define BUBBLES_TIER_MICRO_DEFAULT_MAX_MS   120.0f
 
-#define BUBBLES_TIER_MID_MIN_MS     320.0f
-#define BUBBLES_TIER_MID_MAX_MS     1050.0f
+#define BUBBLES_TIER_MID_DEFAULT_MIN_MS     300.0f
+#define BUBBLES_TIER_MID_DEFAULT_MAX_MS     1100.0f
 
-#define BUBBLES_TIER_DEEP_MIN_MS    850.0f
-#define BUBBLES_TIER_DEEP_MAX_MS    1880.0f
+#define BUBBLES_TIER_DEEP_DEFAULT_MIN_MS    800.0f
+#define BUBBLES_TIER_DEEP_DEFAULT_MAX_MS    1900.0f
+
+#define BUBBLES_TIER_RECENT_MIN_MS  BUBBLES_TIER_RECENT_DEFAULT_MIN_MS
+#define BUBBLES_TIER_RECENT_MAX_MS  BUBBLES_TIER_RECENT_DEFAULT_MAX_MS
+#define BUBBLES_TIER_MID_MIN_MS     BUBBLES_TIER_MID_DEFAULT_MIN_MS
+#define BUBBLES_TIER_MID_MAX_MS     BUBBLES_TIER_MID_DEFAULT_MAX_MS
+#define BUBBLES_TIER_DEEP_MIN_MS    BUBBLES_TIER_DEEP_DEFAULT_MIN_MS
+#define BUBBLES_TIER_DEEP_MAX_MS    BUBBLES_TIER_DEEP_DEFAULT_MAX_MS
 
 #define BUBBLES_MEMORY_WEIGHT_RECENT 0.60f
 #define BUBBLES_MEMORY_WEIGHT_MEDIUM 0.25f
@@ -816,6 +824,31 @@ void SoundBubbles_GetReadAgeTelemetry(const SoundBubblesEngine_t* engine,
                                       float* out_p95_ms,
                                       float* out_anchor_fraction);
 void SoundBubbles_ResetMemoryTierTelemetry(SoundBubblesEngine_t* engine);
+
+// Single source of truth for runtime tier ranges (Section 17-21)
+void SoundBubbles_ResolveMemoryTierRangeSamples(const SoundBubblesEngine_t* engine,
+                                                BubbleMemoryTier tier,
+                                                int32_t* out_min_offset,
+                                                int32_t* out_max_offset);
+void SoundBubbles_ResolveMemoryTierRangeMs(const SoundBubblesEngine_t* engine,
+                                          BubbleMemoryTier tier,
+                                          float* out_min_ms,
+                                          float* out_max_ms);
+
+// Deterministic tier trace record for regression & verification (Section 28-29)
+typedef struct {
+    SharedSpawnId_t spawn_id;
+    int32_t phrase_anchor_age;
+    EngineState_t engine_state;
+    float memory_macro;
+    BubbleMemoryTier memory_tier;
+    int32_t read_offset_samples;
+    float read_age_ms;
+    bool used_anchor;
+} BubbleTierTraceRecord_t;
+
+typedef void (*BubbleTierTraceFn)(void* user, const SoundBubblesEngine_t* engine, const BubbleTierTraceRecord_t* record);
+void SoundBubblesTest_SetTierTrace(BubbleTierTraceFn fn, void* user);
 
 #if defined(BUBBLES_INTERPOLATION_TELEMETRY) || defined(BUBBLES_BUILD_PROCESSOR_TESTS)
 // Test/telemetry-only: number of samples rendered through each interpolation

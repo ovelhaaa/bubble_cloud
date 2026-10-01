@@ -191,11 +191,167 @@ static int run_distribution(void) {
     return 0;
 }
 
+#ifdef M5A_CANDIDATE_BUILD
+static int compare_float(const void* a, const void* b) {
+    float fa = *(const float*)a;
+    float fb = *(const float*)b;
+    return (fa > fb) - (fa < fb);
+}
+
+#define MAX_STAT_SPAWNS 8192
+typedef struct {
+    float read_ages[MAX_STAT_SPAWNS];
+    int recent_count;
+    int mid_count;
+    int deep_count;
+    int total_count;
+} PhraseStateStats_t;
+
+typedef struct {
+    PhraseStateStats_t sustain;
+    PhraseStateStats_t decay;
+    PhraseStateStats_t silence;
+    PhraseStateStats_t combined;
+} MemoryPointStats_t;
+
+static MemoryPointStats_t g_current_mem_stats;
+
+static void StatisticalTierTraceHook(void* user, const SoundBubblesEngine_t* engine, const BubbleTierTraceRecord_t* record) {
+    (void)user; (void)engine;
+    PhraseStateStats_t* target = NULL;
+    switch (record->engine_state) {
+        case ENGINE_STATE_SUSTAIN_BODY:
+            target = &g_current_mem_stats.sustain;
+            break;
+        case ENGINE_STATE_SPARSE_DECAY:
+            target = &g_current_mem_stats.decay;
+            break;
+        case ENGINE_STATE_SILENCE:
+            target = &g_current_mem_stats.silence;
+            break;
+        default:
+            // Transient burst / attack ongoing excluded from tail memory statistics
+            return;
+    }
+
+    if (target->total_count < MAX_STAT_SPAWNS) {
+        target->read_ages[target->total_count] = record->read_age_ms;
+        target->total_count++;
+        if (record->memory_tier == BUBBLE_MEMORY_RECENT) target->recent_count++;
+        else if (record->memory_tier == BUBBLE_MEMORY_MID) target->mid_count++;
+        else target->deep_count++;
+    }
+
+    if (g_current_mem_stats.combined.total_count < MAX_STAT_SPAWNS) {
+        g_current_mem_stats.combined.read_ages[g_current_mem_stats.combined.total_count] = record->read_age_ms;
+        g_current_mem_stats.combined.total_count++;
+        if (record->memory_tier == BUBBLE_MEMORY_RECENT) g_current_mem_stats.combined.recent_count++;
+        else if (record->memory_tier == BUBBLE_MEMORY_MID) g_current_mem_stats.combined.mid_count++;
+        else g_current_mem_stats.combined.deep_count++;
+    }
+}
+#endif
+
 // ---------------------------------------------------------------------------
-// 2. MEMORY Sweep & Loudness Invariance
+// 2. MEMORY Sweep & Loudness Invariance (Statistical Qualification)
 // ---------------------------------------------------------------------------
 static int run_memory_sweep(void) {
     const float memory_mixes[] = {0.0f, 0.25f, 0.50f, 0.75f, 1.0f};
+
+#ifdef M5A_CANDIDATE_BUILD
+    printf("MEMORY_STATISTICAL_SWEEP_CSV\n");
+    printf("State,MemoryMix,Spawns,RecentPct,MidPct,DeepPct,MeanAge_ms,P50Age_ms,P90Age_ms,P95Age_ms,TailRMS_dB\n");
+
+    for (int m = 0; m < 5; m++) {
+        memset(&g_current_mem_stats, 0, sizeof(g_current_mem_stats));
+        SoundBubblesTest_SetTierTrace(StatisticalTierTraceHook, NULL);
+
+        double total_tail_energy = 0.0;
+        int total_tail_samples = 0;
+
+        // Run across 10 deterministic seeds and longer duration to accumulate >= 1000 spawns per point
+        for (uint32_t seed = 1; seed <= 10; seed++) {
+            BubbleEngineConfig_t config;
+            bubble_engine_default_config(&config);
+            config.sample_rate = 44100.0f;
+            config.memory_mix = memory_mixes[m];
+            config.memory_pull = memory_mixes[m] * 0.5f;
+            config.sustain_diffusion_enable = 1;
+            config.sustain_diffusion_amount = 0.50f;
+            config.rng_seed = seed;
+
+            BubbleEngine_t engine;
+            SoundBubbles_Init(&engine, g_delay, &config);
+            SoundBubbles_SetFeedbackEnabled(&engine, true);
+
+            const int sr = 44100;
+            // 0.0 - 4.5s: Sustain body
+            // 4.5 - 7.5s: Decay tail
+            // 7.5 - 15.0s: Silence tail with Auto-Hold
+            const int total_samples = 15 * sr;
+            const int block_size = 64;
+            float in[64], out_l[64], out_r[64];
+
+            for (int i = 0; i < total_samples; i += block_size) {
+                float t = (float)i / (float)sr;
+                for (int k = 0; k < block_size; k++) {
+                    float cur_t = t + (float)k / (float)sr;
+                    if (cur_t < 4.5f) {
+                        in[k] = 0.70f * (0.6f * sinf(2.0f * M_PI_F * 440.0f * cur_t) +
+                                         0.3f * sinf(2.0f * M_PI_F * 880.0f * cur_t));
+                    } else {
+                        in[k] = 0.0f;
+                    }
+                }
+                SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+
+                // Accumulate tail RMS in [7.5s, 14.5s]
+                if (t >= 7.5f && t < 14.5f) {
+                    for (int k = 0; k < block_size; k++) {
+                        float m_samp = 0.5f * (out_l[k] + out_r[k]);
+                        total_tail_energy += (double)m_samp * (double)m_samp;
+                        total_tail_samples++;
+                    }
+                }
+            }
+        }
+
+        SoundBubblesTest_SetTierTrace(NULL, NULL);
+
+        float tail_rms = (total_tail_samples > 0) ? (float)sqrt(total_tail_energy / (double)total_tail_samples) : 0.0f;
+
+        const char* state_names[] = {"SUSTAIN_BODY", "SPARSE_DECAY", "SILENCE_HOLD", "COMBINED_LATE"};
+        PhraseStateStats_t* state_ptrs[] = {
+            &g_current_mem_stats.sustain,
+            &g_current_mem_stats.decay,
+            &g_current_mem_stats.silence,
+            &g_current_mem_stats.combined
+        };
+
+        for (int s = 0; s < 4; s++) {
+            PhraseStateStats_t* st = state_ptrs[s];
+            if (st->total_count > 0) {
+                qsort(st->read_ages, st->total_count, sizeof(float), compare_float);
+                double sum_age = 0.0;
+                for (int i = 0; i < st->total_count; i++) sum_age += (double)st->read_ages[i];
+                float mean_age = (float)(sum_age / (double)st->total_count);
+                float p50_age = st->read_ages[(int)(0.50f * (float)(st->total_count - 1))];
+                float p90_age = st->read_ages[(int)(0.90f * (float)(st->total_count - 1))];
+                float p95_age = st->read_ages[(int)(0.95f * (float)(st->total_count - 1))];
+
+                float r_pct = 100.0f * (float)st->recent_count / (float)st->total_count;
+                float m_pct = 100.0f * (float)st->mid_count / (float)st->total_count;
+                float d_pct = 100.0f * (float)st->deep_count / (float)st->total_count;
+
+                printf("%s,%.2f,%d,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.2f\n",
+                       state_names[s], memory_mixes[m], st->total_count,
+                       r_pct, m_pct, d_pct,
+                       mean_age, p50_age, p90_age, p95_age,
+                       to_db(tail_rms));
+            }
+        }
+    }
+#else
     printf("MEMORY_SWEEP_CSV\n");
     printf("MemoryMix,RecentPct,MidPct,DeepPct,TailRMS_dB,Peak_dB\n");
 
@@ -239,26 +395,16 @@ static int run_memory_sweep(void) {
             }
         }
 
-        // Measure tail RMS in [2.0s, 5.0s]
         int tail_start = 2 * sr;
         int tail_count = 3 * sr;
         float tail_rms = calc_rms(out_accum + tail_start, tail_count);
         float peak = calc_peak(out_accum, total_samples);
         free(out_accum);
 
-        int rec = 0, mid = 0, deep = 0;
-#ifdef M5A_CANDIDATE_BUILD
-        SoundBubbles_GetMemoryTierCounts(&engine, &rec, &mid, &deep);
-#endif
-        int tot = rec + mid + deep;
-        printf("%.2f,%.1f,%.1f,%.1f,%.2f,%.2f\n",
-               memory_mixes[m],
-               tot ? 100.0f * (float)rec / (float)tot : 0.0f,
-               tot ? 100.0f * (float)mid / (float)tot : 0.0f,
-               tot ? 100.0f * (float)deep / (float)tot : 0.0f,
-               to_db(tail_rms),
-               to_db(peak));
+        printf("%.2f,0.0,0.0,0.0,%.2f,%.2f\n",
+               memory_mixes[m], to_db(tail_rms), to_db(peak));
     }
+#endif
     return 0;
 }
 
@@ -620,11 +766,224 @@ static int run_cpu_benchmark(void) {
 }
 
 // ---------------------------------------------------------------------------
+// 9. Attack Parity Qualification across 4 Audio Sources & 5 Windows
+// ---------------------------------------------------------------------------
+typedef enum {
+    SOURCE_HARMONIC_PLUCK = 0,
+    SOURCE_HARP_TRANSIENT,
+    SOURCE_PERCUSSIVE_PULSE,
+    SOURCE_TONAL_ONSET
+} AudioSource_t;
+
+static const char* g_source_names[] = {
+    "harmonic_pluck",
+    "harp_transient",
+    "percussive_pulse",
+    "tonal_onset"
+};
+
+static inline float GenerateSourceSample(AudioSource_t src, float t) {
+    switch (src) {
+        case SOURCE_HARMONIC_PLUCK:
+            return 0.95f * expf(-t * 25.0f) * (0.6f * sinf(2.0f * M_PI_F * 1000.0f * t) +
+                                                0.3f * sinf(2.0f * M_PI_F * 2000.0f * t) +
+                                                0.1f * sinf(2.0f * M_PI_F * 3000.0f * t));
+        case SOURCE_HARP_TRANSIENT:
+            return 0.95f * expf(-t * 40.0f) * (0.7f * sinf(2.0f * M_PI_F * 1500.0f * t) +
+                                                0.3f * sinf(2.0f * M_PI_F * 3000.0f * t));
+        case SOURCE_PERCUSSIVE_PULSE:
+            return 0.95f * expf(-t * 120.0f) * sinf(2.0f * M_PI_F * 800.0f * t);
+        case SOURCE_TONAL_ONSET:
+            if (t < 0.30f) {
+                return 0.85f * (1.0f - expf(-t * 40.0f)) * (0.7f * sinf(2.0f * M_PI_F * 440.0f * t) +
+                                                             0.3f * sinf(2.0f * M_PI_F * 880.0f * t));
+            } else {
+                return 0.85f * expf(-(t - 0.30f) * 20.0f) * (0.7f * sinf(2.0f * M_PI_F * 440.0f * t) +
+                                                              0.3f * sinf(2.0f * M_PI_F * 880.0f * t));
+            }
+        default:
+            return 0.0f;
+    }
+}
+
+static int run_attack_parity(int argc, char** argv) {
+    const char* dump_prefix = (argc >= 3) ? argv[2] : NULL;
+
+    const int sr = 44100;
+    const int total_samples = (int)(0.500f * (float)sr); // 500 ms = 22050 samples
+    const int block_size = 64;
+
+    printf("ATTACK_PARITY_CSV\n");
+    printf("Source,Window,RMS_dB,Peak_dB,Centroid_Hz\n");
+
+    for (int s = 0; s < 4; s++) {
+        AudioSource_t src = (AudioSource_t)s;
+        const char* src_name = g_source_names[s];
+
+        BubbleEngineConfig_t config;
+        bubble_engine_default_config(&config);
+        config.sample_rate = (float)sr;
+        config.memory_mix = 0.50f;
+        config.sustain_diffusion_enable = 1;
+        config.sustain_diffusion_amount = 0.50f;
+        config.rng_seed = 1u;
+
+        BubbleEngine_t engine;
+        SoundBubbles_Init(&engine, g_delay, &config);
+
+        float in[64], out_l[64], out_r[64];
+        float* out = (float*)malloc((total_samples + block_size) * sizeof(float));
+        int out_idx = 0;
+
+        for (int i = 0; i < total_samples; i += block_size) {
+            for (int k = 0; k < block_size; k++) {
+                float t = (float)(i + k) / (float)sr;
+                in[k] = GenerateSourceSample(src, t);
+            }
+            SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, block_size);
+            for (int k = 0; k < block_size; k++) {
+                if (out_idx < total_samples) {
+                    out[out_idx++] = 0.5f * (out_l[k] + out_r[k]);
+                }
+            }
+        }
+
+        if (dump_prefix != NULL) {
+            char filename[512];
+            snprintf(filename, sizeof(filename), "%s_%s.f32", dump_prefix, src_name);
+            FILE* f = fopen(filename, "wb");
+            if (f != NULL) {
+                fwrite(out, sizeof(float), total_samples, f);
+                fclose(f);
+            }
+        }
+
+        struct {
+            const char* name;
+            int start;
+            int len;
+        } win_defs[] = {
+            {"0-50ms", 0, (int)(0.050f * sr)},
+            {"50-100ms", (int)(0.050f * sr), (int)(0.050f * sr)},
+            {"100-200ms", (int)(0.100f * sr), (int)(0.100f * sr)},
+            {"200-300ms", (int)(0.200f * sr), (int)(0.100f * sr)},
+            {"300-500ms", (int)(0.300f * sr), (int)(0.200f * sr)},
+            {"0-100ms", 0, (int)(0.100f * sr)},
+            {"100-300ms", (int)(0.100f * sr), (int)(0.200f * sr)},
+            {"0-300ms", 0, (int)(0.300f * sr)}
+        };
+
+        for (size_t w = 0; w < sizeof(win_defs)/sizeof(win_defs[0]); w++) {
+            float rms = calc_rms(out + win_defs[w].start, win_defs[w].len);
+            float peak = calc_peak(out + win_defs[w].start, win_defs[w].len);
+            float centroid = calc_centroid(out + win_defs[w].start, win_defs[w].len, (float)sr);
+            printf("%s,%s,%.2f,%.2f,%.1f\n", src_name, win_defs[w].name, to_db(rms), to_db(peak), centroid);
+        }
+
+        free(out);
+    }
+
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// 10. Single Source of Truth Tier Ranges Verification
+// ---------------------------------------------------------------------------
+static int run_tier_ranges(void) {
+#ifdef M5A_CANDIDATE_BUILD
+    const float memory_mixes[] = {0.0f, 0.25f, 0.50f, 0.75f, 1.0f};
+    printf("TIER_RANGES_CSV\n");
+    printf("Tier,MemoryMix,MinMs,MaxMs\n");
+    for (int t = 0; t < 3; t++) {
+        BubbleMemoryTier tier = (BubbleMemoryTier)t;
+        const char* name = (t == 0) ? "Recent" : ((t == 1) ? "Mid" : "Deep");
+        for (int m = 0; m < 5; m++) {
+            BubbleEngineConfig_t config;
+            bubble_engine_default_config(&config);
+            config.sample_rate = 44100.0f;
+            config.memory_mix = memory_mixes[m];
+            config.memory_pull = memory_mixes[m] * 0.5f;
+
+            BubbleEngine_t engine;
+            SoundBubbles_Init(&engine, g_delay, &config);
+
+            float min_ms = 0.0f, max_ms = 0.0f;
+            SoundBubbles_ResolveMemoryTierRangeMs(&engine, tier, &min_ms, &max_ms);
+            printf("%s,%.2f,%.1f,%.1f\n", name, memory_mixes[m], min_ms, max_ms);
+        }
+    }
+#else
+    printf("TIER_RANGES_NOT_SUPPORTED_IN_BASELINE\n");
+#endif
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// 11. Tier Trace Determinism Verification
+// ---------------------------------------------------------------------------
+#ifdef M5A_CANDIDATE_BUILD
+static int g_tier_trace_count = 0;
+static BubbleTierTraceRecord_t g_tier_trace_records[256];
+
+static void TierTraceHook(void* user, const SoundBubblesEngine_t* engine, const BubbleTierTraceRecord_t* record) {
+    (void)user; (void)engine;
+    if (g_tier_trace_count < 256) {
+        g_tier_trace_records[g_tier_trace_count++] = *record;
+    }
+}
+#endif
+
+static int run_tier_trace(void) {
+#ifdef M5A_CANDIDATE_BUILD
+    BubbleTierTraceRecord_t run1[256];
+    BubbleTierTraceRecord_t run2[256];
+    int count1 = 0, count2 = 0;
+
+    for (int run = 0; run < 2; run++) {
+        g_tier_trace_count = 0;
+        SoundBubblesTest_SetTierTrace(TierTraceHook, NULL);
+
+        BubbleEngineConfig_t config;
+        bubble_engine_default_config(&config);
+        config.sample_rate = 44100.0f;
+        config.memory_mix = 0.50f;
+        config.rng_seed = 42;
+
+        BubbleEngine_t engine;
+        SoundBubbles_Init(&engine, g_delay, &config);
+
+        float in[64], out_l[64], out_r[64];
+        for (int i = 0; i < 44100; i += 64) {
+            float t = (float)i / 44100.0f;
+            for (int k = 0; k < 64; k++) in[k] = (t < 0.2f) ? 0.8f * sinf(2.0f * M_PI_F * 440.0f * (t + (float)k / 44100.0f)) : 0.0f;
+            SoundBubbles_ProcessBlock(&engine, in, out_l, out_r, 64);
+        }
+
+        SoundBubblesTest_SetTierTrace(NULL, NULL);
+        if (run == 0) {
+            count1 = g_tier_trace_count;
+            memcpy(run1, g_tier_trace_records, sizeof(run1));
+        } else {
+            count2 = g_tier_trace_count;
+            memcpy(run2, g_tier_trace_records, sizeof(run2));
+        }
+    }
+
+    int match = (count1 == count2 && count1 > 0 && memcmp(run1, run2, count1 * sizeof(BubbleTierTraceRecord_t)) == 0) ? 1 : 0;
+    printf("TIER_TRACE_DETERMINISM: SpawnsCaptured=%d MatchExact=%d\n", count1, match);
+    return match ? 0 : 1;
+#else
+    printf("TIER_TRACE_NOT_SUPPORTED_IN_BASELINE\n");
+    return 0;
+#endif
+}
+
+// ---------------------------------------------------------------------------
 // Main Dispatcher
 // ---------------------------------------------------------------------------
 int main(int argc, char** argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <distribution|memory_sweep|periodicity|attack_integrity|cross_phrase|pitch_stress|block_invariance|cpu_benchmark>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <distribution|memory_sweep|periodicity|attack_integrity|attack_parity|tier_ranges|tier_trace|cross_phrase|pitch_stress|block_invariance|cpu_benchmark>\n", argv[0]);
         return 1;
     }
 
@@ -633,6 +992,9 @@ int main(int argc, char** argv) {
     if (strcmp(mode, "memory_sweep") == 0) return run_memory_sweep();
     if (strcmp(mode, "periodicity") == 0) return run_periodicity();
     if (strcmp(mode, "attack_integrity") == 0) return run_attack_integrity();
+    if (strcmp(mode, "attack_parity") == 0) return run_attack_parity(argc, argv);
+    if (strcmp(mode, "tier_ranges") == 0) return run_tier_ranges();
+    if (strcmp(mode, "tier_trace") == 0) return run_tier_trace();
     if (strcmp(mode, "cross_phrase") == 0) return run_cross_phrase();
     if (strcmp(mode, "pitch_stress") == 0) return run_pitch_stress();
     if (strcmp(mode, "block_invariance") == 0) return run_block_invariance();

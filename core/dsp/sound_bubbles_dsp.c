@@ -4,6 +4,7 @@
 #include <float.h>
 #include <math.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 size_t SoundBubbles_RequiredBufferSamples(float sample_rate) {
@@ -209,6 +210,13 @@ static void BubblesTest_SetOnsetTrace(BubbleOnsetTraceFn fn, void* user) {
     g_bubble_onset_trace_user = user;
 }
 #endif
+
+static BubbleTierTraceFn g_bubble_tier_trace_fn = NULL;
+static void* g_bubble_tier_trace_user = NULL;
+void SoundBubblesTest_SetTierTrace(BubbleTierTraceFn fn, void* user) {
+    g_bubble_tier_trace_fn = fn;
+    g_bubble_tier_trace_user = user;
+}
 
 static int32_t ResolveFadeSamples(float sample_rate);
 static void ProcessBlockInternal(SoundBubblesEngine_t* engine,
@@ -1923,6 +1931,19 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
         engine->spawn_anchor_count++;
     }
 
+    if (g_bubble_tier_trace_fn != NULL) {
+        BubbleTierTraceRecord_t record;
+        record.spawn_id = spawn_id;
+        record.phrase_anchor_age = engine->phrase_anchor_age;
+        record.engine_state = engine->engine_state;
+        record.memory_macro = Clamp01(0.5f * engine->config.memory_mix + 0.5f * engine->config.memory_pull);
+        record.memory_tier = v->memory_tier;
+        record.read_offset_samples = read_offset_samples;
+        record.read_age_ms = read_age_ms;
+        record.used_anchor = used_anchor;
+        g_bubble_tier_trace_fn(g_bubble_tier_trace_user, engine, &record);
+    }
+
     float spread = (b_class == BUBBLE_CLASS_MICRO_ATTACK) ? engine->config.attack_pan_spread : engine->config.sustain_pan_spread;
     float pan = (RandomFloat01(engine) * 2.0f - 1.0f) * Clamp01(spread) * Clamp01(engine->config.stereo_width);
     float pan_pos = Clamp((pan + 1.0f) * 0.5f, 0.0f, 1.0f);
@@ -1989,6 +2010,217 @@ static void Voice_SpawnInit(SoundBubblesEngine_t* engine, int voice_idx, BubbleC
     }
 }
 
+// --- Single source of truth for runtime tier ranges (Section 17-21) ---
+void SoundBubbles_ResolveMemoryTierRangeSamples(const SoundBubblesEngine_t* engine,
+                                                BubbleMemoryTier tier,
+                                                int32_t* out_min_offset,
+                                                int32_t* out_max_offset) {
+    if (engine == NULL) {
+        if (out_min_offset) *out_min_offset = 0;
+        if (out_max_offset) *out_max_offset = 0;
+        return;
+    }
+    const float sr = engine->config.sample_rate;
+    const int32_t min_safe = BUBBLES_GUARD_ZONE_SAMPLES;
+    int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(sr);
+    const int32_t max_safe = buffer_size - BUBBLES_GUARD_ZONE_SAMPLES - 1;
+
+    int32_t min_s = min_safe;
+    int32_t max_s = max_safe;
+
+    switch (tier) {
+        case BUBBLE_MEMORY_RECENT: {
+            // Recent tier: derived from body_region (~80-250ms), clamped to Recent envelope (35-420ms)
+            min_s = SoundBubbles_ReferenceSamplesToSamples(engine->config.body_region.min_offset_samples, sr);
+            max_s = SoundBubbles_ReferenceSamplesToSamples(engine->config.body_region.max_offset_samples, sr);
+            int32_t env_min = (int32_t)(BUBBLES_TIER_RECENT_DEFAULT_MIN_MS * (sr / 1000.0f));
+            int32_t env_max = (int32_t)(BUBBLES_TIER_RECENT_DEFAULT_MAX_MS * (sr / 1000.0f));
+            if (min_s < env_min) min_s = env_min;
+            if (max_s > env_max) max_s = env_max;
+            break;
+        }
+        case BUBBLE_MEMORY_MID: {
+            // Mid tier: derived from memory_region (~250-900ms), clamped/expanded to Mid envelope (300-1100ms)
+            min_s = SoundBubbles_ReferenceSamplesToSamples(engine->config.memory_region.min_offset_samples, sr);
+            max_s = SoundBubbles_ReferenceSamplesToSamples(engine->config.memory_region.max_offset_samples, sr);
+            int32_t env_min = (int32_t)(BUBBLES_TIER_MID_DEFAULT_MIN_MS * (sr / 1000.0f));
+            int32_t env_max = (int32_t)(BUBBLES_TIER_MID_DEFAULT_MAX_MS * (sr / 1000.0f));
+            if (min_s < env_min) min_s = env_min;
+            if (max_s > env_max) max_s = env_max;
+            break;
+        }
+        case BUBBLE_MEMORY_DEEP:
+        default: {
+            // Deep tier: scaled depth by MEMORY macro (0.0 -> ~500-900ms, 1.0 -> ~850-1880ms)
+            float mem = Clamp01(0.5f * engine->config.memory_mix + 0.5f * engine->config.memory_pull);
+            float deep_min_ms = 500.0f + 350.0f * mem;
+            float deep_max_ms = 900.0f + 980.0f * mem;
+            min_s = (int32_t)(deep_min_ms * (sr / 1000.0f));
+            max_s = (int32_t)(deep_max_ms * (sr / 1000.0f));
+            break;
+        }
+    }
+
+    if (min_s < min_safe) min_s = min_safe;
+    if (max_s < min_safe) max_s = min_safe;
+    if (min_s > max_safe) min_s = max_safe;
+    if (max_s > max_safe) max_s = max_safe;
+    if (max_s < min_s) max_s = min_s;
+
+    if (out_min_offset) *out_min_offset = min_s;
+    if (out_max_offset) *out_max_offset = max_s;
+}
+
+void SoundBubbles_ResolveMemoryTierRangeMs(const SoundBubblesEngine_t* engine,
+                                          BubbleMemoryTier tier,
+                                          float* out_min_ms,
+                                          float* out_max_ms) {
+    int32_t min_s = 0, max_s = 0;
+    SoundBubbles_ResolveMemoryTierRangeSamples(engine, tier, &min_s, &max_s);
+    float sr = (engine && engine->config.sample_rate > 0.0f) ? engine->config.sample_rate : 44100.0f;
+    if (out_min_ms) *out_min_ms = (float)min_s * (1000.0f / sr);
+    if (out_max_ms) *out_max_ms = (float)max_s * (1000.0f / sr);
+}
+
+// Early-phrase legacy M4D.1 read-region resolution (Section 1-3)
+static ReadRegionChoice_t ResolveLegacyEarlyReadRegion(SoundBubblesEngine_t* engine,
+                                                      BubbleClass_t bubble_class,
+                                                      EngineState_t engine_state,
+                                                      float roll) {
+    ReadRegionChoice_t choice;
+    memset(&choice, 0, sizeof(choice));
+    choice.memory_tier = BUBBLE_MEMORY_RECENT;
+    choice.recent_bias = 0.60f;
+
+    if (bubble_class == BUBBLE_CLASS_MICRO_ATTACK) {
+        choice.region = &engine->config.attack_region;
+        choice.region_id = 0;
+        choice.recent_bias = 0.88f;
+        return choice;
+    }
+
+    float memory_mix = Clamp01(engine->config.memory_mix);
+    float memory_pull = Clamp01(engine->config.memory_pull);
+    float deep_weight = BUBBLES_MEMORY_WEIGHT_DEEP + 0.30f * memory_mix + 0.10f * memory_pull;
+    float recent_weight = BUBBLES_MEMORY_WEIGHT_RECENT - 0.18f * memory_mix;
+
+    if (engine_state == ENGINE_STATE_TRANSIENT_BURST || engine_state == ENGINE_STATE_ATTACK_ONGOING) {
+        deep_weight *= 0.30f;
+        recent_weight += 0.12f;
+    } else if (engine_state == ENGINE_STATE_SPARSE_DECAY) {
+        deep_weight += 0.10f;
+    }
+    float f = engine->smoothed_freeze;
+    deep_weight += 0.18f * f;
+
+    if (recent_weight < 0.35f) recent_weight = 0.35f;
+    if (deep_weight < 0.02f) deep_weight = 0.02f;
+    if (deep_weight > BUBBLES_MEMORY_DEEP_MAX_SHARE) deep_weight = BUBBLES_MEMORY_DEEP_MAX_SHARE;
+    float medium_weight = 1.0f - recent_weight - deep_weight;
+    if (medium_weight < 0.08f) {
+        medium_weight = 0.08f;
+        recent_weight = 1.0f - medium_weight - deep_weight;
+        if (recent_weight < 0.30f) recent_weight = 0.30f;
+    }
+
+    if (roll < recent_weight) {
+        choice.region = &engine->config.body_region;
+        choice.region_id = 1;
+        choice.memory_tier = BUBBLE_MEMORY_RECENT;
+        choice.recent_bias = 0.78f;
+    } else if (roll < recent_weight + medium_weight) {
+        choice.region = &engine->config.body_region;
+        choice.region_id = 1;
+        choice.memory_tier = BUBBLE_MEMORY_RECENT;
+        choice.recent_bias = 0.45f;
+    } else {
+        choice.region = &engine->config.memory_region;
+        choice.region_id = 2;
+        choice.memory_tier = BUBBLE_MEMORY_MID;
+        choice.recent_bias = 0.38f;
+    }
+
+    return choice;
+}
+
+static int32_t ChooseLegacyEarlyReadOffsetSamples(SoundBubblesEngine_t* engine,
+                                                 const ReadRegionChoice_t* choice,
+                                                 float coherence,
+                                                 SharedSpawnId_t spawn_id,
+                                                 bool* out_used_anchor) {
+    float sr = engine->config.sample_rate;
+    const int32_t min_safe = BUBBLES_GUARD_ZONE_SAMPLES;
+    int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(sr);
+    const int32_t max_safe = buffer_size - BUBBLES_GUARD_ZONE_SAMPLES - 1;
+
+    int32_t min_offset = SoundBubbles_ReferenceSamplesToSamples(choice->region->min_offset_samples, sr);
+    int32_t max_offset = SoundBubbles_ReferenceSamplesToSamples(choice->region->max_offset_samples, sr);
+
+    if (min_offset < min_safe) min_offset = min_safe;
+    if (max_offset < min_safe) max_offset = min_safe;
+    if (min_offset > max_safe) min_offset = max_safe;
+    if (max_offset > max_safe) max_offset = max_safe;
+    if (max_offset < min_offset) max_offset = min_offset;
+
+    int32_t span = max_offset - min_offset;
+    if (span == 0) {
+        return min_offset;
+    }
+
+    float w_recent = BUBBLES_MEMORY_WEIGHT_RECENT + 0.30f * (choice->recent_bias - 0.5f);
+    float w_deep = BUBBLES_MEMORY_WEIGHT_DEEP - 0.12f * (choice->recent_bias - 0.5f);
+    if (w_recent < 0.34f) w_recent = 0.34f;
+    if (w_deep < 0.02f) w_deep = 0.02f;
+    float w_medium = 1.0f - w_recent - w_deep;
+    if (w_medium < 0.05f) {
+        w_medium = 0.05f;
+        w_recent = 1.0f - w_medium - w_deep;
+    }
+
+    float band_lo;
+    float band_hi;
+    float tier_roll = SharedSpawnRandom(engine, coherence, spawn_id, BUBBLES_SHARED_DECISION_OFFSET_BAND);
+    if (tier_roll < w_recent) {
+        band_lo = 0.0f;
+        band_hi = 1.0f / 3.0f;
+    } else if (tier_roll < w_recent + w_medium) {
+        band_lo = 1.0f / 3.0f;
+        band_hi = 2.0f / 3.0f;
+    } else {
+        band_lo = 2.0f / 3.0f;
+        band_hi = 1.0f;
+    }
+
+    float u = RandomFloat01(engine);
+    float t = band_lo + (band_hi - band_lo) * u;
+    int32_t offset = min_offset + (int32_t)(t * (float)span);
+    if (offset < min_offset) offset = min_offset;
+    if (offset > max_offset) offset = max_offset;
+
+    if (engine->phrase_anchor_valid && engine->anchor_mix > 0.001f) {
+        float mix = Clamp(engine->anchor_mix, 0.0f, BUBBLES_ANCHOR_MAX_MIX);
+        float anchor_roll = RandomFloat01(engine);
+        if (anchor_roll < mix) {
+            int32_t anchor_distance = engine->write_ptr - engine->phrase_anchor_write_ptr;
+            if (anchor_distance < 0) anchor_distance += buffer_size;
+
+            float mem_macro = Clamp01(engine->config.memory_mix);
+            float spread_sec = 0.050f + 0.150f * mem_macro;
+            int32_t spread_samples = (int32_t)(spread_sec * sr);
+            if (spread_samples < 32) spread_samples = 32;
+
+            float anchor_u = RandomFloat01(engine);
+            int32_t candidate_anchor_offset = anchor_distance - (int32_t)(anchor_u * (float)spread_samples);
+            if (candidate_anchor_offset < min_safe) candidate_anchor_offset = min_safe;
+            if (candidate_anchor_offset > max_safe) candidate_anchor_offset = max_safe;
+            offset = candidate_anchor_offset;
+            if (out_used_anchor != NULL) *out_used_anchor = true;
+        }
+    }
+
+    return offset;
+}
+
 static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, BubbleClass_t bubble_class, EngineState_t engine_state, SharedSpawnId_t spawn_id) {
     ReadRegionChoice_t choice;
     memset(&choice, 0, sizeof(choice));
@@ -2009,40 +2241,55 @@ static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, 
         return choice;
     }
 
-    // M5A multi-scale memory depth distribution
+    // Determine early-phrase blend factor (Section 1-4):
+    // 0.0 = full legacy M4D.1 early policy (source attachment & punch preserved)
+    // 1.0 = full M5A multi-tier architecture (spatial & temporal diffusion)
+    // Window: [250ms, 400ms] smooth transition
+    float blend_factor = 1.0f;
+    if (engine_state == ENGINE_STATE_TRANSIENT_BURST || engine_state == ENGINE_STATE_ATTACK_ONGOING) {
+        blend_factor = 0.0f;
+    } else if (engine->phrase_anchor_valid) {
+        float phrase_age_ms = (float)engine->phrase_anchor_age * (1000.0f / engine->config.sample_rate);
+        if (phrase_age_ms <= 250.0f) {
+            blend_factor = 0.0f;
+        } else if (phrase_age_ms < 400.0f) {
+            blend_factor = (phrase_age_ms - 250.0f) / 150.0f;
+        }
+    }
+
+    if (blend_factor <= 0.0001f) {
+        return ResolveLegacyEarlyReadRegion(engine, bubble_class, engine_state, roll);
+    }
+
+    // Late phrase M5A multi-scale memory distribution (Section 7)
     float memory_mix = Clamp01(engine->config.memory_mix);
     float memory_pull = Clamp01(engine->config.memory_pull);
-    float deep_weight = 0.0f;
-    float recent_weight = 0.70f;
+    float deep_weight;
+    float recent_weight;
 
-    bool is_young_phrase = engine->phrase_anchor_valid &&
-        ((float)engine->phrase_anchor_age < (0.350f * engine->config.sample_rate));
-    bool is_attack_transient = (engine_state == ENGINE_STATE_TRANSIENT_BURST ||
-                                engine_state == ENGINE_STATE_ATTACK_ONGOING);
-
-    if (is_attack_transient || is_young_phrase) {
-        // Section 7: Attack / early onset is strictly source-connected (0% Deep)
-        recent_weight = 0.78f;
-        deep_weight = 0.0f;
+    if (engine_state == ENGINE_STATE_SPARSE_DECAY) {
+        // Section 7: SPARSE_DECAY: Mid + Deep predominantes
+        recent_weight = 0.35f - 0.05f * memory_mix;
+        deep_weight = (0.28f + 0.12f * memory_mix + 0.08f * memory_pull) * blend_factor;
+    } else if (engine_state == ENGINE_STATE_SILENCE) {
+        // Section 7: SILENCE com Auto-Hold ativo: Deep ganha importância
+        recent_weight = 0.20f - 0.05f * memory_mix;
+        deep_weight = (0.38f + 0.15f * memory_mix + 0.10f * memory_pull) * blend_factor;
     } else {
-        // Sustain, decay, silence
-        deep_weight = BUBBLES_MEMORY_WEIGHT_DEEP + 0.15f * memory_mix + 0.10f * memory_pull;
-        if (engine_state == ENGINE_STATE_SPARSE_DECAY || engine_state == ENGINE_STATE_SILENCE) {
-            deep_weight += 0.06f;
-        }
-        float f = engine->smoothed_freeze;
-        deep_weight += 0.15f * f;
-
-        // Invariants: body/recent >= 0.60 (>0.50 M2 invariant), deep <= 0.25 (<0.45 M2 invariant)
-        if (deep_weight < 0.04f) deep_weight = 0.04f;
-        if (deep_weight > 0.25f) deep_weight = 0.25f;
+        // Section 7: SUSTAIN: Recent + Mid, pequena quantidade de Deep
         recent_weight = 0.65f - 0.05f * memory_mix;
+        deep_weight = (BUBBLES_MEMORY_WEIGHT_DEEP + 0.15f * memory_mix + 0.10f * memory_pull) * blend_factor;
     }
+
+    float f = engine->smoothed_freeze;
+    deep_weight += 0.15f * f * blend_factor;
+    if (deep_weight > 0.50f) deep_weight = 0.50f;
+    if (recent_weight < 0.10f) recent_weight = 0.10f;
 
     float medium_weight = 1.0f - recent_weight - deep_weight;
     if (medium_weight < 0.10f) {
         medium_weight = 0.10f;
-        recent_weight = 1.0f - medium_weight - deep_weight;
+        deep_weight = 1.0f - recent_weight - medium_weight;
     }
 
     if (roll < recent_weight) {
@@ -2051,10 +2298,17 @@ static ReadRegionChoice_t ResolveReadRegionChoice(SoundBubblesEngine_t* engine, 
         choice.memory_tier = BUBBLE_MEMORY_RECENT;
         choice.recent_bias = 0.78f;
     } else if (roll < recent_weight + medium_weight) {
-        choice.region = &engine->config.memory_region;
-        choice.region_id = 2;
-        choice.memory_tier = BUBBLE_MEMORY_MID;
-        choice.recent_bias = 0.50f;
+        if ((roll - recent_weight) / medium_weight < (1.0f - blend_factor)) {
+            choice.region = &engine->config.body_region;
+            choice.region_id = 1;
+            choice.memory_tier = BUBBLE_MEMORY_MID;
+            choice.recent_bias = 0.45f;
+        } else {
+            choice.region = &engine->config.memory_region;
+            choice.region_id = 2;
+            choice.memory_tier = BUBBLE_MEMORY_MID;
+            choice.recent_bias = Lerp(0.45f, 0.50f, blend_factor);
+        }
     } else {
         choice.region = &engine->config.memory_region;
         choice.region_id = 2;
@@ -2133,8 +2387,24 @@ static float ResolveMicroDetuneCents(SoundBubblesEngine_t* engine, BubbleClass_t
 static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadRegionChoice_t* choice, float coherence, SharedSpawnId_t spawn_id, bool* out_used_anchor) {
     if (out_used_anchor != NULL) *out_used_anchor = false;
 
-    const int32_t min_safe = BUBBLES_GUARD_ZONE_SAMPLES;
     const float sr = engine->config.sample_rate;
+
+    float early_blend = 1.0f;
+    if (engine->engine_state == ENGINE_STATE_TRANSIENT_BURST || engine->engine_state == ENGINE_STATE_ATTACK_ONGOING) {
+        early_blend = 0.0f;
+    } else if (engine->phrase_anchor_valid) {
+        float phrase_age_ms = (float)engine->phrase_anchor_age * (1000.0f / sr);
+        if (phrase_age_ms <= 250.0f) {
+            early_blend = 0.0f;
+        } else if (phrase_age_ms < 400.0f) {
+            early_blend = (phrase_age_ms - 250.0f) / 150.0f;
+        }
+    }
+    if (early_blend <= 0.0001f) {
+        return ChooseLegacyEarlyReadOffsetSamples(engine, choice, coherence, spawn_id, out_used_anchor);
+    }
+
+    const int32_t min_safe = BUBBLES_GUARD_ZONE_SAMPLES;
     int32_t buffer_size = (int32_t)SoundBubbles_RequiredBufferSamples(sr);
     const int32_t max_safe = buffer_size - BUBBLES_GUARD_ZONE_SAMPLES - 1;
 
@@ -2145,21 +2415,13 @@ static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadR
         // Micro-attack grain: strictly uses configured attack_region
         min_offset = SoundBubbles_ReferenceSamplesToSamples(engine->config.attack_region.min_offset_samples, sr);
         max_offset = SoundBubbles_ReferenceSamplesToSamples(engine->config.attack_region.max_offset_samples, sr);
-    } else if (choice->memory_tier == BUBBLE_MEMORY_RECENT) {
-        // Recent tier: body_region (~80-250ms)
+    } else if (choice->region_id == 1) {
+        // Body region: Recent or legacy early-phrase Mid
         min_offset = SoundBubbles_ReferenceSamplesToSamples(engine->config.body_region.min_offset_samples, sr);
         max_offset = SoundBubbles_ReferenceSamplesToSamples(engine->config.body_region.max_offset_samples, sr);
-    } else if (choice->memory_tier == BUBBLE_MEMORY_MID) {
-        // Mid tier: memory_region (~250-900ms) with overlap
-        min_offset = SoundBubbles_ReferenceSamplesToSamples(engine->config.memory_region.min_offset_samples, sr);
-        max_offset = SoundBubbles_ReferenceSamplesToSamples(engine->config.memory_region.max_offset_samples, sr);
     } else {
-        // Deep tier: scaled depth by MEMORY macro (Section 9)
-        float mem = Clamp01(0.5f * engine->config.memory_mix + 0.5f * engine->config.memory_pull);
-        float deep_min_ms = 500.0f + 350.0f * mem;
-        float deep_max_ms = 900.0f + 980.0f * mem;
-        min_offset = (int32_t)(deep_min_ms * (sr / 1000.0f));
-        max_offset = (int32_t)(deep_max_ms * (sr / 1000.0f));
+        // Single source of truth for runtime tier ranges (Section 17-21)
+        SoundBubbles_ResolveMemoryTierRangeSamples(engine, choice->memory_tier, &min_offset, &max_offset);
     }
 
     if (min_offset < min_safe) min_offset = min_safe;
@@ -2182,7 +2444,7 @@ static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadR
         float anchor_mix_target = Clamp(base_mix, 0.0f, BUBBLES_ANCHOR_MAX_MIX);
         float anchor_roll = SharedEventUnit(engine->shared_event_seed, spawn_id, BUBBLES_SHARED_KIND_ANCHOR_BLEND, BUBBLES_SHARED_LANE_ANCHOR_ROLL);
         if (anchor_roll >= coherence) {
-            anchor_roll = SharedEventUnit(engine->shared_event_seed ^ engine->channel_decorrelation, spawn_id, BUBBLES_SHARED_KIND_ANCHOR_BLEND, BUBBLES_SHARED_LANE_ANCHOR_OFFSET);
+            anchor_roll = SharedEventUnit(engine->shared_event_seed ^ engine->channel_decorrelation, spawn_id, BUBBLES_SHARED_KIND_ANCHOR_BLEND, BUBBLES_SHARED_LANE_ANCHOR_ROLL);
         }
         if (anchor_roll < anchor_mix_target) {
             int32_t anchor_distance = engine->write_ptr - engine->phrase_anchor_write_ptr;
@@ -2246,12 +2508,26 @@ static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadR
 
     int32_t candidate_offset = base_offset;
 
+    // Early-phrase blend factor for drift: zero drift on early phrase or attack_region or anchor or Recent!
+    float drift_blend = 1.0f;
+    if (engine->engine_state == ENGINE_STATE_TRANSIENT_BURST || engine->engine_state == ENGINE_STATE_ATTACK_ONGOING) {
+        drift_blend = 0.0f;
+    } else if (engine->phrase_anchor_valid) {
+        float phrase_age_ms = (float)engine->phrase_anchor_age * (1000.0f / sr);
+        if (phrase_age_ms <= 250.0f) {
+            drift_blend = 0.0f;
+        } else if (phrase_age_ms < 400.0f) {
+            drift_blend = (phrase_age_ms - 250.0f) / 150.0f;
+        }
+    }
+
     // Anti-loop decorrelation drift along the tail (Section 13, 14, 15, 16):
-    // Zero drift on attack_region or anchor reading or Recent body tier!
-    if (!use_anchor && choice->region != &engine->config.attack_region && choice->memory_tier != BUBBLE_MEMORY_RECENT) {
+    // Zero drift on attack_region, body_region (region_id 1), anchor reading, or Recent tier!
+    if (drift_blend > 0.001f && !use_anchor && choice->region != &engine->config.attack_region &&
+        choice->memory_tier != BUBBLE_MEMORY_RECENT && choice->region_id != 1) {
         float drift_sec = (choice->memory_tier == BUBBLE_MEMORY_DEEP) ? 0.015f : 0.008f;
         float pull = Clamp01(engine->config.memory_pull);
-        drift_sec *= 0.6f + 0.8f * pull;
+        drift_sec *= (0.6f + 0.8f * pull) * drift_blend;
 
         // Incommensurate prime period 7307 ticks ≈ 5.3s @ 44.1 kHz
         float drift_phase = (float)(engine->scheduler_tick % 7307) / 7307.0f;
@@ -2260,12 +2536,12 @@ static int32_t ChooseReadOffsetSamples(SoundBubblesEngine_t* engine, const ReadR
 
         // Spawn-local deterministic offset
         float local_u = SharedEventUnit(engine->shared_event_seed, spawn_id, BUBBLES_SHARED_KIND_MEMORY_DRIFT, BUBBLES_SHARED_LANE_DRIFT);
-        int32_t local_drift = (int32_t)((local_u * 2.0f - 1.0f) * 0.003f * sr);
+        int32_t local_drift = (int32_t)((local_u * 2.0f - 1.0f) * 0.003f * sr * drift_blend);
 
         // Stereo decorrelation: preserve tight coherence on attack, open field on decay
         if (coherence < 0.95f) {
             float st_u = SharedEventUnit(engine->shared_event_seed ^ engine->channel_decorrelation, spawn_id, BUBBLES_SHARED_KIND_MEMORY_DRIFT, BUBBLES_SHARED_LANE_DRIFT);
-            local_drift += (int32_t)((st_u * 2.0f - 1.0f) * (1.0f - coherence) * 0.003f * sr);
+            local_drift += (int32_t)((st_u * 2.0f - 1.0f) * (1.0f - coherence) * 0.003f * sr * drift_blend);
         }
 
         candidate_offset = base_offset + slow_drift + local_drift;
