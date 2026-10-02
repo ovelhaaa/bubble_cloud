@@ -846,8 +846,24 @@ int main()
         {
             std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditor());
             require(editor != nullptr, "processor did not create an editor");
-            require(editor->getWidth() == 1080 && editor->getHeight() == 760,
+            require(editor->getWidth() == 1160 && editor->getHeight() == 900,
                     "editor opened with an unexpected size");
+            int sliders = 0, selectors = 0, steps = 0;
+            for (int i=0; i<editor->getNumChildComponents(); ++i) {
+                auto* child = editor->getChildComponent(i);
+                if (!child->isVisible()) continue;
+                require(!child->getBounds().isEmpty() && editor->getLocalBounds().contains(child->getBounds()),
+                        "visible editor control is empty or clipped");
+                if (dynamic_cast<juce::Slider*>(child)) ++sliders;
+                if (dynamic_cast<juce::ComboBox*>(child)) ++selectors;
+                if (auto* button=dynamic_cast<juce::TextButton*>(child))
+                    if (button->getButtonText().getIntValue()>0) {
+                        require(button->getHeight() >= 26, "rhythm step is too short to read or click");
+                        ++steps;
+                    }
+            }
+            require(sliders == 12 && selectors == 8 && steps == 16,
+                    "editor must expose all macros, morph, selectors and rhythm steps");
             const auto snapshot = editor->createComponentSnapshot(editor->getLocalBounds());
             require(snapshot.isValid(), "editor snapshot could not be rendered");
             const auto screenshot = juce::File::getCurrentWorkingDirectory()
@@ -898,6 +914,18 @@ int main()
             }
             require(loudestRms / quietestRms < 6.0,
                     "factory preset loudness spread is too large for a levelled catalog");
+            {
+                std::unique_ptr<juce::AudioProcessorEditor> liveEditor(processor.createEditor());
+                // The new editor supplies fresh telemetry; label the probe's current preset without reapplying it.
+                for (int i = 0; i < liveEditor->getNumChildComponents(); ++i)
+                    if (auto* selector = dynamic_cast<juce::ComboBox*>(liveEditor->getChildComponent(i)))
+                        if (selector->getNumItems() == 20)
+                            selector->setSelectedItemIndex(presetBox->getSelectedItemIndex(), juce::dontSendNotification);
+                auto image=liveEditor->createComponentSnapshot(liveEditor->getLocalBounds());
+                auto file=juce::File::getCurrentWorkingDirectory().getChildFile("bubbles_editor_live.png");
+                file.deleteFile(); auto output=file.createOutputStream(); juce::PNGImageFormat format;
+                require(output != nullptr && format.writeImageToStream(image,*output), "live editor snapshot failed");
+            }
             const double renderedAudioSeconds = 0.6 * presetBox->getNumItems();
             std::cout << "calibration spread=" << (loudestRms / quietestRms)
                       << "x, render speed=" << (renderedAudioSeconds / std::max(0.001, totalRenderTime))

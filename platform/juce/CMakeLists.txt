@@ -33,6 +33,11 @@ juce_add_plugin(BubbleCloud
 target_sources(BubbleCloud PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
+    Source/BubblesTheme.h
+    Source/BubblesLookAndFeel.h
+    Source/BubblesLookAndFeel.cpp
+    Source/CloudVisualizer.h
+    Source/CloudVisualizer.cpp
     Source/BubbleCloudEngineWrapper.cpp
     
     # Core C sources
@@ -49,6 +54,7 @@ target_include_directories(BubbleCloud PRIVATE
 )
 
 target_compile_definitions(BubbleCloud PUBLIC
+    JUCE_DISPLAY_SPLASH_SCREEN=0
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0

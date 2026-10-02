@@ -7,6 +7,9 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "PluginProcessor.h"
 
+class BubblesLookAndFeel;
+class CloudVisualizer;
+
 class BubbleCloudAudioProcessorEditor : public juce::AudioProcessorEditor,
                                         private juce::Timer
 {
@@ -28,12 +31,8 @@ private:
         juce::String role;
         juce::Slider slider;
         juce::Label titleLabel;
-        juce::Label roleLabel;
-        juce::Label valueLabel;
     };
 
-    class BubblesLookAndFeel;
-    class CloudVisualizer;
 
     ControlBinding& addControl(std::vector<std::unique_ptr<ControlBinding>>& target,
                                const juce::String& parameterId,
@@ -58,6 +57,7 @@ private:
     std::unique_ptr<BubblesLookAndFeel> bubblesLookAndFeel;
     std::unique_ptr<CloudVisualizer> cloudVisualizer;
 
+    juce::TextButton previousPreset { "<" }, nextPreset { ">" };
     juce::ComboBox presetBox;
     juce::ComboBox qualityBox;
     juce::TextButton freezeButton { "Freeze" };
@@ -82,6 +82,7 @@ private:
     std::vector<std::unique_ptr<ComboBoxAttachment>> advancedComboAttachments;
     std::unique_ptr<SliderAttachment> morphAttachment;
     int rhythmPlayheadStep = -1;
+    juce::TooltipWindow tooltipWindow { this, 650 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BubbleCloudAudioProcessorEditor)
 };

@@ -1,22 +1,13 @@
 #include "PluginEditor.h"
+#include "BubblesLookAndFeel.h"
+#include "CloudVisualizer.h"
 
 #include <array>
 #include <cmath>
 
 namespace
 {
-    constexpr int editorWidth = 1080;
-    constexpr int editorHeight = 760;
-
-    const juce::Colour ink = juce::Colour(0xffeef7ff);
-    const juce::Colour textMuted = juce::Colour(0xff8fa7b7);
-    const juce::Colour panel = juce::Colour(0xff101922);
-    const juce::Colour panelRaised = juce::Colour(0xff14212c);
-    const juce::Colour stroke = juce::Colour(0xff243746);
-    const juce::Colour cyan = juce::Colour(0xff55d7ff);
-    const juce::Colour aqua = juce::Colour(0xff58ffd0);
-    const juce::Colour amber = juce::Colour(0xffffb45e);
-
+    using namespace BubblesTheme;
     struct MacroSetting
     {
         const char* parameterId;
@@ -420,249 +411,22 @@ namespace
     void drawPanel(juce::Graphics& g, juce::Rectangle<int> bounds)
     {
         auto r = asFloat(bounds);
-        g.setColour(panel);
+        g.setGradientFill(juce::ColourGradient(panelRaised.withAlpha(0.70f), r.getX(), r.getY(), panel, r.getRight(), r.getBottom(), false));
         g.fillRoundedRectangle(r, 8.0f);
 
         g.setColour(stroke.withAlpha(0.85f));
         g.drawRoundedRectangle(r.reduced(0.5f), 8.0f, 1.0f);
     }
 
-    void drawBubblesMark(juce::Graphics& g, juce::Rectangle<float> bounds, float intensity)
+    void drawBubblesMark(juce::Graphics& g, juce::Rectangle<float> r, float)
     {
-        g.setColour(juce::Colour(0xff020f12));
-        g.fillRoundedRectangle(bounds, 9.0f);
-
-        auto centre = bounds.getCentre();
-        auto scale = juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.42f;
-        const float goldenAngle = 2.39996323f;
-        const int count = 78;
-
-        for (int i = 0; i < count; ++i)
-        {
-            auto t = (float)i / (float)(count - 1);
-            auto radius = scale * std::sqrt(t);
-            auto angle = (float)i * goldenAngle + 0.28f * std::sin(t * 8.0f);
-            auto wobble = 1.0f + 0.08f * std::sin((float)i * 0.73f);
-            auto x = centre.x + std::cos(angle) * radius * wobble;
-            auto y = centre.y + std::sin(angle) * radius * (0.78f + 0.18f * intensity);
-            auto dot = 2.2f + 4.4f * (1.0f - t) + 1.2f * std::sin((float)i * 1.11f);
-            auto alpha = 0.26f + 0.72f * (1.0f - t * 0.58f);
-
-            g.setColour(juce::Colour::fromHSV(0.47f + t * 0.08f, 0.95f, 0.95f, alpha));
-            g.fillEllipse(x - dot * 0.5f, y - dot * 0.5f, dot, dot);
-        }
-
-        g.setColour(cyan.withAlpha(0.16f));
-        g.drawRoundedRectangle(bounds.reduced(0.5f), 9.0f, 1.0f);
+        g.setColour(amber); g.drawEllipse(r.getX()+20, r.getY()+22, 34, 34, 1.6f);
+        g.setColour(panel); g.fillEllipse(r.getX()+8, r.getY()+8, 30, 30);
+        g.setColour(ink); g.drawEllipse(r.getX()+8, r.getY()+8, 30, 30, 1.6f);
+        g.drawEllipse(r.getX(), r.getY()+37, 7, 7, 1.4f);
+        g.fillEllipse(r.getX()+42, r.getY()+8, 4, 4);
     }
 }
-
-class BubbleCloudAudioProcessorEditor::BubblesLookAndFeel : public juce::LookAndFeel_V4
-{
-public:
-    BubblesLookAndFeel()
-    {
-        setColour(juce::ComboBox::backgroundColourId, panelRaised);
-        setColour(juce::ComboBox::outlineColourId, stroke);
-        setColour(juce::ComboBox::textColourId, ink);
-        setColour(juce::PopupMenu::backgroundColourId, panelRaised);
-        setColour(juce::PopupMenu::textColourId, ink);
-        setColour(juce::TextButton::buttonColourId, juce::Colour(0xff172631));
-        setColour(juce::TextButton::buttonOnColourId, cyan.withAlpha(0.28f));
-        setColour(juce::TextButton::textColourOffId, ink);
-        setColour(juce::TextButton::textColourOnId, ink);
-    }
-
-    void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
-                          float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
-                          juce::Slider&) override
-    {
-        auto rawBounds = juce::Rectangle<float>((float)x, (float)y, (float)width, (float)height).reduced(4.0f);
-        auto side = juce::jmin(rawBounds.getWidth(), rawBounds.getHeight());
-        auto bounds = rawBounds.withSizeKeepingCentre(side, side);
-        auto radius = juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.5f;
-        auto centre = bounds.getCentre();
-        auto lineW = juce::jmax(3.0f, radius * 0.08f);
-        auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
-
-        g.setColour(juce::Colour(0xff0a1016));
-        g.fillEllipse(bounds.reduced(radius * 0.14f));
-
-        g.setColour(juce::Colour(0xff21313d));
-        g.drawEllipse(bounds.reduced(radius * 0.11f), 1.0f);
-
-        juce::Path backgroundArc;
-        backgroundArc.addCentredArc(centre.x, centre.y, radius, radius, 0.0f,
-                                    rotaryStartAngle, rotaryEndAngle, true);
-        g.setColour(juce::Colour(0xff283b48));
-        g.strokePath(backgroundArc, juce::PathStrokeType(lineW, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-
-        juce::Path valueArc;
-        valueArc.addCentredArc(centre.x, centre.y, radius, radius, 0.0f,
-                               rotaryStartAngle, angle, true);
-        juce::ColourGradient glow(cyan, bounds.getX(), bounds.getY(), aqua, bounds.getRight(), bounds.getBottom(), false);
-        g.setGradientFill(glow);
-        g.strokePath(valueArc, juce::PathStrokeType(lineW + 1.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-
-        auto pointerLength = radius * 0.58f;
-        auto pointerThickness = juce::jmax(2.0f, radius * 0.035f);
-        juce::Path pointer;
-        pointer.addRoundedRectangle(-pointerThickness * 0.5f, -pointerLength, pointerThickness, pointerLength, pointerThickness);
-        pointer.applyTransform(juce::AffineTransform::rotation(angle).translated(centre.x, centre.y));
-        g.setColour(ink.withAlpha(0.92f));
-        g.fillPath(pointer);
-
-        g.setColour(cyan.withAlpha(0.12f));
-        g.fillEllipse(bounds.reduced(radius * 0.42f));
-    }
-
-    void drawButtonBackground(juce::Graphics& g, juce::Button& button, const juce::Colour&,
-                              bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override
-    {
-        auto bounds = button.getLocalBounds().toFloat().reduced(0.5f);
-        auto active = button.getToggleState() || shouldDrawButtonAsDown;
-        const bool rhythmPlayhead = (bool)button.getProperties().getWithDefault("rhythmPlayhead", false);
-        auto fill = rhythmPlayhead ? amber.withAlpha(0.28f)
-                                   : (active ? cyan.withAlpha(0.22f) : juce::Colour(0xff172631));
-        if (shouldDrawButtonAsHighlighted)
-            fill = fill.brighter(0.12f);
-
-        g.setColour(fill);
-        g.fillRoundedRectangle(bounds, 6.0f);
-        g.setColour(rhythmPlayhead ? amber.withAlpha(0.92f)
-                                   : (active ? cyan.withAlpha(0.78f) : stroke));
-        g.drawRoundedRectangle(bounds, 6.0f, 1.0f);
-    }
-};
-
-class BubbleCloudAudioProcessorEditor::CloudVisualizer : public juce::Component
-{
-public:
-    CloudVisualizer() = default;
-
-    void setTelemetry(const BubbleCloudTelemetry& next)
-    {
-        telemetry = next;
-        smoothedPeakLeft = juce::jmax(next.peakLeft, smoothedPeakLeft * 0.82f);
-        smoothedPeakRight = juce::jmax(next.peakRight, smoothedPeakRight * 0.82f);
-        smoothedEnvelope += 0.24f * (next.envelope - smoothedEnvelope);
-        spawnPulse = juce::jlimit(0.0f, 1.0f, spawnPulse * 0.72f + (float)next.spawnCount * 0.08f);
-    }
-
-    void paint(juce::Graphics& g) override
-    {
-        auto bounds = getLocalBounds().toFloat();
-        g.setColour(juce::Colour(0xff081018));
-        g.fillRoundedRectangle(bounds, 8.0f);
-
-        const float energy = juce::jlimit(0.0f, 1.0f,
-                                         smoothedEnvelope * 1.8f
-                                         + 0.5f * juce::jmax(smoothedPeakLeft, smoothedPeakRight));
-        juce::ColourGradient wash(cyan.withAlpha(0.025f + energy * 0.08f), bounds.getX(), bounds.getY(),
-                                  (telemetry.frozen ? aqua : cyan).withAlpha(0.10f + energy * 0.15f),
-                                  bounds.getRight(), bounds.getBottom(), false);
-        g.setGradientFill(wash);
-        g.fillRoundedRectangle(bounds.reduced(1.0f), 8.0f);
-
-        auto content = getLocalBounds().reduced(18);
-        auto titleArea = content.removeFromTop(26);
-        auto meterBounds = content.removeFromBottom(50);
-        content.removeFromBottom(8);
-        auto particleBounds = content.toFloat().reduced(4.0f, 2.0f);
-
-        g.setColour(stroke.withAlpha(0.35f));
-        g.drawVerticalLine((int)particleBounds.getCentreX(), particleBounds.getY(), particleBounds.getBottom());
-
-        if (spawnPulse > 0.02f) {
-            const float pulseSize = 24.0f + spawnPulse * juce::jmin(particleBounds.getWidth(), particleBounds.getHeight()) * 0.55f;
-            g.setColour(aqua.withAlpha(0.12f * spawnPulse));
-            g.drawEllipse(particleBounds.getCentreX() - pulseSize * 0.5f,
-                          particleBounds.getCentreY() - pulseSize * 0.5f,
-                          pulseSize, pulseSize, 1.5f);
-        }
-
-        int renderedVoices = 0;
-        for (std::size_t i = 0; i < telemetry.voices.size(); ++i) {
-            const auto& voice = telemetry.voices[i];
-            if (!voice.active)
-                continue;
-
-            const float phase = juce::jlimit(0.0f, 1.0f, voice.phase);
-            const float jitter = std::sin((float)i * 2.173f + phase * 9.0f) * particleBounds.getWidth() * 0.025f;
-            const float x = particleBounds.getCentreX()
-                + voice.pan * particleBounds.getWidth() * 0.43f + jitter;
-            const float classOffset = ((float)voice.bubbleClass - 1.0f) * particleBounds.getHeight() * 0.045f;
-            const float y = particleBounds.getY()
-                + (0.08f + phase * 0.84f) * particleBounds.getHeight() + classOffset;
-            const float shapedGain = std::sqrt(juce::jlimit(0.0f, 1.0f, voice.gain));
-            const float size = 3.0f + shapedGain * 7.5f + (voice.bubbleClass == 0 ? 1.5f : 0.0f);
-            const float alpha = juce::jlimit(0.24f, 0.92f, 0.34f + shapedGain * 0.58f);
-            const auto pitchColour = voice.pitchRate > 1.1f ? aqua
-                : (voice.pitchRate < 0.9f ? juce::Colour(0xffa995ff) : cyan);
-            const auto colour = voice.reverse ? amber : pitchColour;
-
-            if (telemetry.frozen) {
-                g.setColour(colour.withAlpha(alpha * 0.42f));
-                g.drawEllipse(x - size * 0.72f, y - size * 0.72f, size * 1.44f, size * 1.44f, 1.0f);
-            }
-            g.setColour(colour.withAlpha(alpha));
-            g.fillEllipse(x - size * 0.5f, y - size * 0.5f, size, size);
-            ++renderedVoices;
-        }
-
-        if (renderedVoices == 0) {
-            g.setColour(textMuted.withAlpha(0.34f));
-            g.setFont(juce::Font(10.5f, juce::Font::bold));
-            g.drawText("WAITING FOR AUDIO", particleBounds.toNearestInt(), juce::Justification::centred);
-        }
-
-        drawMeter(g, meterBounds.removeFromTop(16), "L OUT", std::sqrt(juce::jlimit(0.0f, 1.0f, smoothedPeakLeft)), cyan);
-        meterBounds.removeFromTop(8);
-        drawMeter(g, meterBounds.removeFromTop(16), "R OUT", std::sqrt(juce::jlimit(0.0f, 1.0f, smoothedPeakRight)), aqua);
-
-        g.setColour(textMuted);
-        g.setFont(juce::Font(12.0f, juce::Font::bold));
-        const auto stateText = telemetry.frozen ? "FROZEN CLOUD"
-            : (telemetry.activeVoices > 0 ? engineStateName(telemetry.engineState) : "IDLE CLOUD");
-        g.drawText(stateText, titleArea.removeFromLeft(titleArea.getWidth() / 2), juce::Justification::centredLeft);
-        g.drawText("VOICES " + juce::String(telemetry.activeVoices) + "/"
-                       + juce::String(telemetry.activeVoiceLimit),
-                   titleArea, juce::Justification::centredRight);
-    }
-
-private:
-    static juce::String engineStateName(int state)
-    {
-        switch (state) {
-            case ENGINE_STATE_TRANSIENT_BURST: return "BURST CLOUD";
-            case ENGINE_STATE_ATTACK_ONGOING: return "ATTACK CLOUD";
-            case ENGINE_STATE_SUSTAIN_BODY: return "SUSTAIN CLOUD";
-            case ENGINE_STATE_SPARSE_DECAY: return "DECAY CLOUD";
-            default: return "LIVE CLOUD";
-        }
-    }
-
-    void drawMeter(juce::Graphics& g, juce::Rectangle<int> bounds, const juce::String& label,
-                   float value, juce::Colour colour)
-    {
-        auto labelArea = bounds.removeFromLeft(52);
-        g.setColour(textMuted);
-        g.setFont(10.5f);
-        g.drawText(label, labelArea, juce::Justification::centredLeft);
-
-        auto track = bounds.toFloat().reduced(0.0f, 4.0f);
-        g.setColour(juce::Colour(0xff1a2833));
-        g.fillRoundedRectangle(track, 4.0f);
-        g.setColour(colour.withAlpha(0.86f));
-        g.fillRoundedRectangle(track.withWidth(track.getWidth() * juce::jlimit(0.0f, 1.0f, value)), 4.0f);
-    }
-
-    BubbleCloudTelemetry telemetry;
-    float smoothedPeakLeft = 0.0f;
-    float smoothedPeakRight = 0.0f;
-    float smoothedEnvelope = 0.0f;
-    float spawnPulse = 0.0f;
-};
 
 BubbleCloudAudioProcessorEditor::BubbleCloudAudioProcessorEditor(BubbleCloudAudioProcessor& p)
     : AudioProcessorEditor(&p), audioProcessor(p)
@@ -672,10 +436,12 @@ BubbleCloudAudioProcessorEditor::BubbleCloudAudioProcessorEditor(BubbleCloudAudi
 
     for (int i = 0; i < (int)factoryPresets.size(); ++i)
         presetBox.addItem(factoryPresets[(size_t)i].name, i + 1);
+    presetBox.setName("Factory preset");
     presetBox.setSelectedId(1, juce::dontSendNotification);
     presetBox.onChange = [this] { applyPreset(presetBox.getSelectedItemIndex()); };
     addAndMakeVisible(presetBox);
 
+    qualityBox.setName("Quality profile");
     qualityBox.addItem("Eco", 1);
     qualityBox.addItem("Balanced", 2);
     qualityBox.addItem("Studio", 3);
@@ -707,11 +473,13 @@ BubbleCloudAudioProcessorEditor::BubbleCloudAudioProcessorEditor(BubbleCloudAudi
     };
     addAndMakeVisible(storeSceneBButton);
 
+    morphSlider.setName("Scene morph");
     morphSlider.setSliderStyle(juce::Slider::LinearHorizontal);
-    morphSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 52, 22);
+    morphSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    morphSlider.setPopupDisplayEnabled(true, true, this);
     morphSlider.setNumDecimalPlacesToDisplay(2);
-    morphSlider.setColour(juce::Slider::trackColourId, cyan);
-    morphSlider.setColour(juce::Slider::backgroundColourId, juce::Colour(0xff1a2833));
+    morphSlider.setColour(juce::Slider::trackColourId, amber);
+    morphSlider.setColour(juce::Slider::backgroundColourId, BubblesTheme::meterTrack);
     morphAttachment = std::make_unique<SliderAttachment>(audioProcessor.treeState, "MORPH", morphSlider);
     addAndMakeVisible(morphSlider);
 
@@ -805,6 +573,13 @@ BubbleCloudAudioProcessorEditor::BubbleCloudAudioProcessorEditor(BubbleCloudAudi
     rhythmPlayheadStep = initialTelemetry.tempoSync ? initialTelemetry.rhythmStep : -1;
     cloudVisualizer->setTelemetry(initialTelemetry);
     updateToggleControls();
+    previousPreset.onClick = [this] { presetBox.setSelectedItemIndex((presetBox.getSelectedItemIndex() + (int)factoryPresets.size() - 1) % (int)factoryPresets.size(), juce::sendNotificationSync); };
+    nextPreset.onClick = [this] { presetBox.setSelectedItemIndex((presetBox.getSelectedItemIndex() + 1) % (int)factoryPresets.size(), juce::sendNotificationSync); };
+    previousPreset.setTooltip("Previous factory preset"); nextPreset.setTooltip("Next factory preset");
+    addAndMakeVisible(previousPreset); addAndMakeVisible(nextPreset);
+    freezeButton.setButtonText("FREEZE"); captureButton.setButtonText("CAPTURE");
+    storeSceneAButton.setButtonText("A   STORE A"); storeSceneBButton.setButtonText("B   STORE B");
+    tempoSyncButton.setButtonText("SYNC");
     setSize(editorWidth, editorHeight);
     setResizable(false, false);
     startTimerHz(30);
@@ -827,6 +602,7 @@ BubbleCloudAudioProcessorEditor::ControlBinding& BubbleCloudAudioProcessorEditor
     control->title = title;
     control->role = role;
 
+    control->slider.setName(title);
     control->slider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     control->slider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
     control->slider.setRotaryParameters(juce::MathConstants<float>::pi * 1.18f,
@@ -835,24 +611,15 @@ BubbleCloudAudioProcessorEditor::ControlBinding& BubbleCloudAudioProcessorEditor
     control->slider.setColour(juce::Slider::rotarySliderFillColourId, cyan);
     control->slider.setColour(juce::Slider::rotarySliderOutlineColourId, stroke);
 
-    control->titleLabel.setText(title, juce::dontSendNotification);
+    control->titleLabel.setText(title.toUpperCase(), juce::dontSendNotification);
     control->titleLabel.setJustificationType(juce::Justification::centred);
     control->titleLabel.setColour(juce::Label::textColourId, ink);
-    control->titleLabel.setFont(juce::Font(15.0f, juce::Font::bold));
-
-    control->roleLabel.setText(role.toUpperCase(), juce::dontSendNotification);
-    control->roleLabel.setJustificationType(juce::Justification::centred);
-    control->roleLabel.setColour(juce::Label::textColourId, textMuted);
-    control->roleLabel.setFont(juce::Font(10.5f, juce::Font::bold));
-
-    control->valueLabel.setJustificationType(juce::Justification::centred);
-    control->valueLabel.setColour(juce::Label::textColourId, cyan);
-    control->valueLabel.setFont(juce::Font(13.0f, juce::Font::bold));
+    control->titleLabel.setFont(BubblesTheme::font(13.0f, true));
 
     addAndMakeVisible(control->slider);
     addAndMakeVisible(control->titleLabel);
-    addAndMakeVisible(control->roleLabel);
-    addAndMakeVisible(control->valueLabel);
+    control->slider.setPopupDisplayEnabled(true, true, this);
+    control->slider.setTooltip(title + " / " + role);
 
     auto* result = control.get();
     result->slider.onValueChange = [this, result] { updateControlValue(*result); };
@@ -885,149 +652,78 @@ void BubbleCloudAudioProcessorEditor::applyPreset(int presetIndex)
 
 void BubbleCloudAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    juce::ColourGradient background(juce::Colour(0xff05090d), 0.0f, 0.0f,
-                                    juce::Colour(0xff0d1a23), (float)getWidth(), (float)getHeight(), false);
-    g.setGradientFill(background);
-    g.fillAll();
-
-    auto bounds = getLocalBounds().reduced(22);
-    auto header = bounds.removeFromTop(64);
-    drawBubblesMark(g, header.removeFromLeft(58).toFloat().reduced(4.0f), 0.82f);
-    header.removeFromLeft(10);
-    g.setColour(ink);
-    g.setFont(juce::Font(30.0f, juce::Font::bold));
-    auto titleBlock = header.removeFromLeft(210);
-    g.drawText("Bubbles", titleBlock.withTrimmedBottom(22), juce::Justification::centredLeft);
-
-    g.setColour(textMuted);
-    g.setFont(12.0f);
-    g.drawText("Granular performance instrument", 92, 84, 250, 18, juce::Justification::centredLeft);
-
-    auto content = getLocalBounds().reduced(22);
-    auto rhythm = content.removeFromBottom(156);
-    content.removeFromBottom(16);
-    auto right = content.removeFromRight(280);
-    content.removeFromRight(16);
-    content.removeFromTop(82);
-    auto secondary = content.removeFromBottom(142);
-    content.removeFromBottom(16);
-
-    drawPanel(g, content);
-    drawPanel(g, secondary);
-    drawPanel(g, right);
-    drawPanel(g, rhythm);
-
-    auto performanceLabel = right.reduced(18);
-    auto performanceArea = performanceLabel.removeFromBottom(150);
-    performanceArea.removeFromTop(2);
-    g.setColour(textMuted);
-    g.setFont(juce::Font(10.5f, juce::Font::bold));
-    g.drawText("PERFORMANCE", performanceArea.removeFromTop(18), juce::Justification::centredLeft);
-
-    auto rhythmLabel = rhythm.reduced(18);
-    g.setColour(textMuted);
-    g.setFont(juce::Font(10.5f, juce::Font::bold));
-    g.drawText("RHYTHM LAB  /  16 STEP PATTERN", rhythmLabel.removeFromTop(18), juce::Justification::centredLeft);
+    g.fillAll(background);
+    const auto layout = BubblesTheme::Layout(getLocalBounds());
+    for (auto r : {layout.header, layout.macros, layout.chamber, layout.performance, layout.tonal, layout.rhythm}) drawPanel(g, r);
+    drawBubblesMark(g, {30, 24, 64, 64}, 1);
+    g.setColour(ink); g.setFont(BubblesTheme::font(29, true));
+    g.drawText("B U B B L E S", 112, 26, 330, 38, juce::Justification::centredLeft);
+    g.setFont(BubblesTheme::font(10));
+    g.drawText("G R A N U L A R   C L O U D   I N S T R U M E N T", 113, 66, 400, 20, juce::Justification::centredLeft);
+    auto heading = [&](juce::String text, juce::Rectangle<int> r) {
+        g.setColour(ink); g.setFont(BubblesTheme::font(12, true));
+        g.drawText(text, r.getX()+18, r.getY()+10, 210, 20, juce::Justification::centredLeft);
+        g.setColour(stroke); g.drawLine((float)r.getX()+230, (float)r.getY()+20, (float)r.getRight()-18, (float)r.getY()+20);
+    };
+    heading("P E R F O R M A N C E", layout.performance);
+    heading("T O N A L   S H A P I N G", layout.tonal);
+    heading("R H Y T H M   L A B", layout.rhythm);
+    const char* captions[] = {"SYNC", "DIVISION", "BURST MODE", "PITCH MODE", "MOTION SHAPE", "FREEZE MIDI", "MIDI NOTE"};
+    for (int i=0; i<7; ++i) {
+        g.setColour(textMuted); g.setFont(BubblesTheme::font(10));
+        g.drawText(captions[i], layout.rhythm.getX()+18+i*(BubblesTheme::selectorWidth+BubblesTheme::selectorGap), layout.rhythm.getY()+36, 151, 18, juce::Justification::centredLeft);
+    }
+    g.setColour(textMuted); g.setFont(BubblesTheme::font(10));
+    g.drawText("PATTERN", layout.rhythm.getX()+18, layout.rhythm.getY()+104, 80, 26, juce::Justification::centredLeft);
+    for (auto section : {layout.macros, layout.tonal}) {
+        int count = section == layout.macros ? 6 : 5;
+        for (int i=1; i<count; ++i) { float x=(float)section.getX()+section.getWidth()*i/(float)count;
+            g.setColour(stroke.withAlpha(0.6f)); g.drawLine(x, (float)section.getY()+35, x, (float)section.getBottom()-25); }
+    }
 }
 
 void BubbleCloudAudioProcessorEditor::resized()
 {
-    auto bounds = getLocalBounds().reduced(22);
-    auto header = bounds.removeFromTop(64);
-
-    header.removeFromLeft(310);
-    presetBox.setBounds(header.removeFromLeft(220).reduced(0, 10));
-    header.removeFromLeft(10);
-    qualityBox.setBounds(header.removeFromLeft(150).reduced(0, 10));
-
-    auto content = getLocalBounds().reduced(22);
-    auto rhythm = content.removeFromBottom(156);
-    content.removeFromBottom(16);
-    auto right = content.removeFromRight(280);
-    content.removeFromRight(16);
-    content.removeFromTop(82);
-    auto secondary = content.removeFromBottom(142);
-    content.removeFromBottom(16);
-
-    auto rightContent = right.reduced(18);
-    auto performanceArea = rightContent.removeFromBottom(150);
-    rightContent.removeFromBottom(12);
-    if (cloudVisualizer)
-        cloudVisualizer->setBounds(rightContent);
-
-    performanceArea.removeFromTop(20);
-    auto freezeRow = performanceArea.removeFromTop(34);
-    freezeButton.setBounds(freezeRow.removeFromLeft(freezeRow.getWidth() / 2).reduced(0, 2));
-    freezeRow.removeFromLeft(8);
-    captureButton.setBounds(freezeRow.reduced(0, 2));
-
-    auto storeRow = performanceArea.removeFromTop(32);
-    storeSceneAButton.setBounds(storeRow.removeFromLeft(storeRow.getWidth() / 2).reduced(0, 3));
-    storeRow.removeFromLeft(8);
-    storeSceneBButton.setBounds(storeRow.reduced(0, 3));
-    morphLabel.setBounds(performanceArea.removeFromTop(20));
-    morphSlider.setBounds(performanceArea.reduced(0, 1));
-
-    layoutControls(macroControls, content.reduced(24, 22), 3);
-
-    auto secondaryContent = secondary.reduced(20, 20);
-    layoutControls(secondaryControls, secondaryContent, 5);
-
-    auto rhythmContent = rhythm.reduced(18);
-    rhythmContent.removeFromTop(22);
-    auto selectorRow = rhythmContent.removeFromTop(42);
-    const int selectorGap = 8;
-    tempoSyncButton.setBounds(selectorRow.removeFromLeft(104).reduced(0, 3));
-    selectorRow.removeFromLeft(selectorGap);
-    rhythmDivisionBox.setBounds(selectorRow.removeFromLeft(112).reduced(0, 3));
-    selectorRow.removeFromLeft(selectorGap);
-    burstModeBox.setBounds(selectorRow.removeFromLeft(138).reduced(0, 3));
-    selectorRow.removeFromLeft(selectorGap);
-    pitchModeBox.setBounds(selectorRow.removeFromLeft(136).reduced(0, 3));
-    selectorRow.removeFromLeft(selectorGap);
-    motionShapeBox.setBounds(selectorRow.removeFromLeft(142).reduced(0, 3));
-    selectorRow.removeFromLeft(selectorGap);
-    freezeMidiModeBox.setBounds(selectorRow.removeFromLeft(136).reduced(0, 3));
-    selectorRow.removeFromLeft(selectorGap);
-    freezeMidiNoteBox.setBounds(selectorRow.reduced(0, 3));
-
-    rhythmContent.removeFromTop(10);
-    auto stepsRow = rhythmContent.removeFromTop(42);
-    const int stepWidth = stepsRow.getWidth() / (int)rhythmStepButtons.size();
-    for (int i = 0; i < (int)rhythmStepButtons.size(); ++i)
-        rhythmStepButtons[(std::size_t)i].setBounds(stepsRow.removeFromLeft(stepWidth).reduced(2, 2));
+    const auto l = BubblesTheme::Layout(getLocalBounds());
+    auto h = l.header.reduced(20, 24); qualityBox.setBounds(h.removeFromRight(110)); h.removeFromRight(18);
+    nextPreset.setBounds(h.removeFromRight(40)); h.removeFromRight(8);
+    presetBox.setBounds(h.removeFromRight(236)); h.removeFromRight(8); previousPreset.setBounds(h.removeFromRight(40));
+    layoutControls(macroControls, l.macros.reduced(12, 8), 6);
+    layoutControls(secondaryControls, l.tonal.withTrimmedTop(28).reduced(18, 4), 5);
+    cloudVisualizer->setBounds(l.chamber.reduced(14));
+    auto p = l.performance.reduced(18); p.removeFromTop(35);
+    auto row=p.removeFromTop(68); freezeButton.setBounds(row.removeFromLeft((row.getWidth()-10)/2)); row.removeFromLeft(10); captureButton.setBounds(row);
+    p.removeFromTop(20); row=p.removeFromTop(46);
+    storeSceneAButton.setBounds(row.removeFromLeft((row.getWidth()-10)/2)); row.removeFromLeft(10); storeSceneBButton.setBounds(row);
+    p.removeFromTop(20); morphLabel.setBounds(p.removeFromTop(24)); morphSlider.setBounds(p.removeFromTop(42));
+    auto r=l.rhythm.reduced(18); r.removeFromTop(36); auto selectors=r.removeFromTop(32);
+    juce::Component* components[] = {&tempoSyncButton,&rhythmDivisionBox,&burstModeBox,&pitchModeBox,&motionShapeBox,&freezeMidiModeBox,&freezeMidiNoteBox};
+    const char* names[] = { "Tempo sync", "Rhythm division", "Burst mode", "Pitch mode", "Motion shape", "Freeze MIDI mode", "Freeze MIDI note" };
+    for (int i = 0; i < 7; ++i) {
+        components[i]->setName(names[i]);
+        components[i]->setBounds(selectors.removeFromLeft(BubblesTheme::selectorWidth));
+        selectors.removeFromLeft(BubblesTheme::selectorGap);
+    }
+    r.removeFromTop(15); r.removeFromLeft(90); auto steps=r.removeFromTop(30); int sw=steps.getWidth()/16;
+    for (auto& button : rhythmStepButtons) button.setBounds(steps.removeFromLeft(sw).reduced(3,0));
 }
 
 void BubbleCloudAudioProcessorEditor::layoutControls(std::vector<std::unique_ptr<ControlBinding>>& controls,
-                                                     juce::Rectangle<int> bounds,
-                                                     int columns)
+                                                     juce::Rectangle<int> bounds, int columns)
 {
-    if (controls.empty())
-        return;
-
-    auto rows = (int)std::ceil((double)controls.size() / (double)columns);
-    auto cellW = bounds.getWidth() / columns;
-    auto cellH = bounds.getHeight() / rows;
-
-    for (size_t i = 0; i < controls.size(); ++i)
-    {
-        auto col = (int)i % columns;
-        auto row = (int)i / columns;
-        auto cell = juce::Rectangle<int>(bounds.getX() + col * cellW, bounds.getY() + row * cellH, cellW, cellH).reduced(6);
-        auto& control = *controls[i];
-
-        control.titleLabel.setBounds(cell.removeFromTop(22));
-        control.roleLabel.setBounds(cell.removeFromBottom(16));
-        control.valueLabel.setBounds(cell.removeFromBottom(22));
-        auto knobSide = juce::jmin(cell.getWidth(), cell.getHeight());
-        control.slider.setBounds(cell.withSizeKeepingCentre(knobSide, knobSide).reduced(1));
+    int cw=bounds.getWidth()/columns;
+    for (size_t i=0; i<controls.size(); ++i) {
+        auto cell=juce::Rectangle<int>(bounds.getX()+(int)i*cw,bounds.getY(),cw,bounds.getHeight()).reduced(8,3);
+        controls[i]->titleLabel.setBounds(cell.removeFromBottom(24));
+        int side=juce::jmin(cell.getWidth(),cell.getHeight());
+        controls[i]->slider.setBounds(cell.withSizeKeepingCentre(side,side));
     }
 }
 
 void BubbleCloudAudioProcessorEditor::updateControlValue(ControlBinding& control)
 {
     auto percent = juce::roundToInt((float)control.slider.getValue() * 100.0f);
-    control.valueLabel.setText(juce::String(percent) + "%", juce::dontSendNotification);
+    control.slider.setTooltip(control.title + " / " + control.role + " / " + juce::String(percent) + "%");
 }
 
 void BubbleCloudAudioProcessorEditor::setParameterValue(const juce::String& parameterId, float value)
