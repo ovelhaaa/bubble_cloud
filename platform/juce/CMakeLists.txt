@@ -30,6 +30,14 @@ juce_add_plugin(BubbleCloud
     PRODUCT_NAME "Bubbles"
 )
 
+# The shared DSP uses C11 features such as _Static_assert. In particular,
+# MSVC needs an explicit C standard instead of its default C language mode.
+set_target_properties(BubbleCloud PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED YES
+    C_EXTENSIONS OFF
+)
+
 target_sources(BubbleCloud PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
