@@ -10,6 +10,8 @@
 #include <stdexcept>
 #include <string>
 
+// Processors contain large inline DSP buffers. Keep them on the heap so
+// nested test calls fit within the default Windows executable stack.
 namespace
 {
     void require(bool condition, const char* message)
@@ -126,7 +128,8 @@ namespace
 
         for (const double sampleRate : sampleRates) {
             for (const int blockSize : blockSizes) {
-                BubbleCloudAudioProcessor processor;
+                auto processorOwner = std::make_unique<BubbleCloudAudioProcessor>();
+                auto& processor = *processorOwner;
                 processor.setRateAndBufferSizeDetails(sampleRate, blockSize);
                 processor.prepareToPlay(sampleRate, blockSize);
                 const auto metrics = renderMusicalProbe(
@@ -158,7 +161,8 @@ namespace
 
     void testStereoContractKeepsDryLocalAndLetsWetCrossChannel()
     {
-        BubbleCloudAudioProcessor processor;
+        auto processorOwner = std::make_unique<BubbleCloudAudioProcessor>();
+        auto& processor = *processorOwner;
         processor.setRateAndBufferSizeDetails(48000.0, 128);
         processor.prepareToPlay(48000.0, 128);
 
@@ -216,7 +220,8 @@ namespace
 
     void testSpaceMacroChangesStereoWidth()
     {
-        BubbleCloudAudioProcessor narrow;
+        auto narrowOwner = std::make_unique<BubbleCloudAudioProcessor>();
+        auto& narrow = *narrowOwner;
         narrow.setRateAndBufferSizeDetails(48000.0, 256);
         narrow.prepareToPlay(48000.0, 256);
         setParameter(narrow, "SPACE", 0.0f);
@@ -224,7 +229,8 @@ namespace
         renderMonoWidthProbe(narrow, 48000.0, 0.2); // settle macros
         const double narrowWidth = renderMonoWidthProbe(narrow, 48000.0, 0.8);
 
-        BubbleCloudAudioProcessor wide;
+        auto wideOwner = std::make_unique<BubbleCloudAudioProcessor>();
+        auto& wide = *wideOwner;
         wide.setRateAndBufferSizeDetails(48000.0, 256);
         wide.prepareToPlay(48000.0, 256);
         setParameter(wide, "SPACE", 1.0f);
@@ -244,7 +250,8 @@ namespace
         // temporary BPM loss while PPQ keeps advancing, then BPM reappearing.
         // The fallback must keep 90 BPM, advance expectedNextPpq at 90 BPM and
         // never mistake the missing BPM for a transport jump.
-        BubbleCloudAudioProcessor processor;
+        auto processorOwner = std::make_unique<BubbleCloudAudioProcessor>();
+        auto& processor = *processorOwner;
         processor.setRateAndBufferSizeDetails(48000.0, 512);
         processor.prepareToPlay(48000.0, 512);
         setParameter(processor, "TEMPO_SYNC", 1.0f);
@@ -336,7 +343,8 @@ namespace
             (void)renderMusicalProbe(processor, 48000.0, 128, 0.3);
         };
 
-        BubbleCloudAudioProcessor processor;
+        auto processorOwner = std::make_unique<BubbleCloudAudioProcessor>();
+        auto& processor = *processorOwner;
         processor.setRateAndBufferSizeDetails(48000.0, 128);
         processor.prepareToPlay(48000.0, 128);
 
@@ -420,7 +428,8 @@ namespace
             }
         };
 
-        BubbleCloudAudioProcessor processor;
+        auto processorOwner = std::make_unique<BubbleCloudAudioProcessor>();
+        auto& processor = *processorOwner;
         processor.setRateAndBufferSizeDetails(48000.0, 128);
         processor.prepareToPlay(48000.0, 128);
 
@@ -484,7 +493,8 @@ namespace
         juce::MemoryBlock state;
         processor.getStateInformation(state);
 
-        BubbleCloudAudioProcessor restored;
+        auto restoredOwner = std::make_unique<BubbleCloudAudioProcessor>();
+        auto& restored = *restoredOwner;
         restored.setRateAndBufferSizeDetails(48000.0, 128);
         restored.prepareToPlay(48000.0, 128);
         restored.setStateInformation(state.getData(), (int)state.getSize());
@@ -531,7 +541,8 @@ namespace
             return p.getMorphedParameterValue(id);
         };
 
-        BubbleCloudAudioProcessor source;
+        auto sourceOwner = std::make_unique<BubbleCloudAudioProcessor>();
+        auto& source = *sourceOwner;
         source.setRateAndBufferSizeDetails(48000.0, 128);
         source.prepareToPlay(48000.0, 128);
         setParameter(source, "QUALITY_PROFILE", 2.0f); // Studio, must survive legacy slot
@@ -569,7 +580,8 @@ namespace
         juce::MemoryBlock legacyState;
         juce::AudioProcessor::copyXmlToBinary(*legacyXml, legacyState);
 
-        BubbleCloudAudioProcessor restored;
+        auto restoredOwner = std::make_unique<BubbleCloudAudioProcessor>();
+        auto& restored = *restoredOwner;
         restored.setRateAndBufferSizeDetails(48000.0, 128);
         restored.prepareToPlay(48000.0, 128);
         restored.setStateInformation(legacyState.getData(), (int)legacyState.getSize());
@@ -595,7 +607,8 @@ int main()
 {
     try {
         juce::ScopedJuceInitialiser_GUI initialiseJuce;
-        BubbleCloudAudioProcessor processor;
+        auto processorOwner = std::make_unique<BubbleCloudAudioProcessor>();
+        auto& processor = *processorOwner;
         processor.setRateAndBufferSizeDetails(48000.0, 128);
         processor.prepareToPlay(48000.0, 128);
 
@@ -932,7 +945,8 @@ int main()
                       << "x realtime\n";
         }
 
-        BubbleCloudAudioProcessor restored;
+        auto restoredOwner = std::make_unique<BubbleCloudAudioProcessor>();
+        auto& restored = *restoredOwner;
         restored.setStateInformation(state.getData(), (int)state.getSize());
         const auto* restoredMorph = restored.treeState.getRawParameterValue("MORPH");
         require(restoredMorph != nullptr && std::abs(restoredMorph->load() - 0.35f) < 0.01f,
