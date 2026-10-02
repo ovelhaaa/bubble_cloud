@@ -265,3 +265,149 @@ def test_m5c_cpu_overhead(cand_m5c_probe: Path):
     for l in lines:
         cpu_pct = float(l.split(",")[3])
         assert cpu_pct < 5.0, f"CPU overhead exceeded 5.0%: {cpu_pct}%"
+
+
+def test_m5c_cross_phrase_audio_parity(cand_m5c_probe: Path):
+    """M5C.1: Phrase B audio parity must be effectively clean (RMS delta <= 1 dB, corr >= 0.97)."""
+    res = subprocess.run([str(cand_m5c_probe), "cross_phrase_audio"], capture_output=True, text=True, check=True)
+    out = res.stdout.strip()
+    assert "CROSS_PHRASE_AUDIO_CSV" in out
+    lines = [l for l in out.splitlines() if "," in l and not l.startswith("Source")]
+    assert len(lines) == 16  # 4 sources x 4 windows
+
+    for l in lines:
+        parts = l.split(",")
+        src = parts[0]
+        win = parts[1]
+        delta_rms = float(parts[4])
+        delta_peak = float(parts[7])
+        corr = float(parts[8])
+
+        # Gated criteria on early onset (0-50ms and 50-100ms)
+        if win in ("0-50ms", "50-100ms"):
+            assert delta_rms <= 1.0, f"[{src} {win}] RMS delta exceeded 1.0 dB: {delta_rms} dB"
+            assert delta_peak <= 1.0, f"[{src} {win}] Peak delta exceeded 1.0 dB: {delta_peak} dB"
+            assert corr >= 0.97, f"[{src} {win}] Correlation dropped below 0.97: {corr}"
+
+
+def test_m5c_freeze_semantic_qualification(cand_m5c_probe: Path):
+    """M5C.1: Freeze must hold spectral age with zero drift, and cutoff must settle stably."""
+    res = subprocess.run([str(cand_m5c_probe), "freeze_settling"], capture_output=True, text=True, check=True)
+    out = res.stdout.strip()
+    assert "FREEZE_SETTLING_CSV" in out
+    lines = [l for l in out.splitlines() if "," in l and not l.startswith("TimeSinceFreeze")]
+    assert len(lines) == 8
+
+    rows = [l.split(",") for l in lines]
+    ages = [float(r[1]) for r in rows]
+    cutoffs = [float(r[3]) for r in rows]
+
+    # Spectral age must be held with zero drift
+    for a in ages:
+        assert abs(a - ages[0]) < 1e-4, f"Freeze spectral age drifted: {a} != {ages[0]}"
+
+    # Cutoff must settle within <= 1 s (+250 ms) and stay completely stable thereafter
+    stable_cutoffs = cutoffs[2:]  # +250ms onwards
+    for c in stable_cutoffs:
+        assert abs(c - stable_cutoffs[0]) < 1.0, f"Freeze cutoff drifted after settling: {c} != {stable_cutoffs[0]}"
+
+
+def test_m5c_pitch_modes_numeric(cand_m5c_probe: Path):
+    """M5C.1: Pitch modes unison, +7, +12, +19 must match expected frequencies within 2% error."""
+    res = subprocess.run([str(cand_m5c_probe), "pitch_modes_qual"], capture_output=True, text=True, check=True)
+    out = res.stdout.strip()
+    assert "PITCH_MODES_CSV" in out
+    lines = [l for l in out.splitlines() if "," in l and not l.startswith("Mode")]
+    assert len(lines) == 7
+
+    for l in lines:
+        parts = l.split(",")
+        mode = parts[0]
+        err_pct = float(parts[3].replace("%", ""))
+        cutoff_hz = float(parts[4])
+        has_nan = int(parts[6])
+        guard_viol = int(parts[7])
+        peak_db = float(parts[8])
+
+        assert has_nan == 0, f"[{mode}] Produced NaN or Inf"
+        assert guard_viol == 0, f"[{mode}] Guard violations detected"
+        assert peak_db <= 0.0, f"[{mode}] Peak exceeded 0 dBFS: {peak_db}"
+        assert err_pct < 2.0, f"[{mode}] Frequency error exceeded 2%: {err_pct}%"
+
+        if "shimmer" in mode:
+            assert cutoff_hz >= 3200.0 - 1.0, f"[{mode}] Cutoff fell below shimmer floor: {cutoff_hz}"
+
+
+def test_m5c_full_block_and_sr_invariance(cand_m5c_probe: Path):
+    """M5C.1: Invariance must hold across block sizes (32, 64, 127, 256, 512, 2048) and SRs (44.1, 48, 96 kHz)."""
+    res = subprocess.run([str(cand_m5c_probe), "full_block_invariance"], capture_output=True, text=True, check=True)
+    out = res.stdout.strip()
+    assert "FULL_BLOCK_INVARIANCE_CSV" in out
+    lines = [l for l in out.splitlines() if "," in l and not l.startswith("SR")]
+    assert len(lines) == 18  # 3 SRs x 6 Block sizes
+
+    for l in lines:
+        parts = l.split(",")
+        sr = int(parts[0])
+        bs = int(parts[1])
+        max_diff = float(parts[4])
+        age_diff = float(parts[5])
+        cutoff_diff = float(parts[6])
+
+        assert max_diff < 1e-4, f"[{sr}Hz, block={bs}] Output varied vs 64: max_diff={max_diff}"
+        assert age_diff < 1e-4, f"[{sr}Hz, block={bs}] Age trace varied: age_diff={age_diff}"
+        assert cutoff_diff < 0.1, f"[{sr}Hz, block={bs}] Cutoff trace varied: cutoff_diff={cutoff_diff}"
+
+
+def test_m5c_bus_aging_short_vs_sustain(cand_m5c_probe: Path):
+    """M5C.1: SHORT bus aging must be lighter than SUSTAIN bus aging."""
+    res = subprocess.run([str(cand_m5c_probe), "bus_aging_comparison"], capture_output=True, text=True, check=True)
+    out = res.stdout.strip()
+    assert "BUS_AGING_CSV" in out
+    lines = [l for l in out.splitlines() if "," in l and not l.startswith("Bus")]
+    assert len(lines) == 2
+
+    short_row = [l.split(",") for l in lines if l.startswith("SHORT_INTERMEDIATE")][0]
+    sustain_row = [l.split(",") for l in lines if l.startswith("SUSTAIN_BODY")][0]
+
+    short_drop = float(short_row[6])
+    sustain_drop = float(sustain_row[6])
+    assert sustain_drop > short_drop, f"SUSTAIN aging high-band drop ({sustain_drop} dB) not greater than SHORT ({short_drop} dB)"
+
+
+def test_m5c_parameter_orthogonality(cand_m5c_probe: Path):
+    """M5C.1: MEMORY, CLARITY, and WARMTH must demonstrate distinct, orthogonal responses."""
+    res = subprocess.run([str(cand_m5c_probe), "parameter_orthogonality"], capture_output=True, text=True, check=True)
+    out = res.stdout.strip()
+    assert "PARAMETER_ORTHOGONALITY_CSV" in out
+    lines = [l for l in out.splitlines() if "," in l and not l.startswith("Parameter")]
+    assert len(lines) == 3
+
+    p_dict = {l.split(",")[0]: [float(x) for x in l.split(",")[1:]] for l in lines}
+    # MEMORY: positive age growth, negative cutoff
+    assert p_dict["MEMORY"][0] > 0.05
+    assert p_dict["MEMORY"][1] < -50.0
+
+    # CLARITY: positive cutoff retention
+    assert p_dict["CLARITY"][1] > 50.0
+
+    # WARMTH: subtle darkening, much smaller age change than MEMORY
+    assert abs(p_dict["WARMTH"][0]) < abs(p_dict["MEMORY"][0])
+
+
+def test_m5c_cpu_matrix(cand_m5c_probe: Path):
+    """M5C.1: CPU matrix across 44.1, 48, 96 kHz x 8, 16, 24, 32 voices must stay <= 5.0% (<= 8.0% at 96kHz)."""
+    res = subprocess.run([str(cand_m5c_probe), "cpu_matrix"], capture_output=True, text=True, check=True)
+    out = res.stdout.strip()
+    assert "CPU_MATRIX_CSV" in out
+    lines = [l for l in out.splitlines() if "," in l and not l.startswith("SampleRate")]
+    assert len(lines) == 12
+
+    for l in lines:
+        parts = l.split(",")
+        sr = int(parts[0])
+        v = int(parts[1])
+        cpu_pct = float(parts[4])
+        limit = 8.0 if sr == 96000 else 5.0
+        assert cpu_pct <= limit, f"[{sr}Hz, {v} voices] CPU exceeded {limit}%: {cpu_pct}%"
+
