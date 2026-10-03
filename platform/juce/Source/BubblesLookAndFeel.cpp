@@ -93,6 +93,12 @@ void BubblesLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Button& b
 void BubblesLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, bool)
 {
     auto r=b.getLocalBounds(); const auto text=b.getButtonText();
+    const auto drawFocusOutline = [&] {
+        if (b.hasKeyboardFocus(true)) {
+            g.setColour(BubblesTheme::amber);
+            g.drawRoundedRectangle(b.getLocalBounds().toFloat().reduced(3), 4, 1);
+        }
+    };
     const bool step=text.getIntValue()>0;
     g.setColour(step && b.getToggleState() ? BubblesTheme::background : BubblesTheme::ink);
     g.setFont(step ? BubblesTheme::controlFont(10.0f) : BubblesTheme::controlFont(11.0f));
@@ -104,6 +110,7 @@ void BubblesLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton& b, 
         g.setColour(BubblesTheme::textMuted);
         g.setFont(BubblesTheme::captionFont(8.5f));
         g.drawText("STORE", r.reduced(4), juce::Justification::centredLeft);
+        drawFocusOutline();
         return;
     }
     if (text == "FREEZE" || text == "CAPTURE") {
@@ -122,9 +129,7 @@ void BubblesLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton& b, 
         r.removeFromTop(38);
     }
     g.drawText(text,r.reduced(4),juce::Justification::centred);
-    if (b.hasKeyboardFocus(true)) {
-        g.setColour(BubblesTheme::amber); g.drawRoundedRectangle(b.getLocalBounds().toFloat().reduced(3),4,1);
-    }
+    drawFocusOutline();
 }
 
 void BubblesLookAndFeel::drawComboBox(juce::Graphics& g, int w, int h, bool down, int, int, int, int, juce::ComboBox& box)
