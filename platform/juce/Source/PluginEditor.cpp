@@ -486,7 +486,7 @@ BubbleCloudAudioProcessorEditor::BubbleCloudAudioProcessorEditor(BubbleCloudAudi
     morphLabel.setText("SCENE A  <  MORPH  >  SCENE B", juce::dontSendNotification);
     morphLabel.setJustificationType(juce::Justification::centred);
     morphLabel.setColour(juce::Label::textColourId, textMuted);
-    morphLabel.setFont(juce::Font(10.5f, juce::Font::bold));
+    morphLabel.setFont(BubblesTheme::headingFont(10.5f));
     addAndMakeVisible(morphLabel);
 
     tempoSyncButton.setClickingTogglesState(true);
@@ -578,7 +578,7 @@ BubbleCloudAudioProcessorEditor::BubbleCloudAudioProcessorEditor(BubbleCloudAudi
     previousPreset.setTooltip("Previous factory preset"); nextPreset.setTooltip("Next factory preset");
     addAndMakeVisible(previousPreset); addAndMakeVisible(nextPreset);
     freezeButton.setButtonText("FREEZE"); captureButton.setButtonText("CAPTURE");
-    storeSceneAButton.setButtonText("A   STORE A"); storeSceneBButton.setButtonText("B   STORE B");
+    storeSceneAButton.setButtonText("A   STORE"); storeSceneBButton.setButtonText("B   STORE");
     tempoSyncButton.setButtonText("SYNC");
     setSize(editorWidth, editorHeight);
     setResizable(false, false);
@@ -614,7 +614,7 @@ BubbleCloudAudioProcessorEditor::ControlBinding& BubbleCloudAudioProcessorEditor
     control->titleLabel.setText(title.toUpperCase(), juce::dontSendNotification);
     control->titleLabel.setJustificationType(juce::Justification::centred);
     control->titleLabel.setColour(juce::Label::textColourId, ink);
-    control->titleLabel.setFont(BubblesTheme::font(13.0f, true));
+    control->titleLabel.setFont(BubblesTheme::headingFont(12.0f));
 
     addAndMakeVisible(control->slider);
     addAndMakeVisible(control->titleLabel);
@@ -656,12 +656,12 @@ void BubbleCloudAudioProcessorEditor::paint(juce::Graphics& g)
     const auto layout = BubblesTheme::Layout(getLocalBounds());
     for (auto r : {layout.header, layout.macros, layout.chamber, layout.performance, layout.tonal, layout.rhythm}) drawPanel(g, r);
     drawBubblesMark(g, {30, 24, 64, 64}, 1);
-    g.setColour(ink); g.setFont(BubblesTheme::font(29, true));
+    g.setColour(ink); g.setFont(BubblesTheme::brandFont());
     g.drawText("B U B B L E S", 112, 26, 330, 38, juce::Justification::centredLeft);
-    g.setFont(BubblesTheme::font(10));
+    g.setFont(BubblesTheme::captionFont(9.5f));
     g.drawText("G R A N U L A R   C L O U D   I N S T R U M E N T", 113, 66, 400, 20, juce::Justification::centredLeft);
     auto heading = [&](juce::String text, juce::Rectangle<int> r) {
-        g.setColour(ink); g.setFont(BubblesTheme::font(12, true));
+        g.setColour(ink); g.setFont(BubblesTheme::headingFont());
         g.drawText(text, r.getX()+18, r.getY()+10, 210, 20, juce::Justification::centredLeft);
         g.setColour(stroke); g.drawLine((float)r.getX()+230, (float)r.getY()+20, (float)r.getRight()-18, (float)r.getY()+20);
     };
@@ -670,10 +670,10 @@ void BubbleCloudAudioProcessorEditor::paint(juce::Graphics& g)
     heading("R H Y T H M   L A B", layout.rhythm);
     const char* captions[] = {"SYNC", "DIVISION", "BURST MODE", "PITCH MODE", "MOTION SHAPE", "FREEZE MIDI", "MIDI NOTE"};
     for (int i=0; i<7; ++i) {
-        g.setColour(textMuted); g.setFont(BubblesTheme::font(10));
+        g.setColour(textMuted); g.setFont(BubblesTheme::captionFont(9.0f));
         g.drawText(captions[i], layout.rhythm.getX()+18+i*(BubblesTheme::selectorWidth+BubblesTheme::selectorGap), layout.rhythm.getY()+36, 151, 18, juce::Justification::centredLeft);
     }
-    g.setColour(textMuted); g.setFont(BubblesTheme::font(10));
+    g.setColour(textMuted); g.setFont(BubblesTheme::captionFont(9.0f));
     g.drawText("PATTERN", layout.rhythm.getX()+18, layout.rhythm.getY()+104, 80, 26, juce::Justification::centredLeft);
     for (auto section : {layout.macros, layout.tonal}) {
         int count = section == layout.macros ? 6 : 5;

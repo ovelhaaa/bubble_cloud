@@ -1,4 +1,5 @@
 #pragma once
+#include "BubblesFontData.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 
 namespace BubblesTheme
@@ -17,12 +18,33 @@ namespace BubblesTheme
     constexpr int outerMargin = 10, panelGap = 3;
     constexpr int selectorWidth = 151, selectorGap = 8;
 
-    inline juce::Font font(float size, bool bold = false)
+    enum class FontWeight { light, regular, bold };
+
+    inline juce::Typeface::Ptr typeface(FontWeight weight)
     {
-        auto result = juce::Font(size, bold ? juce::Font::bold : juce::Font::plain);
-        result.setExtraKerningFactor(bold ? 0.10f : 0.035f);
+        const auto makeTypeface = [](BubblesFontData::Weight fontWeight) {
+            const auto& font = BubblesFontData::data(fontWeight);
+            return juce::Typeface::createSystemTypefaceFor(font.getData(), font.getSize());
+        };
+        static auto light = makeTypeface(BubblesFontData::Weight::light);
+        static auto regular = makeTypeface(BubblesFontData::Weight::regular);
+        static auto bold = makeTypeface(BubblesFontData::Weight::bold);
+        return weight == FontWeight::light ? light : (weight == FontWeight::bold ? bold : regular);
+    }
+
+    inline juce::Font makeFont(float size, FontWeight weight, float tracking = 0.0f)
+    {
+        juce::Font result(typeface(weight));
+        result.setHeight(size);
+        result.setExtraKerningFactor(tracking);
         return result;
     }
+
+    inline juce::Font controlFont(float size = 11.0f) { return makeFont(size, FontWeight::regular); }
+    inline juce::Font regularFont(float size = 12.0f) { return makeFont(size, FontWeight::regular); }
+    inline juce::Font captionFont(float size = 10.0f) { return makeFont(size, FontWeight::light, 0.035f); }
+    inline juce::Font headingFont(float size = 12.0f) { return makeFont(size, FontWeight::bold, 0.075f); }
+    inline juce::Font brandFont(float size = 29.0f) { return makeFont(size, FontWeight::bold, 0.13f); }
 
     // Shared rectangles keep panel painting and child placement in agreement.
     struct Layout

@@ -34,7 +34,8 @@ void BubblesLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int w
     for (int tick = 0; tick <= 32; ++tick) {
         const float t = rotaryStartAngle + (rotaryEndAngle - rotaryStartAngle) * tick / 32.0f;
         auto v = juce::Point<float>(std::sin(t), -std::cos(t));
-        g.setColour(BubblesTheme::amber.withAlpha(tick % 4 == 0 ? 0.65f : 0.28f));
+        g.setColour((tick % 4 == 0 ? BubblesTheme::textMuted : BubblesTheme::knobEdge)
+                        .withAlpha(tick % 4 == 0 ? 0.58f : 0.30f));
         g.drawLine({ centre + v * (radius + 4.0f), centre + v * (radius + (tick % 4 == 0 ? 8.0f : 6.0f)) }, 1.0f);
     }
     g.setColour(BubblesTheme::background);
@@ -94,7 +95,17 @@ void BubblesLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton& b, 
     auto r=b.getLocalBounds(); const auto text=b.getButtonText();
     const bool step=text.getIntValue()>0;
     g.setColour(step && b.getToggleState() ? BubblesTheme::background : BubblesTheme::ink);
-    g.setFont(BubblesTheme::font(step ? 10.0f : 11.0f, true));
+    g.setFont(step ? BubblesTheme::controlFont(10.0f) : BubblesTheme::controlFont(11.0f));
+    if (text == "A   STORE" || text == "B   STORE") {
+        auto scene = text.substring(0, 1);
+        g.setColour(b.getToggleState() || b.isDown() ? BubblesTheme::amber : BubblesTheme::ink);
+        g.setFont(BubblesTheme::headingFont(18.0f));
+        g.drawText(scene, r.removeFromLeft(48), juce::Justification::centred);
+        g.setColour(BubblesTheme::textMuted);
+        g.setFont(BubblesTheme::captionFont(8.5f));
+        g.drawText("STORE", r.reduced(4), juce::Justification::centredLeft);
+        return;
+    }
     if (text == "FREEZE" || text == "CAPTURE") {
         const float cx=r.getCentreX(), cy=r.getY()+22.0f;
         if (text == "FREEZE") {
@@ -120,7 +131,9 @@ void BubblesLookAndFeel::drawComboBox(juce::Graphics& g, int w, int h, bool down
 {
     auto r = juce::Rectangle<float>(0, 0, (float)w, (float)h).reduced(0.5f);
     g.setColour(BubblesTheme::panel.darker(0.4f)); g.fillRoundedRectangle(r, 5.0f);
-    g.setColour(down || box.hasKeyboardFocus(true) || box.isMouseOver() ? BubblesTheme::amber : BubblesTheme::stroke);
+    g.setColour(down || box.hasKeyboardFocus(true) ? BubblesTheme::amber
+                                                   : (box.isMouseOver() ? BubblesTheme::knobEdge
+                                                                        : BubblesTheme::stroke.withAlpha(0.62f)));
     g.drawRoundedRectangle(r, 5.0f, 1.0f);
     juce::Path arrow; arrow.startNewSubPath(w - 22.0f, h * 0.45f);
     arrow.lineTo(w - 17.0f, h * 0.58f); arrow.lineTo(w - 12.0f, h * 0.45f);
@@ -128,10 +141,10 @@ void BubblesLookAndFeel::drawComboBox(juce::Graphics& g, int w, int h, bool down
 }
 
 juce::Font BubblesLookAndFeel::getComboBoxFont(juce::ComboBox&)
-{ return BubblesTheme::font(12.0f); }
+{ return BubblesTheme::controlFont(11.0f); }
 
 juce::Font BubblesLookAndFeel::getTextButtonFont(juce::TextButton&, int)
-{ return BubblesTheme::font(12.0f, true); }
+{ return BubblesTheme::controlFont(11.0f); }
 
 void BubblesLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, int w, int h, float pos, float, float,
                       juce::Slider::SliderStyle, juce::Slider&)
