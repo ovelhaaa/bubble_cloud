@@ -42,6 +42,8 @@ target_sources(BubbleCloud PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/BubblesTheme.h
+    Source/BubblesFontData.h
+    Source/BubblesFontData.cpp
     Source/BubblesLookAndFeel.h
     Source/BubblesLookAndFeel.cpp
     Source/CloudVisualizer.h

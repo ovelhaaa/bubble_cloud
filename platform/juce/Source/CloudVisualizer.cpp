@@ -93,7 +93,7 @@ void CloudVisualizer::paint(juce::Graphics& g)
 
     if (renderedVoices == 0) {
         g.setColour(BubblesTheme::textMuted.withAlpha(0.34f));
-        g.setFont(juce::Font(10.5f, juce::Font::bold));
+        g.setFont(BubblesTheme::headingFont(10.5f));
         g.drawText("WAITING FOR AUDIO", particleBounds.toNearestInt(), juce::Justification::centred);
     }
 
@@ -102,7 +102,7 @@ void CloudVisualizer::paint(juce::Graphics& g)
     drawMeter(g, meterBounds, "R OUT", std::sqrt(juce::jlimit(0.0f, 1.0f, smoothedPeakRight)), BubblesTheme::aqua);
 
     g.setColour(BubblesTheme::textMuted);
-    g.setFont(juce::Font(12.0f, juce::Font::bold));
+    g.setFont(BubblesTheme::headingFont(12.0f));
     const auto stateText = telemetry.frozen ? "CLOUD CHAMBER / FROZEN"
         : (telemetry.activeVoices > 0 ? "CLOUD CHAMBER / " + engineStateName(telemetry.engineState) : "CLOUD CHAMBER / IDLE");
     g.drawText(stateText, titleArea.removeFromLeft(titleArea.getWidth() * 3 / 4), juce::Justification::centredLeft);
@@ -127,7 +127,7 @@ void CloudVisualizer::drawMeter(juce::Graphics& g, juce::Rectangle<int> bounds, 
 {
     auto labelArea = bounds.removeFromLeft(52);
     g.setColour(BubblesTheme::textMuted);
-    g.setFont(10.5f);
+    g.setFont(BubblesTheme::captionFont(10.5f));
     g.drawText(label, labelArea, juce::Justification::centredLeft);
 
     auto track = bounds.toFloat().reduced(0.0f, 4.0f);

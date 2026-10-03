@@ -242,6 +242,7 @@ def test_cloud_visualizer_uses_lock_free_engine_telemetry_and_rhythm_playhead() 
     wrapper_header = ENGINE_WRAPPER_HEADER.read_text(encoding="utf-8")
     processor = PLUGIN_PROCESSOR.read_text(encoding="utf-8")
     editor = PLUGIN_EDITOR.read_text(encoding="utf-8")
+    visualizer = (PLUGIN_EDITOR.parent / "CloudVisualizer.cpp").read_text(encoding="utf-8")
     smoke = PROCESSOR_SMOKE.read_text(encoding="utf-8")
 
     assert "BubbleCloudVoiceTelemetry" in wrapper_header
@@ -251,8 +252,8 @@ def test_cloud_visualizer_uses_lock_free_engine_telemetry_and_rhythm_playhead() 
     assert "telemetryPeakL.exchange" in wrapper
     assert "telemetrySpawnCount.exchange" in wrapper
     assert "getTelemetrySnapshot()" in processor
-    assert "setTelemetry(const BubbleCloudTelemetry&" in editor
-    assert "telemetry.voices" in editor
+    assert "setTelemetry(const BubbleCloudTelemetry&" in editor + visualizer
+    assert "telemetry.voices" in visualizer
     assert 'getProperties().set("rhythmPlayhead"' in editor
     assert "stereoTelemetry.peakLeft" in smoke
     assert "stereoTelemetry.activeVoices" in smoke
